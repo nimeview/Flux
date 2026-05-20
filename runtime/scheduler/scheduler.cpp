@@ -10,7 +10,8 @@ void recompute_scheduler::recompute_batch(
     flux::graph::dependency_graph& graph,
     std::unordered_map<std::string, flux::stdlib::value>& values,
     std::uint64_t tick,
-    const eval_fn& eval) {
+    const eval_fn& eval,
+    const trace_fn& trace) {
     std::unordered_set<std::string> affected;
     std::queue<std::string> q;
 
@@ -22,6 +23,7 @@ void recompute_scheduler::recompute_batch(
         if (it == graph.dependents().end()) continue;
         for (const auto& dep : it->second) {
             if (!affected.insert(dep).second) continue;
+            trace("tick=" + std::to_string(tick) + " mark affected: " + dep + " (cause: " + cur + ")");
             q.push(dep);
         }
     }
@@ -32,6 +34,7 @@ void recompute_scheduler::recompute_batch(
     for (const auto& node : order) {
         auto expr_it = graph.reactive_expressions().find(node);
         if (expr_it == graph.reactive_expressions().end()) continue;
+        trace("tick=" + std::to_string(tick) + " recompute: " + node);
         values[node] = eval(expr_it->second);
         auto& meta = graph.meta_mut(node);
         meta.version += 1;

@@ -111,3 +111,11 @@ signal base = 9
 - Added deterministic scheduler order by topological affected set with stable lexical ordering.
 - Added transaction/tick batching: multiple `set` updates in a row are batched and recomputed in one flush tick.
 - Tick flush happens before side-effect expression execution (`expr`) and at program end.
+
+
+## Tooling progress
+
+- Added runtime trace mode: `./runtime/build/runtime <file.fxbc> --trace`.
+- Added explain-why-recomputed tracing in scheduler (cause chain + tick + node).
+- Added lightweight graph inspector output in trace mode (node version + last tick).
+- Added reusable runtime diagnostics API (`set_trace`, `trace`) in `runtime/runtime_api`.

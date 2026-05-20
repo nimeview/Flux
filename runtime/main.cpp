@@ -1,5 +1,6 @@
 #include "graph/graph.h"
 #include "scheduler/scheduler.h"
+#include "runtime_api/runtime_api.h"
 #include "../shared/bytecode.hpp"
 #include "../stdlib/std.hpp"
 
@@ -60,7 +61,9 @@ static std::unordered_set<std::string> collect_deps(const std::vector<uint8_t>& 
 }
 
 int main(int argc, char** argv){
-    if(argc!=2) return 1;
+    if(argc < 2 || argc > 3) return 1;
+    const bool trace_flag = (argc == 3 && std::string(argv[2]) == "--trace");
+    flux::runtime_api::set_trace(trace_flag);
     auto program=decode_binary(argv[1]);
     flux::graph::dependency_graph graph;
     flux::scheduler::recompute_scheduler scheduler;
@@ -71,7 +74,7 @@ int main(int argc, char** argv){
     auto flush_tick = [&]() {
         if (pending_sources.empty()) return;
         tick += 1;
-        scheduler.recompute_batch(pending_sources, graph, values, tick, [&](const std::vector<uint8_t>& e){ return eval_expr(e, values); });
+        scheduler.recompute_batch(pending_sources, graph, values, tick, [&](const std::vector<uint8_t>& e){ return eval_expr(e, values); }, [&](const std::string& m){ flux::runtime_api::trace(m); });
         pending_sources.clear();
     };
 
@@ -97,5 +100,13 @@ int main(int argc, char** argv){
         }
     }
     flush_tick();
+
+    if (flux::runtime_api::trace_enabled()) {
+        flux::runtime_api::trace("graph inspector: nodes=" + std::to_string(graph.reactive_expressions().size()));
+        for (const auto& [name, _] : graph.reactive_expressions()) {
+            const auto& meta = graph.meta(name);
+            flux::runtime_api::trace("node=" + name + " version=" + std::to_string(meta.version) + " last_tick=" + std::to_string(meta.last_eval_tick));
+        }
+    }
     return 0;
 }
