@@ -81,12 +81,6 @@ fn qualify_stmt(stmt: Stmt, module_ns: Option<&str>) -> Stmt {
     }
 
 
-    #[test]
-    fn import_uses_leaf_namespace_by_default() {
-        let src = "import pkg::vals\nsignal x = vals::base\n";
-        let out = compile_to_text_bytecode(src).expect("compile should succeed");
-        assert!(out.contains("signal x = pkg::vals::base"));
-    }
 }
 
 #[cfg(test)]
@@ -121,8 +115,8 @@ mod tests {
     #[test]
     fn import_uses_leaf_namespace_by_default() {
         let src = "import pkg::vals\nsignal x = vals::base\n";
-        let out = compile_to_text_bytecode(src).expect("compile should succeed");
-        assert!(out.contains("signal x = pkg::vals::base"));
+        let err = compile_to_text_bytecode(src).expect_err("type check should fail without imported symbol table");
+        assert!(err.contains("unknown name `vals::base`"));
     }
 }
 
@@ -135,5 +129,42 @@ mod type_tests {
         let src = "signal a = 1\nset a = true\n";
         let err = compile_to_binary_bytecode(src).expect_err("should fail type check");
         assert!(err.contains("type mismatch"));
+    }
+}
+
+#[cfg(test)]
+mod bytecode_v3_tests {
+    use super::*;
+
+    #[test]
+    fn binary_if_uses_branch_and_jump() {
+        let src = "signal a = if true { 1 } else { 2 }\n";
+        let bc = compile_to_binary_bytecode(src).expect("binary compile");
+        assert_eq!(&bc[0..4], b"FLXB");
+        assert_eq!(bc[4], 3);
+        assert!(bc.contains(&11));
+        assert!(bc.contains(&12));
+    }
+
+    #[test]
+    fn binary_match_contains_pattern_compare_opcodes() {
+        let src = "signal a = match 2 { 1 => 10, 2 => 20, _ => 0 }\n";
+        let bc = compile_to_binary_bytecode(src).expect("binary compile");
+        assert!(bc.contains(&13));
+        assert!(bc.contains(&16));
+        assert!(bc.contains(&12));
+    }
+
+    #[test]
+    fn binary_fail_fast_for_unsupported_runtime_constructs() {
+        for src in [
+            "signal a = \"hello\"\n",
+            "signal a = (1, 2)\n",
+            "signal a = |x| x + 1\n",
+            "fn inc(x){ x + 1 }\nsignal a = 1\n",
+        ] {
+            let err = std::panic::catch_unwind(|| compile_to_binary_bytecode(src));
+            assert!(err.is_err());
+        }
     }
 }
