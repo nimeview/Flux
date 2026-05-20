@@ -8,7 +8,7 @@ include_directories(..)
 
 add_executable(runtime
         main.cpp
-        stdlib/std.cpp
+        ../stdlib/std.cpp
         ffi/ffi.cpp
         ffi/ffi.h
         graph/graph.cpp

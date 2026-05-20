@@ -51,6 +51,10 @@ fn parse_expr_bp(tokens: &[String], mut pos: usize, min_bp: u8) -> Result<(Expr,
     } else if let Ok(n) = tokens[pos].parse::<f64>() {
         pos += 1;
         Expr::Number(n)
+    } else if tokens[pos] == "true" || tokens[pos] == "false" {
+        let b = tokens[pos] == "true";
+        pos += 1;
+        Expr::Bool(b)
     } else {
         let ident = tokens[pos].clone();
         pos += 1;

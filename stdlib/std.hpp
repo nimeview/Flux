@@ -1,15 +1,15 @@
 #ifndef FLUX_STDLIB_STD_HPP
 #define FLUX_STDLIB_STD_HPP
 
-#include <cstddef>
 #include <string>
+#include <variant>
 #include <vector>
 
 namespace flux::stdlib {
 
-bool is_supported(const std::string& fn);
-double call(const std::string& fn, const std::vector<double>& args);
-std::size_t arity(const std::string& fn);
+using value = std::variant<double, bool, std::vector<double>>;
+
+value call(const std::string& fn, const std::vector<value>& args);
 
 } // namespace flux::stdlib
 

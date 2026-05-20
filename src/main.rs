@@ -17,7 +17,7 @@ fn main() {
         std::process::exit(1);
     });
 
-    let bytecode = compiler::compile_to_text_bytecode(&source).unwrap_or_else(|e| {
+    let bytecode = compiler::compile_to_binary_bytecode(&source).unwrap_or_else(|e| {
         eprintln!("compile error: {e}");
         std::process::exit(1);
     });

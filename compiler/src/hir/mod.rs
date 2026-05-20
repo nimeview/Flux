@@ -1,6 +1,7 @@
 #[derive(Clone, Debug)]
 pub enum Expr {
     Number(f64),
+    Bool(bool),
     Var(String),
     Binary(Box<Expr>, Op, Box<Expr>),
     Call { name: String, args: Vec<Expr> },

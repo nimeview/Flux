@@ -2,10 +2,10 @@
 
 Flux has split architecture and folder ownership:
 
-- `compiler/` (Rust): parser, HIR, and bytecode emission.
+- `compiler/` (Rust): parser, HIR, and binary bytecode emission.
 - `runtime/` (C++): bytecode execution, reactive graph, scheduler.
 - `stdlib/` (C++ headers): standard-library API contracts (e.g. `print`).
-- `shared/` (C++ headers): shared protocol structures between compiler/runtime.
+- `shared/` (C++ headers): shared protocol structures and binary bytecode layout between compiler/runtime.
 
 ## Project architecture plan
 
@@ -17,7 +17,7 @@ Flux has split architecture and folder ownership:
   - `runtime/stdlib`: stdlib function implementations.
 - [x] Define shared instruction representation in `shared/bytecode.hpp`.
 - [ ] Add binary bytecode format in `shared/` and decoder/encoder on both sides.
-- [ ] Add typed values and richer stdlib (math, time, collections).
+- [ ] [x] Add typed values and richer stdlib (math, time, collections).
 
 ## Flux example
 
@@ -38,3 +38,11 @@ cmake -S runtime -B runtime/build
 cmake --build runtime/build
 ./runtime/build/runtime /tmp/demo.fxbc
 ```
+
+
+## Next language development
+
+- Add type-checker in compiler (number/bool/vector + function signatures).
+- Add control flow (`if`, `match`) and user functions.
+- Move from RPN payload strings to typed constant/opcode pools in binary format v2.
+- Add module system and import resolution for std/user packages.

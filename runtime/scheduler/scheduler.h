@@ -1,6 +1,8 @@
 #ifndef FLUX_RUNTIME_SCHEDULER_H
 #define FLUX_RUNTIME_SCHEDULER_H
 
+#include "../../stdlib/std.hpp"
+
 #include <functional>
 #include <string>
 #include <unordered_map>
@@ -10,13 +12,13 @@ namespace flux::scheduler {
 
 class recompute_scheduler {
 public:
-    using eval_fn = std::function<double(const std::string&)>;
+    using eval_fn = std::function<flux::stdlib::value(const std::string&)>;
 
     void recompute_from(
         const std::string& source,
         const std::unordered_map<std::string, std::unordered_set<std::string>>& dependents,
         const std::unordered_map<std::string, std::string>& reactive_expr,
-        std::unordered_map<std::string, double>& values,
+        std::unordered_map<std::string, flux::stdlib::value>& values,
         const eval_fn& eval);
 };
 

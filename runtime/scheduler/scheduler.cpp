@@ -8,7 +8,7 @@ void recompute_scheduler::recompute_from(
     const std::string& source,
     const std::unordered_map<std::string, std::unordered_set<std::string>>& dependents,
     const std::unordered_map<std::string, std::string>& reactive_expr,
-    std::unordered_map<std::string, double>& values,
+    std::unordered_map<std::string, flux::stdlib::value>& values,
     const eval_fn& eval) {
     std::queue<std::string> q;
     std::unordered_set<std::string> seen;

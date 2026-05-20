@@ -1,15 +1,16 @@
 #ifndef FLUX_SHARED_BYTECODE_HPP
 #define FLUX_SHARED_BYTECODE_HPP
 
+#include <cstdint>
 #include <string>
 
 namespace flux::shared {
 
-enum class instruction_kind {
-    signal_decl,
-    reactive_decl,
-    set_value,
-    expr,
+enum class instruction_kind : std::uint8_t {
+    signal_decl = 0,
+    reactive_decl = 1,
+    set_value = 2,
+    expr = 3,
 };
 
 struct instruction {
