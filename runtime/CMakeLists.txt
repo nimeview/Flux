@@ -4,9 +4,11 @@ project(runtime)
 set(CMAKE_CXX_STANDARD 20)
 
 include_directories(.)
+include_directories(..)
 
 add_executable(runtime
         main.cpp
+        stdlib/std.cpp
         ffi/ffi.cpp
         ffi/ffi.h
         graph/graph.cpp

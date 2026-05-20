@@ -1,17 +1,23 @@
 # Flux
 
-Flux now has a split architecture:
+Flux has split architecture and folder ownership:
 
-1. **Rust compiler (`fluxc`)**: parses Flux source and emits text bytecode (`.fxbc`).
-2. **C++ runtime (`flux_runtime`)**: executes bytecode as a reactive dependency graph.
+- `compiler/` (Rust): parser, HIR, and bytecode emission.
+- `runtime/` (C++): bytecode execution, reactive graph, scheduler.
+- `stdlib/` (C++ headers): standard-library API contracts (e.g. `print`).
+- `shared/` (C++ headers): shared protocol structures between compiler/runtime.
 
-## Implementation plan
+## Project architecture plan
 
-- [x] Phase 1: define minimal language (`signal`, `reactive`, `set`, function calls (e.g. `print(x)`)) and arithmetic expressions.
-- [x] Phase 2: implement Rust parser + compiler output format.
-- [x] Phase 3: implement C++ runtime graph recomputation engine.
-- [x] Phase 4: connect compiler output to runtime input and run end-to-end.
-- [ ] Phase 5: add functions, modules, conditions, and typed values.
+- [x] Move `print` from syntax to stdlib function call `print(x)`.
+- [x] Split runtime responsibilities into modules:
+  - `runtime/graph`: dependency graph storage.
+  - `runtime/scheduler`: incremental recomputation.
+  - `runtime/runtime_api`: token/trim helpers and runtime API utilities.
+  - `runtime/stdlib`: stdlib function implementations.
+- [x] Define shared instruction representation in `shared/bytecode.hpp`.
+- [ ] Add binary bytecode format in `shared/` and decoder/encoder on both sides.
+- [ ] Add typed values and richer stdlib (math, time, collections).
 
 ## Flux example
 
