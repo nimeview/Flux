@@ -78,3 +78,36 @@ cmake --build runtime/build
 - Added namespace-aware resolution in type-checking and lowering (e.g. `s::sqrt` -> `std::sqrt`).
 - Kept package layout split between `std` namespace and user namespaces (`user::<pkg>::...` style path syntax).
 - Import statements are compile-time directives and are not emitted as runtime bytecode instructions.
+
+
+## Module resolution
+
+- Entry file compilation now resolves user imports from filesystem recursively.
+- Import path mapping: `foo::bar` -> `foo/bar.fx` relative to importing file directory.
+- `std` imports are treated as built-in namespace and do not require local files.
+- Imported modules are loaded once (deduplicated by canonical path) and merged before type-check/bytecode emission.
+
+
+### user package example
+
+`main.fx`
+```fx
+import std as s
+import pkg::vals
+signal x = vals::base
+reactive y = s::sqrt(x)
+s::print(y)
+```
+
+`pkg/vals.fx`
+```fx
+signal base = 9
+```
+
+
+## Runtime determinism progress
+
+- Added per-node metadata with `version` and `last_eval_tick`.
+- Added deterministic scheduler order by topological affected set with stable lexical ordering.
+- Added transaction/tick batching: multiple `set` updates in a row are batched and recomputed in one flush tick.
+- Tick flush happens before side-effect expression execution (`expr`) and at program end.

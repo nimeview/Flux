@@ -2,6 +2,8 @@
 #define FLUX_RUNTIME_SCHEDULER_H
 
 #include "../../stdlib/std.hpp"
+#include "../graph/graph.h"
+
 #include <cstdint>
 #include <functional>
 #include <string>
@@ -10,14 +12,19 @@
 #include <vector>
 
 namespace flux::scheduler {
+
 class recompute_scheduler {
 public:
     using eval_fn = std::function<flux::stdlib::value(const std::vector<std::uint8_t>&)>;
-    void recompute_from(const std::string& source,
-        const std::unordered_map<std::string, std::unordered_set<std::string>>& dependents,
-        const std::unordered_map<std::string, std::vector<std::uint8_t>>& reactive_expr,
+
+    void recompute_batch(
+        const std::vector<std::string>& changed_sources,
+        flux::graph::dependency_graph& graph,
         std::unordered_map<std::string, flux::stdlib::value>& values,
+        std::uint64_t tick,
         const eval_fn& eval);
 };
-}
+
+} // namespace flux::scheduler
+
 #endif

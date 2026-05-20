@@ -62,12 +62,40 @@ static std::unordered_set<std::string> collect_deps(const std::vector<uint8_t>& 
 int main(int argc, char** argv){
     if(argc!=2) return 1;
     auto program=decode_binary(argv[1]);
-    flux::graph::dependency_graph graph; flux::scheduler::recompute_scheduler scheduler; std::unordered_map<std::string,value> values;
+    flux::graph::dependency_graph graph;
+    flux::scheduler::recompute_scheduler scheduler;
+    std::unordered_map<std::string,value> values;
+    std::uint64_t tick = 0;
+
+    std::vector<std::string> pending_sources;
+    auto flush_tick = [&]() {
+        if (pending_sources.empty()) return;
+        tick += 1;
+        scheduler.recompute_batch(pending_sources, graph, values, tick, [&](const std::vector<uint8_t>& e){ return eval_expr(e, values); });
+        pending_sources.clear();
+    };
+
     for(const auto& inst: program){
-        if(inst.kind==instruction_kind::expr) (void)eval_expr(inst.payload, values);
-        else if(inst.kind==instruction_kind::signal_decl) values[inst.name]=eval_expr(inst.payload, values);
-        else if(inst.kind==instruction_kind::reactive_decl){ for(const auto& d: collect_deps(inst.payload)) graph.connect_dependency(d, inst.name); graph.register_reactive(inst.name, inst.payload); values[inst.name]=eval_expr(inst.payload, values);} 
-        else if(inst.kind==instruction_kind::set_value){ values[inst.name]=eval_expr(inst.payload, values); scheduler.recompute_from(inst.name, graph.dependents(), graph.reactive_expressions(), values, [&](const std::vector<uint8_t>& e){ return eval_expr(e, values);}); }
+        if(inst.kind==instruction_kind::expr) {
+            flush_tick();
+            (void)eval_expr(inst.payload, values);
+        }
+        else if(inst.kind==instruction_kind::signal_decl) {
+            values[inst.name]=eval_expr(inst.payload, values);
+            graph.meta_mut(inst.name).version += 1;
+        }
+        else if(inst.kind==instruction_kind::reactive_decl){
+            for(const auto& d: collect_deps(inst.payload)) graph.connect_dependency(d, inst.name);
+            graph.register_reactive(inst.name, inst.payload);
+            values[inst.name]=eval_expr(inst.payload, values);
+            graph.meta_mut(inst.name).version += 1;
+        }
+        else if(inst.kind==instruction_kind::set_value){
+            values[inst.name]=eval_expr(inst.payload, values);
+            graph.meta_mut(inst.name).version += 1;
+            pending_sources.push_back(inst.name);
+        }
     }
+    flush_tick();
     return 0;
 }

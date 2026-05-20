@@ -82,6 +82,7 @@ fn infer_expr(expr: &Expr, env: &HashMap<String, Type>, imports: &HashMap<String
             let rt = infer_expr(r, env, imports)?;
             match (lt, rt) {
                 (Type::Number, Type::Number) => Ok(Type::Number),
+                (Type::Unknown, Type::Number) | (Type::Number, Type::Unknown) | (Type::Unknown, Type::Unknown) => Ok(Type::Number),
                 (a, b) => Err(format!("binary op expects numbers, got {a:?} and {b:?}")),
             }
         }

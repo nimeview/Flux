@@ -17,12 +17,7 @@ fn main() {
         std::process::exit(1);
     }
 
-    let source = fs::read_to_string(input).unwrap_or_else(|e| {
-        eprintln!("failed to read {input}: {e}");
-        std::process::exit(1);
-    });
-
-    let bytecode = compiler::compile_to_binary_bytecode(&source).unwrap_or_else(|e| {
+    let bytecode = compiler::compile_file_to_binary_bytecode(Path::new(input)).unwrap_or_else(|e| {
         eprintln!("compile error: {e}");
         std::process::exit(1);
     });
