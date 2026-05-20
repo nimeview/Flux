@@ -13,38 +13,44 @@ static double as_number(const value& v) {
 }
 
 value call(const std::string& fn, const std::vector<value>& args) {
-    if (fn == "print") {
+    if (fn == "print" || fn == "std::print") {
         if (args.size() != 1) throw std::runtime_error("print expects 1 argument");
         if (auto n = std::get_if<double>(&args[0])) std::cout << *n << "\n";
         else if (auto b = std::get_if<bool>(&args[0])) std::cout << (*b ? "true" : "false") << "\n";
         else std::cout << "[vec len=" << std::get<std::vector<double>>(args[0]).size() << "]\n";
         return args[0];
     }
-    if (fn == "sqrt") {
+
+    if (fn == "if3" || fn == "std::if3") {
+        if (args.size() != 3) throw std::runtime_error("if3 expects 3 arguments");
+        if (auto b = std::get_if<bool>(&args[0])) return *b ? args[1] : args[2];
+        throw std::runtime_error("if3 first argument must be bool");
+    }
+    if (fn == "sqrt" || fn == "std::sqrt") {
         if (args.size() != 1) throw std::runtime_error("sqrt expects 1 argument");
         return std::sqrt(as_number(args[0]));
     }
-    if (fn == "min") {
+    if (fn == "min" || fn == "std::min") {
         if (args.size() != 2) throw std::runtime_error("min expects 2 arguments");
         return std::min(as_number(args[0]), as_number(args[1]));
     }
-    if (fn == "max") {
+    if (fn == "max" || fn == "std::max") {
         if (args.size() != 2) throw std::runtime_error("max expects 2 arguments");
         return std::max(as_number(args[0]), as_number(args[1]));
     }
-    if (fn == "now_ms") {
+    if (fn == "now_ms" || fn == "std::now_ms") {
         if (!args.empty()) throw std::runtime_error("now_ms expects 0 arguments");
         auto now = std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::system_clock::now().time_since_epoch()).count();
         return static_cast<double>(now);
     }
-    if (fn == "vec") {
+    if (fn == "vec" || fn == "std::vec") {
         std::vector<double> out;
         out.reserve(args.size());
         for (const auto& a : args) out.push_back(as_number(a));
         return out;
     }
-    if (fn == "len") {
+    if (fn == "len" || fn == "std::len") {
         if (args.size() != 1) throw std::runtime_error("len expects 1 argument");
         if (auto arr = std::get_if<std::vector<double>>(&args[0])) return static_cast<double>(arr->size());
         throw std::runtime_error("len expects vec");

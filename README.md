@@ -45,7 +45,7 @@ cmake --build runtime/build
 - [x] Add type-checker in compiler (number/bool/vector + function signatures).
 - Add control flow (`if`, `match`) and user functions.
 - [x] Move from RPN payload strings to typed constant/opcode bytecode format v2.
-- Add module system and import resolution for std/user packages.
+- [x] Add module system and import resolution for std/user packages.
 
 
 ## Bytecode v2 status
@@ -53,3 +53,28 @@ cmake --build runtime/build
 - Binary version `2` is now used.
 - Expression payload is opcode-based (`push_number`, `push_bool`, `load_name`, arithmetic ops, `call`) instead of text RPN.
 - Runtime decodes and executes opcode payload directly.
+
+
+## Strong typing progress
+
+- Added parser support for string literals and tuple expressions.
+- Added semantic types: `String`, `Tuple`, `Option`, `Result`.
+- Added parser diagnostics with `line/col` in error messages.
+- Added bytecode v2 opcodes for `push_string` and `make_tuple` (compiler side).
+
+
+## Control flow/functions progress
+
+- Added parser/HIR/type-check support for `if ... { ... } else { ... }`.
+- Added parser/HIR/type-check support for `match` expressions with basic patterns (`_`, bool, number, variable).
+- Added function declarations `fn name(params){ ... }`.
+- Added lambda expressions `|x, y| expr` with lexical scope type-checking (`Unknown` param placeholders for now).
+- Current limitation: binary emission/runtime execution for `fn`, `match`, `lambda` is not implemented yet (compiler returns TODO panic for those in binary mode).
+
+
+## Module system progress
+
+- Added `import <path>` and `import <path> as <alias>` statements.
+- Added namespace-aware resolution in type-checking and lowering (e.g. `s::sqrt` -> `std::sqrt`).
+- Kept package layout split between `std` namespace and user namespaces (`user::<pkg>::...` style path syntax).
+- Import statements are compile-time directives and are not emitted as runtime bytecode instructions.

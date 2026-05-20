@@ -23,6 +23,8 @@ enum class expr_opcode : std::uint8_t {
     mul = 6,
     div = 7,
     call = 8,
+    push_string = 9,
+    make_tuple = 10,
 };
 
 struct instruction {
