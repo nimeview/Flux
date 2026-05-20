@@ -14,14 +14,14 @@ Flux has split architecture and folder ownership:
   - `runtime/graph`: dependency graph storage.
   - `runtime/scheduler`: incremental recomputation.
   - `runtime/runtime_api`: token/trim helpers and runtime API utilities.
-  - `runtime/stdlib`: stdlib function implementations.
+  - `stdlib/`: stdlib function implementations.
 - [x] Define shared instruction representation in `shared/bytecode.hpp`.
-- [ ] Add binary bytecode format in `shared/` and decoder/encoder on both sides.
-- [ ] [x] Add typed values and richer stdlib (math, time, collections).
+- [x] Add binary bytecode format in `shared/` and decoder/encoder on both sides.
+- [x] Add typed values and richer stdlib (math, time, collections).
 
 ## Flux example
 
-```flux
+```fx
 signal mouse_x = 10
 signal mouse_y = 4
 reactive cursor = (mouse_x + mouse_y) * 2
@@ -33,7 +33,7 @@ print(cursor)
 ## Build and run
 
 ```bash
-cargo run -- /tmp/demo.flux /tmp/demo.fxbc
+cargo run -- /tmp/demo.fx /tmp/demo.fxbc
 cmake -S runtime -B runtime/build
 cmake --build runtime/build
 ./runtime/build/runtime /tmp/demo.fxbc
@@ -42,7 +42,7 @@ cmake --build runtime/build
 
 ## Next language development
 
-- Add type-checker in compiler (number/bool/vector + function signatures).
+- [x] Add type-checker in compiler (number/bool/vector + function signatures).
 - Add control flow (`if`, `match`) and user functions.
 - Move from RPN payload strings to typed constant/opcode pools in binary format v2.
 - Add module system and import resolution for std/user packages.

@@ -5,12 +5,17 @@ use std::path::Path;
 fn main() {
     let args: Vec<String> = env::args().collect();
     if args.len() != 3 {
-        eprintln!("Usage: fluxc <input.flux> <output.fxbc>");
+        eprintln!("Usage: fluxc <input.fx> <output.fxbc>");
         std::process::exit(1);
     }
 
     let input = &args[1];
     let output = &args[2];
+
+    if !input.ends_with(".fx") {
+        eprintln!("input file must use .fx extension");
+        std::process::exit(1);
+    }
 
     let source = fs::read_to_string(input).unwrap_or_else(|e| {
         eprintln!("failed to read {input}: {e}");
