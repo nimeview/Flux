@@ -1,13 +1,14 @@
-//
-// Created by Артур Панян on 19.05.2026.
-//
+#ifndef FLUX_RUNTIME_API_H
+#define FLUX_RUNTIME_API_H
 
-#ifndef RUNTIME_RUNTIME_API_H
-#define RUNTIME_RUNTIME_API_H
+#include <string>
+#include <vector>
 
+namespace flux::runtime_api {
 
-class runtime_api {
-};
+std::vector<std::string> split_tokens(const std::string& text);
+std::string trim(const std::string& value);
 
+} // namespace flux::runtime_api
 
-#endif //RUNTIME_RUNTIME_API_H
+#endif // FLUX_RUNTIME_API_H
