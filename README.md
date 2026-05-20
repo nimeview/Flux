@@ -44,5 +44,12 @@ cmake --build runtime/build
 
 - [x] Add type-checker in compiler (number/bool/vector + function signatures).
 - Add control flow (`if`, `match`) and user functions.
-- Move from RPN payload strings to typed constant/opcode pools in binary format v2.
+- [x] Move from RPN payload strings to typed constant/opcode bytecode format v2.
 - Add module system and import resolution for std/user packages.
+
+
+## Bytecode v2 status
+
+- Binary version `2` is now used.
+- Expression payload is opcode-based (`push_number`, `push_bool`, `load_name`, arithmetic ops, `call`) instead of text RPN.
+- Runtime decodes and executes opcode payload directly.

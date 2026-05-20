@@ -3,6 +3,7 @@
 
 #include <cstdint>
 #include <string>
+#include <vector>
 
 namespace flux::shared {
 
@@ -13,10 +14,21 @@ enum class instruction_kind : std::uint8_t {
     expr = 3,
 };
 
+enum class expr_opcode : std::uint8_t {
+    push_number = 1,
+    push_bool = 2,
+    load_name = 3,
+    add = 4,
+    sub = 5,
+    mul = 6,
+    div = 7,
+    call = 8,
+};
+
 struct instruction {
     instruction_kind kind;
     std::string name;
-    std::string payload_rpn;
+    std::vector<std::uint8_t> payload;
 };
 
 } // namespace flux::shared
