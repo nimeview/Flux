@@ -12,7 +12,7 @@ pub fn emit_text(stmts: &[Stmt]) -> String {
             Stmt::Reactive(name, expr) => out.push_str(&format!("reactive {} = {}\n", name, expr_to_rpn(expr))),
             Stmt::Set(name, expr) => out.push_str(&format!("set {} = {}\n", name, expr_to_rpn(expr))),
             Stmt::Expr(expr) => out.push_str(&format!("expr {}\n", expr_to_rpn(expr))),
-            Stmt::FnDef { name, params, body } => out.push_str(&format!("fn {}({}) {{ {} }}\n", name, params.join(", "), expr_to_rpn(body))),
+            Stmt::FnDef { name, params, body, .. } => out.push_str(&format!("fn {}({}) {{ {} }}\n", name, params.join(", "), expr_to_rpn(body))),
         }
     }
     out

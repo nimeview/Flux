@@ -1,4 +1,4 @@
-use crate::hir::{Expr, Op, Pattern, Stmt};
+use crate::hir::{Expr, LangTypeRef, Op, Pattern, Stmt};
 
 pub fn parse_program(src: &str) -> Result<Vec<Stmt>, String> {
     let mut out = Vec::new();
@@ -48,9 +48,23 @@ fn parse_fn_stmt(input: &str, line_no: usize) -> Result<Stmt, String> {
     if rb <= lb { return Err(format!("line {line_no}, col 1: malformed fn body")); }
     let name = input[..open].trim().to_string();
     let params_raw = &input[open + 1..close];
-    let params = if params_raw.trim().is_empty() { vec![] } else { params_raw.split(',').map(|p| p.trim().to_string()).collect() };
+    let mut params = vec![];
+    let mut param_types = vec![];
+    if !params_raw.trim().is_empty() {
+        for raw in params_raw.split(',') {
+            let r = raw.trim();
+            if let Some((n, t)) = r.split_once(':') {
+                params.push(n.trim().to_string());
+                let ty = match t.trim() { "number" => Some(LangTypeRef::Number), "bool" => Some(LangTypeRef::Bool), "string" => Some(LangTypeRef::String), _ => None };
+                param_types.push(ty);
+            } else {
+                params.push(r.to_string());
+                param_types.push(None);
+            }
+        }
+    }
     let body = parse_expr(input[lb + 1..rb].trim(), line_no)?;
-    Ok(Stmt::FnDef { name, params, body })
+    Ok(Stmt::FnDef { name, params, param_types, body })
 }
 
 
