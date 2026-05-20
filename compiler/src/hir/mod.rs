@@ -3,6 +3,7 @@ pub enum Expr {
     Number(f64),
     Var(String),
     Binary(Box<Expr>, Op, Box<Expr>),
+    Call { name: String, args: Vec<Expr> },
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -13,5 +14,5 @@ pub enum Stmt {
     Signal(String, Expr),
     Reactive(String, Expr),
     Set(String, Expr),
-    Print(String),
+    Expr(Expr),
 }

@@ -29,6 +29,25 @@ struct Runtime {
                     if (b == 0.0) throw std::runtime_error("division by zero");
                     st.push_back(a / b);
                 }
+            } else if (tok.rfind("@call:", 0) == 0) {
+                auto p1 = tok.find(':', 6);
+                auto fn = tok.substr(6, p1 - 6);
+                auto argc = std::stoul(tok.substr(p1 + 1));
+                if (st.size() < argc) throw std::runtime_error("bad call stack");
+
+                std::vector<double> args(argc);
+                for (size_t i = 0; i < argc; ++i) {
+                    args[argc - 1 - i] = st.back();
+                    st.pop_back();
+                }
+
+                if (fn == "print") {
+                    if (argc != 1) throw std::runtime_error("print expects 1 argument");
+                    std::cout << args[0] << "\n";
+                    st.push_back(args[0]);
+                } else {
+                    throw std::runtime_error("unknown stdlib function: " + fn);
+                }
             } else {
                 try { st.push_back(std::stod(tok)); }
                 catch (...) {
@@ -63,6 +82,7 @@ static std::unordered_set<std::string> collect_deps(const std::string& rpn) {
     std::string tok;
     while (iss >> tok) {
         if (tok == "+" || tok == "-" || tok == "*" || tok == "/") continue;
+        if (tok.rfind("@call:", 0) == 0) continue;
         try { (void)std::stod(tok); }
         catch (...) { out.insert(tok); }
     }
@@ -81,10 +101,8 @@ int main(int argc, char** argv) {
         line = trim(line);
         if (line.empty()) continue;
 
-        if (line.rfind("print ", 0) == 0) {
-            auto name = trim(line.substr(6));
-            if (!rt.values.contains(name)) throw std::runtime_error("unknown name: " + name);
-            std::cout << name << " = " << rt.values[name] << "\n";
+        if (line.rfind("expr ", 0) == 0) {
+            (void)rt.eval_rpn(trim(line.substr(5)));
             continue;
         }
 

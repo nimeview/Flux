@@ -16,10 +16,8 @@ pub fn parse_program(src: &str) -> Result<Vec<Stmt>, String> {
         } else if let Some(rest) = line.strip_prefix("set ") {
             let (name, expr) = split_assignment(rest, idx + 1)?;
             Stmt::Set(name.to_string(), parse_expr(expr)?)
-        } else if let Some(rest) = line.strip_prefix("print ") {
-            Stmt::Print(rest.trim().to_string())
         } else {
-            return Err(format!("line {}: unknown statement `{line}`", idx + 1));
+            Stmt::Expr(parse_expr(line)?)
         };
         out.push(stmt);
     }
@@ -54,12 +52,34 @@ fn parse_expr_bp(tokens: &[String], mut pos: usize, min_bp: u8) -> Result<(Expr,
         pos += 1;
         Expr::Number(n)
     } else {
-        let name = tokens[pos].clone(); pos += 1; Expr::Var(name)
+        let ident = tokens[pos].clone();
+        pos += 1;
+        if tokens.get(pos).map(|s| s.as_str()) == Some("(") {
+            pos += 1;
+            let mut args = Vec::new();
+            if tokens.get(pos).map(|s| s.as_str()) != Some(")") {
+                loop {
+                    let (arg, next) = parse_expr_bp(tokens, pos, 0)?;
+                    args.push(arg);
+                    pos = next;
+                    match tokens.get(pos).map(|s| s.as_str()) {
+                        Some(",") => pos += 1,
+                        Some(")") => break,
+                        _ => return Err("expected ',' or ')' in call".to_string()),
+                    }
+                }
+            }
+            if tokens.get(pos).map(|s| s.as_str()) != Some(")") { return Err("missing ')' after call".to_string()); }
+            pos += 1;
+            Expr::Call { name: ident, args }
+        } else {
+            Expr::Var(ident)
+        }
     };
 
     while pos < tokens.len() {
         let op = match tokens[pos].as_str() {
-            "+" => Op::Add, "-" => Op::Sub, "*" => Op::Mul, "/" => Op::Div, ")" => break,
+            "+" => Op::Add, "-" => Op::Sub, "*" => Op::Mul, "/" => Op::Div, ")" | "," => break,
             _ => return Err(format!("unknown operator `{}`", tokens[pos])),
         };
         let (l, r) = binding(op);
@@ -80,7 +100,7 @@ fn tokenize(input: &str) -> Result<Vec<String>, String> {
     for ch in input.chars() {
         match ch {
             ' ' | '\t' => { if !buf.is_empty() { tokens.push(std::mem::take(&mut buf)); } }
-            '(' | ')' | '+' | '-' | '*' | '/' => {
+            '(' | ')' | '+' | '-' | '*' | '/' | ',' => {
                 if !buf.is_empty() { tokens.push(std::mem::take(&mut buf)); }
                 tokens.push(ch.to_string());
             }
