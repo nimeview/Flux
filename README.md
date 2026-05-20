@@ -119,3 +119,18 @@ signal base = 9
 - Added explain-why-recomputed tracing in scheduler (cause chain + tick + node).
 - Added lightweight graph inspector output in trace mode (node version + last tick).
 - Added reusable runtime diagnostics API (`set_trace`, `trace`) in `runtime/runtime_api`.
+
+## HIR feature matrix (binary/runtime path)
+
+| HIR construct | parse | typecheck | lower (emit_binary v3) | runtime-exec |
+|---|---|---|---|---|
+| `if` | ✅ | ✅ | ✅ (`branch_if_false` + `jump`) | ✅ |
+| `match` | ✅ | ✅ | ✅ (branch-chain lowering) | ✅ (pattern bool/number compare opcodes) |
+| `lambda` | ✅ | ✅ | ❌ fail-fast at compile-time | ❌ |
+| `fn` | ✅ | ✅ | ❌ fail-fast at compile-time | ❌ |
+| `tuple` | ✅ | ✅ | ❌ fail-fast at compile-time | ❌ |
+| `string` | ✅ | ✅ | ❌ fail-fast at compile-time | ❌ |
+
+Notes:
+- `emit_binary` is intentionally strict now: unsupported constructs fail immediately with explicit diagnostics.
+- The canonical `if` lowering for bytecode v3 is opcode-based control flow (`branch_if_false`, `jump`).
