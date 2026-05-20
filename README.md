@@ -1,2 +1,40 @@
 # Flux
 
+Flux has split architecture and folder ownership:
+
+- `compiler/` (Rust): parser, HIR, and bytecode emission.
+- `runtime/` (C++): bytecode execution, reactive graph, scheduler.
+- `stdlib/` (C++ headers): standard-library API contracts (e.g. `print`).
+- `shared/` (C++ headers): shared protocol structures between compiler/runtime.
+
+## Project architecture plan
+
+- [x] Move `print` from syntax to stdlib function call `print(x)`.
+- [x] Split runtime responsibilities into modules:
+  - `runtime/graph`: dependency graph storage.
+  - `runtime/scheduler`: incremental recomputation.
+  - `runtime/runtime_api`: token/trim helpers and runtime API utilities.
+  - `runtime/stdlib`: stdlib function implementations.
+- [x] Define shared instruction representation in `shared/bytecode.hpp`.
+- [ ] Add binary bytecode format in `shared/` and decoder/encoder on both sides.
+- [ ] Add typed values and richer stdlib (math, time, collections).
+
+## Flux example
+
+```flux
+signal mouse_x = 10
+signal mouse_y = 4
+reactive cursor = (mouse_x + mouse_y) * 2
+print(cursor)
+set mouse_x = 20
+print(cursor)
+```
+
+## Build and run
+
+```bash
+cargo run -- /tmp/demo.flux /tmp/demo.fxbc
+cmake -S runtime -B runtime/build
+cmake --build runtime/build
+./runtime/build/runtime /tmp/demo.fxbc
+```
