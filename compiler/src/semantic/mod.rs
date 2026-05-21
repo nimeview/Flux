@@ -59,8 +59,8 @@ pub fn type_check_with_mode(program: &[Stmt], mode: TypeMode) -> Result<(), Stri
 
     for stmt in program {
         match stmt {
-            Stmt::Import { .. } => {}
-            Stmt::Signal(name, expr) | Stmt::Reactive(name, expr) => {
+            Stmt::Import { .. } | Stmt::Package { .. } => {}
+            Stmt::Signal { name, expr, .. } | Stmt::Reactive { name, expr, .. } => {
                 let ty = infer_expr(expr, &env, &imports, mode)?;
                 env.insert(name.clone(), ty);
             }
@@ -72,7 +72,7 @@ pub fn type_check_with_mode(program: &[Stmt], mode: TypeMode) -> Result<(), Stri
                     return Err(TcError::new("set type mismatch", &format!("{current:?}"), &format!("{next:?}"), &format!("set {name}")).msg);
                 }
             }
-            Stmt::FnDef { name, params, body, param_types } => {
+            Stmt::FnDef { name, params, body, param_types, .. } => {
                 let mut local = env.clone();
                 let mut sig_params = Vec::with_capacity(params.len());
                 for (idx, p) in params.iter().enumerate() {

@@ -35,11 +35,12 @@ pub enum Op { Add, Sub, Mul, Div }
 
 #[derive(Clone, Debug)]
 pub enum Stmt {
+    Package { name: String, root: String, exports: Vec<String> },
     Import { path: String, alias: Option<String> },
-    Signal(String, Expr),
-    Reactive(String, Expr),
+    Signal { name: String, expr: Expr, is_pub: bool },
+    Reactive { name: String, expr: Expr, is_pub: bool },
     Set(String, Expr),
-    FnDef { name: String, params: Vec<String>, param_types: Vec<Option<LangTypeRef>>, body: Expr },
+    FnDef { name: String, params: Vec<String>, param_types: Vec<Option<LangTypeRef>>, body: Expr, is_pub: bool },
     Expr(Expr),
 }
 

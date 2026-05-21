@@ -4,12 +4,13 @@ pub fn emit_text(stmts: &[Stmt]) -> String {
     let mut out = String::new();
     for stmt in stmts {
         match stmt {
+            Stmt::Package { .. } => {}
             Stmt::Import { path, alias } => {
                 if let Some(a) = alias { out.push_str(&format!("import {} as {}\n", path, a)); }
                 else { out.push_str(&format!("import {}\n", path)); }
             }
-            Stmt::Signal(name, expr) => out.push_str(&format!("signal {} = {}\n", name, expr_to_rpn(expr))),
-            Stmt::Reactive(name, expr) => out.push_str(&format!("reactive {} = {}\n", name, expr_to_rpn(expr))),
+            Stmt::Signal { name, expr, .. } => out.push_str(&format!("signal {} = {}\n", name, expr_to_rpn(expr))),
+            Stmt::Reactive { name, expr, .. } => out.push_str(&format!("reactive {} = {}\n", name, expr_to_rpn(expr))),
             Stmt::Set(name, expr) => out.push_str(&format!("set {} = {}\n", name, expr_to_rpn(expr))),
             Stmt::Expr(expr) => out.push_str(&format!("expr {}\n", expr_to_rpn(expr))),
             Stmt::FnDef { name, params, body, .. } => out.push_str(&format!("fn {}({}) {{ {} }}\n", name, params.join(", "), expr_to_rpn(body))),
@@ -22,14 +23,14 @@ pub fn emit_binary(stmts: &[Stmt]) -> Vec<u8> {
     let mut out = Vec::new();
     out.extend_from_slice(b"FLXB");
     out.push(3); // bytecode v3
-    let emitted_count = stmts.iter().filter(|s| !matches!(s, Stmt::Import { .. })).count() as u32;
+    let emitted_count = stmts.iter().filter(|s| !matches!(s, Stmt::Import { .. } | Stmt::Package { .. })).count() as u32;
     out.extend_from_slice(&emitted_count.to_le_bytes());
 
     for stmt in stmts {
         let (kind, name, payload) = match stmt {
-            Stmt::Import { .. } => continue,
-            Stmt::Signal(name, expr) => (0u8, name.as_str(), encode_expr(expr)),
-            Stmt::Reactive(name, expr) => (1u8, name.as_str(), encode_expr(expr)),
+            Stmt::Import { .. } | Stmt::Package { .. } => continue,
+            Stmt::Signal { name, expr, .. } => (0u8, name.as_str(), encode_expr(expr)),
+            Stmt::Reactive { name, expr, .. } => (1u8, name.as_str(), encode_expr(expr)),
             Stmt::Set(name, expr) => (2u8, name.as_str(), encode_expr(expr)),
             Stmt::Expr(expr) => (3u8, "", encode_expr(expr)),
             Stmt::FnDef { name, .. } => panic!("emit_binary fail-fast: fn `{name}` is unsupported in runtime bytecode path"),
