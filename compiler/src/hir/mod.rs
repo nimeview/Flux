@@ -39,6 +39,9 @@ pub enum Stmt {
     Signal(String, Expr),
     Reactive(String, Expr),
     Set(String, Expr),
-    FnDef { name: String, params: Vec<String>, body: Expr },
+    FnDef { name: String, params: Vec<String>, param_types: Vec<Option<LangTypeRef>>, body: Expr },
     Expr(Expr),
 }
+
+#[derive(Clone, Debug)]
+pub enum LangTypeRef { Number, Bool, String }
