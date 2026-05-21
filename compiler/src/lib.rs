@@ -106,7 +106,8 @@ fn qualify_stmt(stmt: Stmt, module_ns: Option<&str>) -> Stmt {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+use super::*;
+use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
     fn compiles_signal_and_reactive() {

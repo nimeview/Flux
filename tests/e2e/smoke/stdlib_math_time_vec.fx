@@ -1,0 +1,7 @@
+signal v = vec(1, 2, 3, 4)
+print(len(v))
+print(min(5, 2))
+print(max(5, 2))
+print(sqrt(16))
+signal t = now_ms()
+print(t)
