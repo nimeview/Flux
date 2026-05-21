@@ -1,0 +1,2 @@
+[trace] event=recompute_done node=b cause=batch
+[trace] event=recompute_done node=c cause=batch

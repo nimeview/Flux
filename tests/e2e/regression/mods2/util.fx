@@ -1,0 +1,1 @@
+signal b = 1
