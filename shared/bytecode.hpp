@@ -25,12 +25,6 @@ enum class expr_opcode : std::uint8_t {
     call = 8,
     push_string = 9,
     make_tuple = 10,
-    jump = 11,
-    branch_if_false = 12,
-    dup = 13,
-    pop = 14,
-    eq_bool = 15,
-    eq_number = 16,
 };
 
 struct instruction {

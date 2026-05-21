@@ -1,74 +1,95 @@
-use crate::hir::{Expr, LangTypeRef, Op, Pattern, Stmt};
+use crate::hir::{Block, Expr, Op, Pattern, Stmt};
 
 pub fn parse_program(src: &str) -> Result<Vec<Stmt>, String> {
-    let mut out = Vec::new();
-    for (idx, raw) in src.lines().enumerate() {
-        let line_no = idx + 1;
-        let line = raw.trim();
-        if line.is_empty() || line.starts_with('#') { continue; }
+    let logical_lines = split_logical_statements(src)?;
+    parse_statement_list(&logical_lines)
+}
 
-        let stmt = if line == "" { continue; } else if let Some(rest) = line.strip_prefix("package ") {
-            parse_package_stmt(rest, line_no)?
-        } else if let Some(rest) = line.strip_prefix("import ") {
-            parse_import_stmt(rest, line_no)?
-        } else if let Some((is_pub, rest)) = strip_pub_kw(line, "signal ") {
-            let (name, expr) = split_assignment(rest, line_no)?;
-            Stmt::Signal { name: name.to_string(), expr: parse_expr(expr, line_no)?, is_pub }
-        } else if let Some((is_pub, rest)) = strip_pub_kw(line, "reactive ") {
-            let (name, expr) = split_assignment(rest, line_no)?;
-            Stmt::Reactive { name: name.to_string(), expr: parse_expr(expr, line_no)?, is_pub }
+fn parse_statement_list(logical_lines: &[(usize, String)]) -> Result<Vec<Stmt>, String> {
+    let mut out = Vec::new();
+    for (line_no, line) in logical_lines {
+        let stmt = if let Some(rest) = line.strip_prefix("import ") {
+            parse_import_stmt(rest, *line_no)?
+        } else if let Some(rest) = line.strip_prefix("signal ") {
+            let (name, expr) = split_assignment(rest, *line_no)?;
+            Stmt::Signal(name.to_string(), parse_expr(expr, *line_no)?)
+        } else if let Some(rest) = line.strip_prefix("reactive ") {
+            let (name, expr) = split_assignment(rest, *line_no)?;
+            Stmt::Reactive(name.to_string(), parse_expr(expr, *line_no)?)
         } else if let Some(rest) = line.strip_prefix("set ") {
-            let (name, expr) = split_assignment(rest, line_no)?;
-            Stmt::Set(name.to_string(), parse_expr(expr, line_no)?)
-        } else if let Some((is_pub, rest)) = strip_pub_kw(line, "fn ") {
-            parse_fn_stmt(rest, line_no, is_pub)?
+            let (name, expr) = split_assignment(rest, *line_no)?;
+            Stmt::Set(name.to_string(), parse_expr(expr, *line_no)?)
+        } else if let Some(rest) = line.strip_prefix("fn ") {
+            parse_fn_stmt(rest, *line_no)?
         } else {
-            Stmt::Expr(parse_expr(line, line_no)?)
+            Stmt::Expr(parse_expr(line, *line_no)?)
         };
         out.push(stmt);
     }
     Ok(out)
 }
 
+fn split_logical_statements(src: &str) -> Result<Vec<(usize, String)>, String> {
+    let mut out = Vec::new();
+    let mut buf = String::new();
+    let mut start_line = 1usize;
+    let mut brace_depth = 0i32;
+    let mut paren_depth = 0i32;
+    let mut in_string = false;
+
+    for (idx, raw) in src.lines().enumerate() {
+        let line_no = idx + 1;
+        let trimmed = raw.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') { continue; }
+
+        if buf.is_empty() { start_line = line_no; } else { buf.push(' '); }
+        buf.push_str(trimmed);
+
+        for ch in trimmed.chars() {
+            if ch == '"' { in_string = !in_string; }
+            else if !in_string {
+                match ch {
+                    '{' => brace_depth += 1,
+                    '}' => brace_depth -= 1,
+                    '(' => paren_depth += 1,
+                    ')' => paren_depth -= 1,
+                    _ => {}
+                }
+            }
+        }
+
+        if brace_depth < 0 || paren_depth < 0 { return Err(format!("line {line_no}, col 1: unmatched closing delimiter")); }
+        if brace_depth == 0 && paren_depth == 0 && !in_string {
+            out.push((start_line, buf.trim().to_string()));
+            buf.clear();
+        }
+    }
+
+    if in_string { return Err("unterminated string literal at end of file".to_string()); }
+    if brace_depth != 0 || paren_depth != 0 { return Err("unterminated block or expression at end of file".to_string()); }
+    Ok(out)
+}
 
 fn parse_import_stmt(input: &str, line_no: usize) -> Result<Stmt, String> {
     let input = input.trim();
-    if input.is_empty() {
-        return Err(format!("line {line_no}, col 1: expected import path"));
-    }
+    if input.is_empty() { return Err(format!("line {line_no}, col 1: expected import path")); }
     if let Some((path, alias)) = input.split_once(" as ") {
         return Ok(Stmt::Import { path: path.trim().to_string(), alias: Some(alias.trim().to_string()) });
     }
     Ok(Stmt::Import { path: input.to_string(), alias: None })
 }
 
-fn parse_fn_stmt(input: &str, line_no: usize, is_pub: bool) -> Result<Stmt, String> {
+fn parse_fn_stmt(input: &str, line_no: usize) -> Result<Stmt, String> {
     let open = input.find('(').ok_or_else(|| format!("line {line_no}, col 1: expected '(' in fn"))?;
     let close = input.rfind(')').ok_or_else(|| format!("line {line_no}, col 1: expected ')' in fn"))?;
-    let lb = input.find('{').ok_or_else(|| format!("line {line_no}, col 1: expected '{{' in fn"))?;
-    let rb = input.rfind('}').ok_or_else(|| format!("line {line_no}, col 1: expected '}}' in fn"))?;
-    if rb <= lb { return Err(format!("line {line_no}, col 1: malformed fn body")); }
+    let (body_src, _) = extract_braced(input, line_no)?;
     let name = input[..open].trim().to_string();
     let params_raw = &input[open + 1..close];
-    let mut params = vec![];
-    let mut param_types = vec![];
-    if !params_raw.trim().is_empty() {
-        for raw in params_raw.split(',') {
-            let r = raw.trim();
-            if let Some((n, t)) = r.split_once(':') {
-                params.push(n.trim().to_string());
-                let ty = match t.trim() { "number" => Some(LangTypeRef::Number), "bool" => Some(LangTypeRef::Bool), "string" => Some(LangTypeRef::String), _ => None };
-                param_types.push(ty);
-            } else {
-                params.push(r.to_string());
-                param_types.push(None);
-            }
-        }
-    }
-    let body = parse_expr(input[lb + 1..rb].trim(), line_no)?;
-    Ok(Stmt::FnDef { name, params, param_types, body, is_pub })
+    let params = if params_raw.trim().is_empty() { vec![] } else { params_raw.split(',').map(|p| p.trim().to_string()).collect() };
+    let body_lines = split_logical_statements(&body_src)?;
+    let body = Block { stmts: parse_statement_list(&body_lines)? };
+    Ok(Stmt::FnDef { name, params, body })
 }
-
 
 fn split_assignment(input: &str, line_no: usize) -> Result<(&str, &str), String> {
     let mut parts = input.splitn(2, '=');
@@ -90,49 +111,13 @@ fn parse_expr_bp(tokens: &[String], mut pos: usize, min_bp: u8, line_no: usize) 
     else if tokens[pos] == "if" {
         pos += 1;
         let (cond, p1) = parse_expr_bp(tokens, pos, 0, line_no)?; pos = p1;
-        if tokens.get(pos).map(|s| s.as_str()) != Some("{") { return Err(format!("line {line_no}, col 1: expected `{{` after if condition")); }
-        pos += 1;
-        let (then_branch, p2) = parse_expr_bp(tokens, pos, 0, line_no)?; pos = p2;
-        if tokens.get(pos).map(|s| s.as_str()) != Some("}") { return Err(format!("line {line_no}, col 1: expected `}}` after if then branch")); }
-        pos += 1;
+        let (then_src, next1) = extract_braced_from_tokens(tokens, pos, line_no)?; pos = next1;
         if tokens.get(pos).map(|s| s.as_str()) != Some("else") { return Err(format!("line {line_no}, col 1: expected `else`")); }
         pos += 1;
-        if tokens.get(pos).map(|s| s.as_str()) != Some("{") { return Err(format!("line {line_no}, col 1: expected `{{` after else")); }
-        pos += 1;
-        let (else_branch, p3) = parse_expr_bp(tokens, pos, 0, line_no)?; pos = p3;
-        if tokens.get(pos).map(|s| s.as_str()) != Some("}") { return Err(format!("line {line_no}, col 1: expected `}}` after else branch")); }
-        pos += 1;
-        Expr::If { cond: Box::new(cond), then_branch: Box::new(then_branch), else_branch: Box::new(else_branch) }
-    } else if tokens[pos] == "match" {
-        pos += 1;
-        let (scrutinee, p1) = parse_expr_bp(tokens, pos, 0, line_no)?; pos = p1;
-        if tokens.get(pos).map(|s| s.as_str()) != Some("{") { return Err(format!("line {line_no}, col 1: expected '{{' in match")); }
-        pos += 1;
-        let mut arms = Vec::new();
-        while tokens.get(pos).map(|s| s.as_str()) != Some("}") {
-            let pat = parse_pattern(tokens.get(pos).ok_or_else(|| format!("line {line_no}, col 1: missing pattern"))?);
-            pos += 1;
-            if tokens.get(pos).map(|s| s.as_str()) != Some("=>") { return Err(format!("line {line_no}, col 1: expected `=>`")); }
-            pos += 1;
-            let (expr, next) = parse_expr_bp(tokens, pos, 0, line_no)?;
-            pos = next;
-            arms.push((pat, expr));
-            if tokens.get(pos).map(|s| s.as_str()) == Some(",") { pos += 1; }
-        }
-        pos += 1;
-        Expr::Match { scrutinee: Box::new(scrutinee), arms }
-    } else if tokens[pos] == "|" {
-        pos += 1;
-        let mut params = Vec::new();
-        while tokens.get(pos).map(|s| s.as_str()) != Some("|") {
-            let p = tokens.get(pos).ok_or_else(|| format!("line {line_no}, col 1: unterminated lambda params"))?;
-            if p != "," { params.push(p.clone()); }
-            pos += 1;
-        }
-        pos += 1;
-        let (body, next) = parse_expr_bp(tokens, pos, 0, line_no)?;
-        pos = next;
-        Expr::Lambda { params, body: Box::new(body) }
+        let (else_src, next2) = extract_braced_from_tokens(tokens, pos, line_no)?; pos = next2;
+        let then_block = Block { stmts: parse_statement_list(&split_logical_statements(&then_src)?)? };
+        let else_block = Block { stmts: parse_statement_list(&split_logical_statements(&else_src)?)? };
+        Expr::If { cond: Box::new(cond), then_branch: Box::new(then_block), else_branch: Box::new(else_block) }
     } else if tokens[pos] == "(" {
         pos += 1;
         let (first, next) = parse_expr_bp(tokens, pos, 0, line_no)?;
@@ -183,6 +168,28 @@ fn parse_expr_bp(tokens: &[String], mut pos: usize, min_bp: u8, line_no: usize) 
     Ok((lhs, pos))
 }
 
+fn extract_braced(input: &str, line_no: usize) -> Result<(String, usize), String> {
+    let lb = input.find('{').ok_or_else(|| format!("line {line_no}, col 1: expected '{{'"))?;
+    let rb = input.rfind('}').ok_or_else(|| format!("line {line_no}, col 1: expected '}}'"))?;
+    if rb <= lb { return Err(format!("line {line_no}, col 1: malformed block")); }
+    Ok((input[lb + 1..rb].trim().to_string(), rb + 1))
+}
+
+fn extract_braced_from_tokens(tokens: &[String], start: usize, line_no: usize) -> Result<(String, usize), String> {
+    if tokens.get(start).map(|s| s.as_str()) != Some("{") { return Err(format!("line {line_no}, col 1: expected `{{`")); }
+    let mut depth = 0i32;
+    let mut i = start;
+    let mut body = Vec::new();
+    while i < tokens.len() {
+        let t = &tokens[i];
+        if t == "{" { depth += 1; if depth > 1 { body.push(t.clone()); } }
+        else if t == "}" { depth -= 1; if depth == 0 { return Ok((body.join(" "), i + 1)); } body.push(t.clone()); }
+        else { body.push(t.clone()); }
+        i += 1;
+    }
+    Err(format!("line {line_no}, col 1: unterminated block"))
+}
+
 fn parse_pattern(tok: &str) -> Pattern {
     if tok == "_" { Pattern::Wildcard }
     else if tok == "true" || tok == "false" { Pattern::Bool(tok == "true") }
@@ -200,7 +207,7 @@ fn tokenize(input: &str, line_no: usize) -> Result<Vec<String>, String> {
     while i < chars.len() {
         let ch = chars[i];
         match ch {
-            ' ' | '\t' => { if !buf.is_empty() { tokens.push(std::mem::take(&mut buf)); } i += 1; }
+            ' ' | '\t' | '\n' | '\r' => { if !buf.is_empty() { tokens.push(std::mem::take(&mut buf)); } i += 1; }
             '"' => {
                 if !buf.is_empty() { tokens.push(std::mem::take(&mut buf)); }
                 let start = i; i += 1; let mut s = String::new();
@@ -216,22 +223,4 @@ fn tokenize(input: &str, line_no: usize) -> Result<Vec<String>, String> {
     }
     if !buf.is_empty() { tokens.push(buf); }
     Ok(tokens)
-}
-
-
-fn strip_pub_kw<'a>(line: &'a str, kw: &str) -> Option<(bool, &'a str)> {
-    if let Some(rest) = line.strip_prefix(kw) { return Some((false, rest)); }
-    let pref = format!("pub {kw}");
-    if let Some(rest) = line.strip_prefix(&pref) { return Some((true, rest)); }
-    None
-}
-
-fn parse_package_stmt(input:&str, line_no:usize)->Result<Stmt,String>{
-    let mut name=None; let mut root=None; let mut exports=Vec::new();
-    for part in input.split(';').map(|x|x.trim()).filter(|x|!x.is_empty()){
-        if let Some(v)=part.strip_prefix("name="){name=Some(v.trim().to_string());}
-        else if let Some(v)=part.strip_prefix("root="){root=Some(v.trim().to_string());}
-        else if let Some(v)=part.strip_prefix("exports="){exports=v.split(',').map(|x|x.trim().to_string()).filter(|x|!x.is_empty()).collect();}
-    }
-    match (name,root){(Some(name),Some(root))=>Ok(Stmt::Package{name,root,exports}),_=>Err(format!("line {line_no}, col 1: package requires name and root"))}
 }

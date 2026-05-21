@@ -15,8 +15,6 @@ using flux::shared::instruction;
 using flux::shared::instruction_kind;
 using value = flux::stdlib::value;
 
-static bool as_bool(const value& v){ if(auto p=std::get_if<bool>(&v)) return *p; throw std::runtime_error("expected bool"); }
-
 static std::vector<instruction> decode_binary(const std::string& path) {
     std::ifstream in(path, std::ios::binary);
     if (!in) throw std::runtime_error("cannot open bytecode file");
@@ -24,7 +22,7 @@ static std::vector<instruction> decode_binary(const std::string& path) {
     auto ru16=[&](){uint16_t v; in.read(reinterpret_cast<char*>(&v),2); if(!in) throw std::runtime_error("bad bytecode"); return v;};
     auto ru32=[&](){uint32_t v; in.read(reinterpret_cast<char*>(&v),4); if(!in) throw std::runtime_error("bad bytecode"); return v;};
     char magic[4]; in.read(magic,4); if(std::string(magic,4)!="FLXB") throw std::runtime_error("bad magic");
-    uint8_t ver=ru8(); if(ver!=3) throw std::runtime_error("unsupported bytecode version");
+    uint8_t ver=ru8(); if(ver!=2) throw std::runtime_error("unsupported bytecode version");
     uint32_t count=ru32(); std::vector<instruction> out; out.reserve(count);
     for(uint32_t i=0;i<count;++i){ instruction inst{}; inst.kind=(instruction_kind)ru8(); uint16_t nl=ru16(); inst.name.resize(nl); in.read(inst.name.data(),nl); uint32_t pl=ru32(); inst.payload.resize(pl); in.read((char*)inst.payload.data(),pl); if(!in) throw std::runtime_error("bad payload"); out.push_back(std::move(inst)); }
     return out;
@@ -35,7 +33,6 @@ static double as_number(const value& v){ if(auto p=std::get_if<double>(&v)) retu
 static value eval_expr(const std::vector<uint8_t>& code, const std::unordered_map<std::string, value>& values){
     std::vector<value> st; size_t ip=0;
     auto r16=[&](){ if(ip+2>code.size()) throw std::runtime_error("truncated"); uint16_t v=*reinterpret_cast<const uint16_t*>(&code[ip]); ip+=2; return v;};
-    auto r32=[&](){ if(ip+4>code.size()) throw std::runtime_error("truncated"); uint32_t v=*reinterpret_cast<const uint32_t*>(&code[ip]); ip+=4; return v;};
     auto r64=[&](){ if(ip+8>code.size()) throw std::runtime_error("truncated"); double v=*reinterpret_cast<const double*>(&code[ip]); ip+=8; return v;};
     while(ip<code.size()){
         uint8_t op=code[ip++];
@@ -44,12 +41,6 @@ static value eval_expr(const std::vector<uint8_t>& code, const std::unordered_ma
         else if(op==3){ uint16_t n=r16(); if(ip+n>code.size()) throw std::runtime_error("truncated name"); std::string nm((const char*)&code[ip], n); ip+=n; auto it=values.find(nm); if(it==values.end()) throw std::runtime_error("unknown name: "+nm); st.push_back(it->second); }
         else if(op>=4 && op<=7){ if(st.size()<2) throw std::runtime_error("stack underflow"); auto b=st.back();st.pop_back(); auto a=st.back();st.pop_back(); double av=as_number(a), bv=as_number(b); if(op==4) st.push_back(av+bv); else if(op==5) st.push_back(av-bv); else if(op==6) st.push_back(av*bv); else { if(bv==0.0) throw std::runtime_error("division by zero"); st.push_back(av/bv);} }
         else if(op==8){ uint16_t n=r16(); if(ip+n>code.size()) throw std::runtime_error("truncated call"); std::string fn((const char*)&code[ip],n); ip+=n; if(ip>=code.size()) throw std::runtime_error("truncated argc"); uint8_t argc=code[ip++]; if(st.size()<argc) throw std::runtime_error("stack underflow"); std::vector<value> args(argc); for(size_t i=0;i<argc;++i){ args[argc-1-i]=st.back(); st.pop_back(); } st.push_back(flux::stdlib::call(fn,args)); }
-        else if(op==11){ uint32_t target=r32(); if(target>code.size()) throw std::runtime_error("jump out of bounds"); ip=target; }
-        else if(op==12){ uint32_t target=r32(); if(st.empty()) throw std::runtime_error("stack underflow"); bool cond=as_bool(st.back()); st.pop_back(); if(!cond){ if(target>code.size()) throw std::runtime_error("branch target out of bounds"); ip=target; } }
-        else if(op==13){ if(st.empty()) throw std::runtime_error("stack underflow"); st.push_back(st.back()); }
-        else if(op==14){ if(st.empty()) throw std::runtime_error("stack underflow"); st.pop_back(); }
-        else if(op==15){ if(st.size()<2) throw std::runtime_error("stack underflow"); auto b=st.back(); st.pop_back(); auto a=st.back(); st.pop_back(); st.push_back(as_bool(a)==as_bool(b)); }
-        else if(op==16){ if(st.size()<2) throw std::runtime_error("stack underflow"); auto b=st.back(); st.pop_back(); auto a=st.back(); st.pop_back(); st.push_back(as_number(a)==as_number(b)); }
         else throw std::runtime_error("unknown opcode");
     }
     if(st.size()!=1) throw std::runtime_error("bad expr"); return st.back();
@@ -65,8 +56,6 @@ static std::unordered_set<std::string> collect_deps(const std::vector<uint8_t>& 
         else if(op==3){ uint16_t n=r16(); std::string nm((const char*)&code[ip], n); ip+=n; out.insert(nm); }
         else if(op>=4 && op<=7) {}
         else if(op==8){ uint16_t n=r16(); ip+=n; ip+=1; }
-        else if(op==11 || op==12) ip+=4;
-        else if(op==13 || op==14 || op==15 || op==16) {}
     }
     return out;
 }

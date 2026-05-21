@@ -9,8 +9,8 @@ pub enum Expr {
     Call { name: String, args: Vec<Expr> },
     If {
         cond: Box<Expr>,
-        then_branch: Box<Expr>,
-        else_branch: Box<Expr>,
+        then_branch: Box<Block>,
+        else_branch: Box<Block>,
     },
     Match {
         scrutinee: Box<Expr>,
@@ -20,6 +20,11 @@ pub enum Expr {
         params: Vec<String>,
         body: Box<Expr>,
     },
+}
+
+#[derive(Clone, Debug)]
+pub struct Block {
+    pub stmts: Vec<Stmt>,
 }
 
 #[derive(Clone, Debug)]
@@ -35,14 +40,10 @@ pub enum Op { Add, Sub, Mul, Div }
 
 #[derive(Clone, Debug)]
 pub enum Stmt {
-    Package { name: String, root: String, exports: Vec<String> },
     Import { path: String, alias: Option<String> },
-    Signal { name: String, expr: Expr, is_pub: bool },
-    Reactive { name: String, expr: Expr, is_pub: bool },
+    Signal(String, Expr),
+    Reactive(String, Expr),
     Set(String, Expr),
-    FnDef { name: String, params: Vec<String>, param_types: Vec<Option<LangTypeRef>>, body: Expr, is_pub: bool },
+    FnDef { name: String, params: Vec<String>, body: Block },
     Expr(Expr),
 }
-
-#[derive(Clone, Debug)]
-pub enum LangTypeRef { Number, Bool, String }
