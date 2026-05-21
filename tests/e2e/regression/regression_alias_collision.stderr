@@ -1,0 +1,1 @@
+compile error: namespace collision for alias `util`: `mods1::util` and `mods2::util`; use `as`
