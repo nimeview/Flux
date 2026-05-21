@@ -23,3 +23,11 @@ add_executable(runtime
         scheduler/scheduler.h
         runtime_api/runtime_api.cpp
         runtime_api/runtime_api.h)
+
+enable_testing()
+add_executable(runtime_scheduler_tests
+        tests/scheduler_tests.cpp
+        graph/graph.cpp
+        scheduler/scheduler.cpp
+        ../stdlib/std.cpp)
+add_test(NAME runtime_scheduler_tests COMMAND runtime_scheduler_tests)
