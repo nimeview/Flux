@@ -7,19 +7,21 @@ pub fn parse_program(src: &str) -> Result<Vec<Stmt>, String> {
         let line = raw.trim();
         if line.is_empty() || line.starts_with('#') { continue; }
 
-        let stmt = if let Some(rest) = line.strip_prefix("import ") {
+        let stmt = if line == "" { continue; } else if let Some(rest) = line.strip_prefix("package ") {
+            parse_package_stmt(rest, line_no)?
+        } else if let Some(rest) = line.strip_prefix("import ") {
             parse_import_stmt(rest, line_no)?
-        } else if let Some(rest) = line.strip_prefix("signal ") {
+        } else if let Some((is_pub, rest)) = strip_pub_kw(line, "signal ") {
             let (name, expr) = split_assignment(rest, line_no)?;
-            Stmt::Signal(name.to_string(), parse_expr(expr, line_no)?)
-        } else if let Some(rest) = line.strip_prefix("reactive ") {
+            Stmt::Signal { name: name.to_string(), expr: parse_expr(expr, line_no)?, is_pub }
+        } else if let Some((is_pub, rest)) = strip_pub_kw(line, "reactive ") {
             let (name, expr) = split_assignment(rest, line_no)?;
-            Stmt::Reactive(name.to_string(), parse_expr(expr, line_no)?)
+            Stmt::Reactive { name: name.to_string(), expr: parse_expr(expr, line_no)?, is_pub }
         } else if let Some(rest) = line.strip_prefix("set ") {
             let (name, expr) = split_assignment(rest, line_no)?;
             Stmt::Set(name.to_string(), parse_expr(expr, line_no)?)
-        } else if let Some(rest) = line.strip_prefix("fn ") {
-            parse_fn_stmt(rest, line_no)?
+        } else if let Some((is_pub, rest)) = strip_pub_kw(line, "fn ") {
+            parse_fn_stmt(rest, line_no, is_pub)?
         } else {
             Stmt::Expr(parse_expr(line, line_no)?)
         };
@@ -40,7 +42,7 @@ fn parse_import_stmt(input: &str, line_no: usize) -> Result<Stmt, String> {
     Ok(Stmt::Import { path: input.to_string(), alias: None })
 }
 
-fn parse_fn_stmt(input: &str, line_no: usize) -> Result<Stmt, String> {
+fn parse_fn_stmt(input: &str, line_no: usize, is_pub: bool) -> Result<Stmt, String> {
     let open = input.find('(').ok_or_else(|| format!("line {line_no}, col 1: expected '(' in fn"))?;
     let close = input.rfind(')').ok_or_else(|| format!("line {line_no}, col 1: expected ')' in fn"))?;
     let lb = input.find('{').ok_or_else(|| format!("line {line_no}, col 1: expected '{{' in fn"))?;
@@ -64,7 +66,7 @@ fn parse_fn_stmt(input: &str, line_no: usize) -> Result<Stmt, String> {
         }
     }
     let body = parse_expr(input[lb + 1..rb].trim(), line_no)?;
-    Ok(Stmt::FnDef { name, params, param_types, body })
+    Ok(Stmt::FnDef { name, params, param_types, body, is_pub })
 }
 
 
@@ -214,4 +216,22 @@ fn tokenize(input: &str, line_no: usize) -> Result<Vec<String>, String> {
     }
     if !buf.is_empty() { tokens.push(buf); }
     Ok(tokens)
+}
+
+
+fn strip_pub_kw<'a>(line: &'a str, kw: &str) -> Option<(bool, &'a str)> {
+    if let Some(rest) = line.strip_prefix(kw) { return Some((false, rest)); }
+    let pref = format!("pub {kw}");
+    if let Some(rest) = line.strip_prefix(&pref) { return Some((true, rest)); }
+    None
+}
+
+fn parse_package_stmt(input:&str, line_no:usize)->Result<Stmt,String>{
+    let mut name=None; let mut root=None; let mut exports=Vec::new();
+    for part in input.split(';').map(|x|x.trim()).filter(|x|!x.is_empty()){
+        if let Some(v)=part.strip_prefix("name="){name=Some(v.trim().to_string());}
+        else if let Some(v)=part.strip_prefix("root="){root=Some(v.trim().to_string());}
+        else if let Some(v)=part.strip_prefix("exports="){exports=v.split(',').map(|x|x.trim().to_string()).filter(|x|!x.is_empty()).collect();}
+    }
+    match (name,root){(Some(name),Some(root))=>Ok(Stmt::Package{name,root,exports}),_=>Err(format!("line {line_no}, col 1: package requires name and root"))}
 }
