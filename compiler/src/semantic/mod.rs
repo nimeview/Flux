@@ -155,6 +155,15 @@ fn infer_call(name: &str, args: &[Expr], env: &HashMap<String, LangType>, import
         "std::min" | "std::max" | "min" | "max" => expect_exact(name, &arg_types, &[LangType::Number, LangType::Number], mode).map(|_| LangType::Number),
         "std::now_ms" | "now_ms" => expect_exact(name, &arg_types, &[], mode).map(|_| LangType::Number),
         "std::print" | "print" => { if arg_types.len() != 1 { Err("<memory>:1:1: print arity mismatch: expected 1".to_string()) } else { Ok(arg_types[0].clone()) } },
+        "std::vec" | "vec" => {
+            for g in &arg_types {
+                if !type_compatible(&LangType::Number, g, mode) {
+                    return Err(TcError::new("call arg type mismatch", "Number", &format!("{g:?}"), &format!("call {name}")).msg);
+                }
+            }
+            Ok(LangType::VectorNumber)
+        }
+        "std::len" | "len" => expect_exact(name, &arg_types, &[LangType::VectorNumber], mode).map(|_| LangType::Number),
         _ => Err(format!("<memory>:1:1: unknown function `{name}`")),
     }
 }

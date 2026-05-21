@@ -1,0 +1,25 @@
+name: ci
+on:
+  push:
+  pull_request:
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install CMake
+        run: sudo apt-get update && sudo apt-get install -y cmake g++
+      - name: Smoke tests
+        run: cargo test --test e2e_runner -- --skip stress
+
+  stress:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install CMake
+        run: sudo apt-get update && sudo apt-get install -y cmake g++
+      - name: Stress tests
+        run: cargo test --test e2e_runner -- --ignored

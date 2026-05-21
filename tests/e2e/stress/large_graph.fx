@@ -1,0 +1,34 @@
+signal n0 = 1
+reactive n1 = n0 + 1
+reactive n2 = n1 + 1
+reactive n3 = n2 + 1
+reactive n4 = n3 + 1
+reactive n5 = n4 + 1
+reactive n6 = n5 + 1
+reactive n7 = n6 + 1
+reactive n8 = n7 + 1
+reactive n9 = n8 + 1
+reactive n10 = n9 + 1
+reactive n11 = n10 + 1
+reactive n12 = n11 + 1
+reactive n13 = n12 + 1
+reactive n14 = n13 + 1
+reactive n15 = n14 + 1
+reactive n16 = n15 + 1
+reactive n17 = n16 + 1
+reactive n18 = n17 + 1
+reactive n19 = n18 + 1
+reactive n20 = n19 + 1
+reactive n21 = n20 + 1
+reactive n22 = n21 + 1
+reactive n23 = n22 + 1
+reactive n24 = n23 + 1
+reactive n25 = n24 + 1
+reactive n26 = n25 + 1
+reactive n27 = n26 + 1
+reactive n28 = n27 + 1
+reactive n29 = n28 + 1
+reactive n30 = n29 + 1
+print(n30)
+set n0 = 5
+print(n30)

@@ -1,0 +1,1 @@
+compile error: <memory>:1:1: binary op type mismatch: expected Number and Number, got Bool and Number; context: binary expression
