@@ -85,3 +85,40 @@ mod tests {
         for src in cases { assert!(compile_to_binary_bytecode(src).is_err(), "expected error for: {src}"); }
     }
 }
+
+#[cfg(test)]
+mod bytecode_v3_tests {
+    use super::*;
+
+    #[test]
+    fn binary_if_uses_branch_and_jump() {
+        let src = "signal a = if true { 1 } else { 2 }\n";
+        let bc = compile_to_binary_bytecode(src).expect("binary compile");
+        assert_eq!(&bc[0..4], b"FLXB");
+        assert_eq!(bc[4], 3);
+        assert!(bc.contains(&11));
+        assert!(bc.contains(&12));
+    }
+
+    #[test]
+    fn binary_match_contains_pattern_compare_opcodes() {
+        let src = "signal a = match 2 { 1 => 10, 2 => 20, _ => 0 }\n";
+        let bc = compile_to_binary_bytecode(src).expect("binary compile");
+        assert!(bc.contains(&13));
+        assert!(bc.contains(&16));
+        assert!(bc.contains(&12));
+    }
+
+    #[test]
+    fn binary_fail_fast_for_unsupported_runtime_constructs() {
+        for src in [
+            "signal a = \"hello\"\n",
+            "signal a = (1, 2)\n",
+            "signal a = |x| x + 1\n",
+            "fn inc(x){ x + 1 }\nsignal a = 1\n",
+        ] {
+            let err = std::panic::catch_unwind(|| compile_to_binary_bytecode(src));
+            assert!(err.is_err());
+        }
+    }
+}
