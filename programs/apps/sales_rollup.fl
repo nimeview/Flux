@@ -1,0 +1,25 @@
+//! Sales Rollup — a HOF data pipeline over a sales array.
+//!
+//! `map` applies tax to each sale, `reduce` totals the taxed amounts, and the
+//! average follows. All three stay in sync if `sales` is ever reassigned.
+//!
+//! Run: flux run programs/apps/sales_rollup.fl
+
+import collections
+let sales = [100, 200, 150, 300, 250]
+
+fn tax(amount: Int) -> Float {
+    amount as Float * 8.0 / 100.0
+}
+
+fn with_tax(amount: Int) -> Float {
+    amount + tax(amount)
+}
+
+fn add(acc: Float, x: Float) -> Float {
+    acc + x
+}
+
+let taxed = map(sales, with_tax)
+let total = reduce(taxed, 0.0, add)
+let avg = total / len(taxed)

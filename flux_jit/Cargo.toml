@@ -1,0 +1,23 @@
+[package]
+name = "flux_jit"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+flux_ir          = { path = "../flux_ir" }
+flux_value       = { path = "../flux_value" }
+flux_std         = { path = "../flux_std" }
+cranelift        = "0.133"
+cranelift-jit    = "0.133"
+cranelift-module = "0.133"
+cranelift-native = "0.133"
+bincode          = "1.3"
+sha2             = "0.10"
+
+[dev-dependencies]
+flux_diagnostics = { path = "../flux_diagnostics" }
+flux_hir         = { path = "../flux_hir" }
+flux_syntax      = { path = "../flux-syntax" }
+flux_types       = { path = "../flux_types" }
+flux_cli         = { path = "../flux_cli" }
+flux_runtime     = { path = "../flux-runtime", features = ["jit"] }

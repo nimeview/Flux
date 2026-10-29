@@ -1,0 +1,10 @@
+let mut total = 0
+
+watch {
+
+let mut acc = 0
+    for i in [0, 1, 2] {
+        acc = acc + i
+    }
+    total = acc
+}

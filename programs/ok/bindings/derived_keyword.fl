@@ -1,0 +1,2 @@
+let mut base = 10
+derived total = base * 2

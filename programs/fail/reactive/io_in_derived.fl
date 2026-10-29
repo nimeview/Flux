@@ -1,0 +1,3 @@
+// expect: fail E017 — read_line in derived expression
+import io
+derived x = read_line()

@@ -1,0 +1,24 @@
+[workspace]
+resolver = "2"
+members = [
+    "flux_diagnostics",
+    "flux-syntax",
+    "flux_hir",
+    "flux_types",
+    "flux_ir",
+    "flux-runtime",
+    "flux_jit",
+    "flux_std",
+    "flux_value",
+    "flux_resolve",
+    "flux_fmt",
+    "flux_lsp",
+    "flux_wasm",
+    "flux_driver",
+    "flux_cli",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"

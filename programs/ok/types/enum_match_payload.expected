@@ -1,0 +1,2 @@
+m = Msg::Data(42)
+result = 42

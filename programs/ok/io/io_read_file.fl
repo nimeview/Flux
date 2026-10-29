@@ -1,0 +1,15 @@
+import io
+import result
+fn io_demo() -> Unit {
+    let path = "programs/ok/io/io_fixture.txt"
+    let _ = write_file(path, "hello flux")
+    let res = read_file(path)
+    match res {
+        Ok(s) => println(s),
+        Err(e) => println(e)
+    }
+}
+
+watch {
+    io_demo()
+}

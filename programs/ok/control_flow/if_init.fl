@@ -1,0 +1,9 @@
+// expect: compile ok — module-level if initializes source
+let use_true = true
+let mut a = 0
+
+if use_true {
+    a = 10
+} else {
+    a = 5
+}

@@ -1,0 +1,5 @@
+import math
+let a = 5
+let b = 2
+let c = a * b
+let max = if a > b { a } else { b }

@@ -1,0 +1,4 @@
+// expect: compile ok — string concatenation with +
+let hello = "Hello"
+let world = " World"
+let msg = hello + world

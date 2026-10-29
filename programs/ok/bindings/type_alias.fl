@@ -1,0 +1,4 @@
+type UserId = Int
+
+let id: UserId = 42
+let doubled = id * 2

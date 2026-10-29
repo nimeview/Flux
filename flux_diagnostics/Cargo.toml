@@ -1,0 +1,8 @@
+[package]
+name = "flux_diagnostics"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+miette = { version = "7", features = ["fancy"] }
+thiserror = "2"

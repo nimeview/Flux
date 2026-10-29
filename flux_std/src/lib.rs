@@ -1,0 +1,313 @@
+//! Flux standard library — builtin names and native implementations.
+
+mod io;
+mod math;
+mod modules;
+mod str_ext;
+
+pub use modules::{
+    export_in_std_module, is_std_module, std_module_exports, std_module_name, STD_MODULES,
+};
+
+pub use flux_value::Value;
+
+pub const BUILTIN_FNS: &[&str] = &[
+    "print",
+    "println",
+    "len",
+    "range",
+    "push",
+    "pop",
+    "map",
+    "filter",
+    "reduce",
+    "str_len",
+    "str_split",
+    "str_contains",
+    "str_trim",
+    "str_join",
+    "str_starts_with",
+    "str_ends_with",
+    "str_replace",
+    "str_to_lower",
+    "str_to_upper",
+    "abs",
+    "min",
+    "max",
+    "clamp",
+    "sqrt",
+    "floor",
+    "ceil",
+    "pow",
+    "assert",
+    "assert_eq",
+    "read_line",
+    "read_file",
+    "write_file",
+    "append_file",
+    "file_exists",
+    "Some",
+    "None",
+    "Ok",
+    "Err",
+];
+
+/// Pure intrinsics eligible for JIT libcalls (no I/O, no HOF).
+pub const PURE_INTRINSICS: &[&str] = &[
+    "len",
+    "range",
+    "abs",
+    "min",
+    "max",
+    "clamp",
+    "sqrt",
+    "floor",
+    "ceil",
+    "pow",
+    "str_len",
+    "str_contains",
+    "str_starts_with",
+    "str_ends_with",
+    "str_to_lower",
+    "str_to_upper",
+];
+
+/// Builtin calls with side effects (I/O, printing) — forbidden in derived expressions.
+pub const SIDE_EFFECT_BUILTINS: &[&str] = &[
+    "print",
+    "println",
+    "read_line",
+    "read_file",
+    "write_file",
+    "append_file",
+];
+
+pub const HOF_FNS: &[&str] = &["map", "filter", "reduce"];
+
+pub fn is_hof(name: &str) -> bool {
+    HOF_FNS.contains(&name)
+}
+
+/// Returns `true` if `name` is a builtin function.
+pub fn is_builtin_fn(name: &str) -> bool {
+    BUILTIN_FNS.contains(&name)
+}
+
+/// Call a builtin function. Returns `None` if `name` is not a builtin.
+pub fn call_builtin(name: &str, args: &[Value]) -> Option<Value> {
+    match name {
+        "print" => {
+            if let Some(v) = args.first() {
+                print!("{}", v.display_string());
+            }
+            Some(Value::Unit)
+        }
+        "println" => {
+            if let Some(v) = args.first() {
+                println!("{}", v.display_string());
+            } else {
+                println!();
+            }
+            Some(Value::Unit)
+        }
+        "len" => {
+            let n = match args.first()? {
+                Value::String(s) => s.len() as i64,
+                Value::Array(a) => a.len() as i64,
+                _ => return Some(Value::int_i64(0)),
+            };
+            Some(Value::int_i64(n))
+        }
+        "range" => {
+            let (start, end, step) = match args.len() {
+                0 => return Some(Value::Array(vec![])),
+                1 => {
+                    let end = int_arg(args.first())?;
+                    if end < 0 {
+                        return Some(Value::Array(vec![]));
+                    }
+                    (0, end, 1)
+                }
+                2 => {
+                    let start = int_arg(args.first())?;
+                    let end = int_arg(args.get(1))?;
+                    (start, end, 1)
+                }
+                _ => {
+                    let start = int_arg(args.first())?;
+                    let end = int_arg(args.get(1))?;
+                    let step = int_arg(args.get(2))?;
+                    (start, end, step)
+                }
+            };
+            Some(Value::Array(build_int_range(start, end, step)))
+        }
+        "push" => {
+            let arr = match args.first()? {
+                Value::Array(a) => a.clone(),
+                _ => vec![],
+            };
+            let val = args.get(1).cloned().unwrap_or(Value::Unit);
+            let mut out = arr;
+            out.push(val);
+            Some(Value::Array(out))
+        }
+        "pop" => {
+            let mut arr = match args.first()? {
+                Value::Array(a) => a.clone(),
+                _ => vec![],
+            };
+            let last = arr.pop().unwrap_or(Value::Unit);
+            Some(Value::Array(vec![Value::Array(arr), last]))
+        }
+        // `map`/`filter`/`reduce` are higher-order and need to invoke user functions
+        // or closures, which this value-only builtin layer can't do. The VM
+        // (`flux-runtime/src/exec.rs::call_function`) intercepts these names before
+        // ever reaching `call_builtin`, so they're intentionally unhandled here.
+        "str_len" => {
+            let n = match args.first()? {
+                Value::String(s) => s.len() as i64,
+                _ => 0,
+            };
+            Some(Value::int_i64(n))
+        }
+        "str_split" => {
+            let s = match args.first()? {
+                Value::String(s) => s,
+                _ => return Some(Value::Array(vec![])),
+            };
+            let sep = match args.get(1)? {
+                Value::String(s) => s.as_str(),
+                _ => " ",
+            };
+            let parts: Vec<Value> = s.split(sep).map(|p| Value::String(p.to_string())).collect();
+            Some(Value::Array(parts))
+        }
+        "str_contains" => {
+            let (hay, needle) = match (args.first(), args.get(1)) {
+                (Some(Value::String(h)), Some(Value::String(n))) => (h, n),
+                _ => return Some(Value::Bool(false)),
+            };
+            Some(Value::Bool(hay.contains(needle.as_str())))
+        }
+        "str_trim" => {
+            let s = match args.first()? {
+                Value::String(s) => s.trim().to_string(),
+                _ => String::new(),
+            };
+            Some(Value::String(s))
+        }
+        "str_join" => {
+            let arr = match args.first()? {
+                Value::Array(a) => a,
+                _ => return Some(Value::String(String::new())),
+            };
+            let sep = match args.get(1) {
+                Some(Value::String(s)) => s.as_str(),
+                _ => "",
+            };
+            let parts: Vec<String> = arr
+                .iter()
+                .map(|v| match v {
+                    Value::String(s) => s.clone(),
+                    other => other.display_string(),
+                })
+                .collect();
+            Some(Value::String(parts.join(sep)))
+        }
+        "str_starts_with" => Some(str_ext::starts_with(args.first()?, args.get(1)?)?),
+        "str_ends_with" => Some(str_ext::ends_with(args.first()?, args.get(1)?)?),
+        "str_replace" => Some(str_ext::replace(args.first()?, args.get(1)?, args.get(2)?)?),
+        "str_to_lower" => Some(str_ext::to_lower(args.first()?)?),
+        "str_to_upper" => Some(str_ext::to_upper(args.first()?)?),
+        "abs" => math::abs(args.first()?),
+        "min" => math::min(args.first()?, args.get(1)?),
+        "max" => math::max(args.first()?, args.get(1)?),
+        "clamp" => math::clamp(args.first()?, args.get(1)?, args.get(2)?),
+        "sqrt" => math::sqrt(args.first()?),
+        "floor" => math::floor(args.first()?),
+        "ceil" => math::ceil(args.first()?),
+        "pow" => math::pow(args.first()?, args.get(1)?),
+        "assert" => math::assert(args.first()?),
+        "assert_eq" => math::assert_eq(args.first()?, args.get(1)?),
+        "read_line" => Some(io::read_line()),
+        "read_file" => {
+            let path = match args.first()? {
+                Value::String(s) => s.as_str(),
+                _ => return None,
+            };
+            Some(io::read_file(path))
+        }
+        "write_file" => {
+            let path = match args.first()? {
+                Value::String(s) => s.as_str(),
+                _ => return None,
+            };
+            let contents = match args.get(1)? {
+                Value::String(s) => s.as_str(),
+                _ => return None,
+            };
+            Some(io::write_file(path, contents))
+        }
+        "append_file" => {
+            let path = match args.first()? {
+                Value::String(s) => s.as_str(),
+                _ => return None,
+            };
+            let contents = match args.get(1)? {
+                Value::String(s) => s.as_str(),
+                _ => return None,
+            };
+            Some(io::append_file(path, contents))
+        }
+        "file_exists" => {
+            let path = match args.first()? {
+                Value::String(s) => s.as_str(),
+                _ => return Some(Value::Bool(false)),
+            };
+            Some(io::file_exists(path))
+        }
+        "Some" => {
+            let inner = args.first().cloned().unwrap_or(Value::Unit);
+            Some(Value::Option(Some(Box::new(inner))))
+        }
+        "None" => Some(Value::Option(None)),
+        "Ok" => {
+            let inner = args.first().cloned().unwrap_or(Value::Unit);
+            Some(Value::Result(Ok(Box::new(inner))))
+        }
+        "Err" => {
+            let inner = args
+                .first()
+                .cloned()
+                .unwrap_or(Value::String(String::new()));
+            Some(Value::Result(Err(Box::new(inner))))
+        }
+        _ => None,
+    }
+}
+
+fn int_arg(v: Option<&Value>) -> Option<i64> {
+    v?.as_int()
+}
+
+fn build_int_range(start: i64, end: i64, step: i64) -> Vec<Value> {
+    if step == 0 {
+        return vec![];
+    }
+    let mut out = Vec::new();
+    if step > 0 {
+        let mut i = start;
+        while i < end {
+            out.push(Value::int_i64(i));
+            i += step;
+        }
+    } else {
+        let mut i = start;
+        while i > end {
+            out.push(Value::int_i64(i));
+            i += step;
+        }
+    }
+    out
+}

@@ -1,0 +1,7 @@
+// expect: fail E003 — assign to derived inside watch
+let a = 5
+let c = a + 1
+
+watch {
+    c = 0
+}

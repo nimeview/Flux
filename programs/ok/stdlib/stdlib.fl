@@ -1,0 +1,19 @@
+// stdlib builtins: print, len, range, Option, Result
+import io
+import collections
+import option
+import result
+let items = [1, 2, 3]
+let count = len(items)
+let nums = range(3)
+
+fn greet() {
+    println("hello")
+}
+
+watch {
+    greet()
+}
+
+let opt = Some(42)
+let res = Ok(10)

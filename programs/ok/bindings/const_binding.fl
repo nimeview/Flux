@@ -1,0 +1,2 @@
+const N = 42
+let doubled = N * 2

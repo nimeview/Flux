@@ -1,0 +1,7 @@
+fn identity(p: Int) -> Int {
+
+let x = p
+    return x
+}
+
+let result = identity(42)

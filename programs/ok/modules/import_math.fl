@@ -1,0 +1,4 @@
+import math as m
+
+let x = 5
+let y = m.double(x)

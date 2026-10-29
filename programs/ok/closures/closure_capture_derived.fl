@@ -1,0 +1,6 @@
+import collections
+let x = 1
+let doubled = x * 2
+let nums = [1, 2, 3, 4, 5]
+let big = filter(nums, |n| n > doubled)
+let count = len(big)

@@ -1,0 +1,5 @@
+let a = 5
+fn foo() {
+
+let x = a + 1
+}

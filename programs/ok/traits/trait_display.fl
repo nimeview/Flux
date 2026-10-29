@@ -1,0 +1,11 @@
+trait Display {
+    fn to_string(x: Int) -> String;
+}
+
+impl Display for Int {
+    fn to_string(self: Int) -> String {
+        "int"
+    }
+}
+
+let msg = (42).to_string()

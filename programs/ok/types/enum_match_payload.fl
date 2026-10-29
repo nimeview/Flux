@@ -1,0 +1,11 @@
+enum Msg { Ping, Data(Int) }
+
+fn value(m: Msg) -> Int {
+    match m {
+        Ping => 0,
+        Data(n) => n
+    }
+}
+
+let m = Data(42)
+let result = value(m)

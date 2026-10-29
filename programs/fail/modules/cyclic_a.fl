@@ -1,0 +1,4 @@
+// test: stub
+import cyclic_b
+
+let x = 1

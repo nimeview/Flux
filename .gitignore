@@ -1,0 +1,12 @@
+# Rust build output
+/target/
+**/target/
+
+# Flux compiler caches
+/.flux/
+**/.flux/
+
+# Local IDE and OS files
+.idea/
+.DS_Store
+**/.DS_Store

@@ -1,0 +1,8 @@
+import collections
+fn square(x: Int) -> Int { x * x }
+fn is_big(x: Int) -> Bool { x > 10 }
+
+let nums = [1, 2, 3, 4, 5]
+let squared = map(nums, square)
+let big = filter(squared, is_big)
+let total = reduce(squared, 0, |acc| acc + 1)

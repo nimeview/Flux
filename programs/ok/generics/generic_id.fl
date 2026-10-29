@@ -1,0 +1,3 @@
+fn id_int(x: Int) -> Int { x }
+
+let result = id_int(42)

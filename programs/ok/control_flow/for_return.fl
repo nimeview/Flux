@@ -1,0 +1,11 @@
+import collections
+fn find_two() -> Int {
+    for i in range(10) {
+        if i == 2 {
+            return i
+        }
+    }
+    return 0 - 1
+}
+
+let found = find_two()

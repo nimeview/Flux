@@ -1,0 +1,6 @@
+rfn scale(x: Int) -> Int {
+    x * 2
+}
+
+let a = 3
+let b = scale(a)

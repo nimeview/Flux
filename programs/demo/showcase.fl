@@ -1,0 +1,134 @@
+// ===========================================================
+// Flux Language Showcase — демонстрация всех возможностей
+// ===========================================================
+
+// ─── 1. Примитивные типы ─────────────────────────────────
+import io
+import collections
+import option
+import result
+let int_val = 42
+let float_val = 3.14
+let bool_val = true
+let str_val = "Flux"
+
+// ─── 2. Арифметика и операторы ───────────────────────────
+let sum = int_val + 10
+let product = int_val * 2
+let ratio = sum / 2
+let is_big = sum > 50
+
+// ─── 3. Строки ───────────────────────────────────────────
+let greeting = "Hello, " + str_val + "!"
+
+// ─── 4. Массивы ──────────────────────────────────────────
+let numbers = [1, 2, 3, 4, 5]
+let count = len(numbers)
+let indexes = range(3)
+
+// ─── 5. Функции (pure) ───────────────────────────────────
+fn square(n: Int) -> Int {
+    n * n
+}
+
+fn abs_val(x: Int) -> Int {
+    if x > 0 { return x }
+    return 0 - x
+}
+
+fn max2(a: Int, b: Int) -> Int {
+    if a > b { return a }
+    return b
+}
+
+let sq = square(7)
+let ab = abs_val(0 - 5)
+let best = max2(sq, ab)
+// ─── 6. Реактивные функции (rfn) ─────────────────────────
+let base = 10
+rfn add_base(x: Int) -> Int {
+    x + base
+}
+
+let reactive_result = add_base(sq)
+// ─── 7. Struct ───────────────────────────────────────────
+struct Point {
+    x: Int,
+    y: Int
+}
+
+let origin = Point { x: 0, y: 0 }
+let pt = Point { x: 3, y: 4 }
+// ─── 8. Enum + match ─────────────────────────────────────
+enum Direction { North, South, East, West }
+
+let heading = North
+let heading2 = East
+let dir_val = match heading  { North => 0, South => 1, East => 2, West => 3 }
+let dir_val2 = match heading2 { North => 0, South => 1, East => 2, West => 3 }
+// ─── 9. Option / Result ──────────────────────────────────
+let maybe = Some(99)
+let nothing = None
+let good_res = Ok(42)
+let bad_res = Err(0)
+// ─── 10. Цикл for + break ────────────────────────────────
+fn find_first_even(limit: Int) -> Int {
+    for i in range(limit) {
+        if i == 2 { return i }
+    }
+    return 0 - 1
+}
+
+let first_even = find_first_even(10)
+// ─── 11. Цикл while + return ─────────────────────────────
+fn count_down(start: Int) -> Int {
+
+let mut n = start
+
+let mut steps = 0
+    while n > 0 {
+        n = n - 1
+        steps = steps + 1
+    }
+    return steps
+}
+
+let mut steps = count_down(5)
+// ─── 12. Source bindings (реактивный граф) ───────────────
+let mut counter = 0
+let doubled = counter * 2
+let tripled = counter * 3
+// ─── 13. Events ──────────────────────────────────────────
+event Tick
+event Reset
+
+on Tick  { counter = counter + 1 }
+on Reset { counter = 0 }
+
+// ─── 14. Watch ───────────────────────────────────────────
+let mut log_val = 0
+watch counter {
+    log_val = doubled + 1
+}
+
+// ─── 15. Watch с конкретной переменной ───────────────────
+let mut side_a = 0
+let mut side_b = 0
+watch side_a {
+    side_b = side_a * 10
+}
+
+// ─── 16. Snap (снимок реактивного значения) ──────────────
+let mut snapshot_src = 77
+fn read_snapshot() -> Int {
+    snap(snapshot_src) + 1
+}
+
+let mut snap_result = read_snapshot()
+// ─── 17. Stdlib: println в watch ─────────────────────────
+watch {
+    println("showcase running")
+}
+
+// ─── 18. Модульный импорт ────────────────────────────────
+// (задокументировано в import_math.fl — отдельный файл)

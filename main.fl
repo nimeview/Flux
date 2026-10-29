@@ -1,0 +1,7 @@
+// my_app
+import io
+
+watch {
+    let a = io.input()
+    println(a)
+}

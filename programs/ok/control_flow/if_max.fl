@@ -1,0 +1,5 @@
+// expect: biggest=5, smallest=2
+let a = 5
+let b = 2
+let biggest = if a > b { a } else { b }
+let smallest = if a < b { a } else { b }

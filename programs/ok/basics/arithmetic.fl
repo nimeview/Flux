@@ -1,0 +1,7 @@
+// expect: sum=5, product=6, diff=1, ratio=1.5
+let x = 2
+let y = 3
+let sum = x + y
+let product = x * y
+let diff = y - x
+let ratio = y as Float / x

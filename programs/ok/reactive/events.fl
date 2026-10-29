@@ -1,0 +1,7 @@
+event Inc
+
+let mut n = 0
+
+on Inc {
+    n = n + 1
+}

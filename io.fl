@@ -1,0 +1,9 @@
+
+
+pub fn input() -> String {
+    let str = read_line()
+    match str {
+        Ok(s) => s,
+        Err(e) => e
+    }
+}

@@ -1,0 +1,23 @@
+// Thermostat — reactive metrics + targeted watch
+let mut temperature = 20
+let humidity = 40
+let threshold = 25
+
+rfn heat_index() -> Int {
+    temperature + humidity / 10
+}
+
+let comfort = heat_index()
+let too_hot = temperature > threshold
+let mut alert_count = 0
+watch temperature {
+    if too_hot {
+        alert_count = alert_count + 1
+    }
+}
+
+event Tick
+
+on Tick {
+    temperature = temperature + 1
+}

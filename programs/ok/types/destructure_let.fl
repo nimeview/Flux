@@ -1,0 +1,5 @@
+struct Point { x: Int, y: Int }
+
+let pt = Point { x: 3, y: 4 }
+let Point { x, y } = pt
+let sum = x + y

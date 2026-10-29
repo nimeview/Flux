@@ -1,0 +1,12 @@
+// test: check-only
+import io
+import result
+fn read_greeting() -> String {
+    let res = read_line()
+    match res {
+        Ok(s) => s,
+        Err(e) => e
+    }
+}
+
+let line = read_greeting()

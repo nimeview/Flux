@@ -1,0 +1,7 @@
+import collections
+fn double(x: Int) -> Int { x * 2 }
+
+let nums = [1, 2, 3, 4, 5]
+let doubled = map(nums, |x| x * 2)
+let times3 = map(nums, |x| x * 3)
+let via_fn = map(nums, double)

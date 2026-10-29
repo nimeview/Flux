@@ -1,0 +1,4 @@
+// test: stub
+import cyclic_a
+
+let y = 2

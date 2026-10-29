@@ -1,0 +1,6 @@
+fn find_max(a: Int, b: Int) -> Int {
+    if a > b { return a }
+    return b
+}
+
+let result = find_max(3, 7)

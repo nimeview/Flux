@@ -1,0 +1,2 @@
+// E005: type mismatch
+let x: String = 42

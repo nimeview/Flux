@@ -1,0 +1,2 @@
+let x = 5
+let result = match x { n if n > 0 => n, _ => 0 }

@@ -1,0 +1,30 @@
+// Sports scoreboard — events, derived lead, watch loop
+import collections
+event ScoreHome
+event ScoreAway
+
+let mut home = 0
+let mut away = 0
+
+let lead = if home > away {
+    home - away
+} else {
+    if away > home { away - home } else { 0 }
+}
+
+let mut possessions = 0
+
+watch {
+    possessions = 0
+    for i in range(10) {
+        possessions = possessions + 1
+    }
+}
+
+on ScoreHome {
+    home = home + 3
+}
+
+on ScoreAway {
+    away = away + 3
+}

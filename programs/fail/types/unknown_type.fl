@@ -1,0 +1,2 @@
+// E007: unknown type
+let x: Foo = 1

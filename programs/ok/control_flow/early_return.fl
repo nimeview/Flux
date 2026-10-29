@@ -1,0 +1,11 @@
+fn classify(n: Int) -> Int {
+    if n < 0 { return 0 }
+    if n == 0 { return 1 }
+    if n < 10 { return 2 }
+    return 3
+}
+
+let a = classify(-5)
+let b = classify(0)
+let c = classify(5)
+let d = classify(100)

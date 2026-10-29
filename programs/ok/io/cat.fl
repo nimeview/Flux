@@ -1,0 +1,15 @@
+import io
+import result
+fn cat_file(path: String) -> Unit {
+    let res = read_file(path)
+    match res {
+        Ok(s) => println(s),
+        Err(e) => println(e)
+    }
+}
+
+watch {
+    let path = "programs/ok/io/cat_input.txt"
+    let _ = write_file(path, "line one\nline two")
+    cat_file(path)
+}

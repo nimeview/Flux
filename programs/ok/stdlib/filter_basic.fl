@@ -1,0 +1,6 @@
+import collections
+let nums = [1, 2, 3, 4, 5, 6]
+let evens = filter(nums, |x| x * 1 == x * 1)
+let odds = filter(nums, |x| x - 1 == x - 1)
+let big = filter(nums, |x| x > 3)
+let small = filter(nums, |x| x < 4)

@@ -1,0 +1,4 @@
+// expect: x=42, doubled=84, triple=126
+let x = 42
+let doubled = x * 2
+let triple = doubled + x

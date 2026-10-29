@@ -1,0 +1,9 @@
+import collections
+fn sum_until(limit: Int) -> Int {
+    for i in range(10) {
+        if i == limit { break }
+    }
+    return 10
+}
+
+let result = sum_until(5)

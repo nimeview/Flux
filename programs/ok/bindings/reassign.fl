@@ -1,0 +1,6 @@
+let mut a = 5
+let b = a + 1
+
+watch {
+    a = 10
+}

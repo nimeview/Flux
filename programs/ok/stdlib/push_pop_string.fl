@@ -1,0 +1,5 @@
+// expect: compile ok — push/pop type-check against the array's actual element type
+import collections
+let words = ["a", "b"]
+let more = push(words, "c")
+let count = len(more)

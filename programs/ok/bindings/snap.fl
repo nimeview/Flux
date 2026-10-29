@@ -1,0 +1,6 @@
+// expect: compile ok — snap() in pure fn reads reactive snapshot
+let a = 10
+
+fn read_snap() -> Int {
+    snap(a) + 1
+}

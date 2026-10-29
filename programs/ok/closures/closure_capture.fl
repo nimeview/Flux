@@ -1,0 +1,6 @@
+// expect: compile ok — closure captures a module Source binding
+import collections
+let threshold = 3
+let nums = [1, 2, 3, 4, 5]
+let big = filter(nums, |x| x > threshold)
+let count = len(big)

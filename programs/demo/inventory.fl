@@ -1,0 +1,8 @@
+// Inventory line — fn calls + mutable quantity source
+fn line_total(price: Int, qty: Int) -> Int {
+    price * qty
+}
+
+let price = 10
+let mut quantity = 5
+let total = line_total(price, quantity)

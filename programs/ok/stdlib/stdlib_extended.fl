@@ -1,0 +1,14 @@
+//! push, pop, filter, reduce, str_len, str_split, str_contains, str_trim
+import collections
+import str
+let items = [1, 2, 3, 0, 5]
+let doubled = push(items, 7)
+let popped = pop(doubled)
+let filtered = filter(items)
+let total = reduce(items, 0)
+
+let hello = "  hello world  "
+let trimmed = str_trim(hello)
+let hlen = str_len(trimmed)
+let has_lo = str_contains(trimmed, "hello")
+let parts = str_split(trimmed, " ")

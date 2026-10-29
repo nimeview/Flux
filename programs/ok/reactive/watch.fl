@@ -1,0 +1,6 @@
+let a = 5
+let mut side = 0
+
+watch {
+    side = a * 2
+}

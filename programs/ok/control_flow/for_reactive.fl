@@ -1,0 +1,11 @@
+let arr = [1, 3, 5, 7, 9, 11]
+let mut total = 0
+
+watch {
+
+let mut acc = 0
+    for i in arr {
+        acc = acc + i
+    }
+    total = acc
+}

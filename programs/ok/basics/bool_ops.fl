@@ -1,0 +1,6 @@
+let t = true
+let f = false
+let and_tt = if t && t { 1 } else { 0 }
+let or_tf = if t || f { 1 } else { 0 }
+let not_f = if !f { 1 } else { 0 }
+let mixed = if t && f || t { 1 } else { 0 }

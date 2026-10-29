@@ -1,0 +1,4 @@
+// expect: fail E012 — import path escapes project root
+import ../outside as bad
+
+let x = 1

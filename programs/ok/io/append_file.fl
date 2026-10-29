@@ -1,0 +1,16 @@
+import io
+import result
+fn append_demo() -> Unit {
+    let path = "programs/ok/io/append_fixture.txt"
+    let _w1 = write_file(path, "first\n")
+    let _w2 = append_file(path, "second\n")
+    let res = read_file(path)
+    match res {
+        Ok(s) => println(s),
+        Err(e) => println(e)
+    }
+}
+
+watch {
+    append_demo()
+}

@@ -1,0 +1,6 @@
+// expect: compile ok — zero-argument function call in derived binding
+fn answer() -> Int {
+    42
+}
+
+let x = answer()

@@ -1,0 +1,10 @@
+import collections
+fn sum_range() -> Int {
+    let mut acc = 0
+    for i in range(0, 10, 2) {
+        acc = acc + i
+    }
+    return acc
+}
+
+let total = sum_range()

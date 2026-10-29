@@ -1,0 +1,6 @@
+import math
+fn hypot(a: Float, b: Float) -> Float {
+    sqrt(pow(a, 2.0) + pow(b, 2.0))
+}
+
+let x = hypot(3.0, 4.0)

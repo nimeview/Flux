@@ -1,0 +1,7 @@
+// expect: fail E002 — reactive read inside pure fn
+let a = 5
+
+fn bad() {
+
+let x = a + 1
+}

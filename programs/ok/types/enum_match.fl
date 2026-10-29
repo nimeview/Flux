@@ -1,0 +1,4 @@
+enum Color { Red, Green }
+
+let c = Green
+let code = match c { Red => 10, Green => 20 }

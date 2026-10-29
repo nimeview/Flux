@@ -1,0 +1,4 @@
+// expect: fail E017 — println in derived expression
+import io
+let mut n = 0
+derived msg = println("hi")

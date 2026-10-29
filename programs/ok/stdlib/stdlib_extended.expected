@@ -1,0 +1,10 @@
+items = [1, 2, 3, 0, 5]
+doubled = [1, 2, 3, 0, 5, 7]
+popped = [[1, 2, 3, 0, 5], 7]
+filtered = [1, 2, 3, 5]
+total = 11
+hello = "  hello world  "
+trimmed = "hello world"
+hlen = 11
+has_lo = true
+parts = ["hello", "world"]

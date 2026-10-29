@@ -1,0 +1,9 @@
+// expect: compile ok — rfn body reads reactive binding
+let base = 10
+
+rfn add_base(x: Int) -> Int {
+    x + base
+}
+
+let a = 5
+let b = add_base(a)

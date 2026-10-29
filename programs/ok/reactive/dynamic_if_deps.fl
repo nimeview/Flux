@@ -1,0 +1,5 @@
+// expect: z=1
+let flag = true
+let x = 1
+let y = 100
+let z = if flag { x } else { y }

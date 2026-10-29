@@ -1,0 +1,3 @@
+fn id[T](x: T) -> T { x }
+
+// Generic syntax; monomorphization rewrites id(42) to id_Int(42) at compile time.

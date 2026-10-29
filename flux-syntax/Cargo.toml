@@ -1,0 +1,10 @@
+[package]
+name = "flux_syntax"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+flux_diagnostics = { path = "../flux_diagnostics" }
+miette = { version = "7", features = ["fancy"] }
+pest = "2"
+pest_derive = "2"

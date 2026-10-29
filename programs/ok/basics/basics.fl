@@ -1,0 +1,4 @@
+// expect: a=5, b=2, c=10
+let a = 5
+let b = 2
+let c = a * b

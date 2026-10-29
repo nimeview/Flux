@@ -1,0 +1,8 @@
+// expect: compile ok — watch a { } runs only when a changes
+let a = 5
+let b = 0
+let mut side = 0
+
+watch a {
+    side = a * 2
+}

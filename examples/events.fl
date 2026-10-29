@@ -1,0 +1,18 @@
+event SearchQuery(q: String)
+event AppStarted
+
+let mut query = ""
+let mut count = 0
+
+on AppStarted {
+    query = "ready"
+}
+
+on SearchQuery { q ->
+    query = q
+    count = count + 1
+}
+
+fn on_input(text: String) {
+    emit SearchQuery(text)
+}

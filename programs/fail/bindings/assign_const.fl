@@ -1,0 +1,6 @@
+const N = 42
+event Tick
+
+on Tick {
+    N = 10
+}

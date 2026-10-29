@@ -1,0 +1,9 @@
+// expect: fail E011 — watch/on only allowed at module level
+let a = 5
+let mut side = 0
+
+fn bad() {
+    watch {
+        side = a * 2
+    }
+}

@@ -1,0 +1,22 @@
+//! Expense Tracker — a reactive personal budget.
+//!
+//! `items` and `budget` are Sources; every other binding recomputes automatically
+//! whenever they change, and `watch remaining` prints an alert the moment spending
+//! crosses the budget.
+//!
+//! Run: flux run programs/apps/expenses.fl
+
+import io
+import collections
+let items = [42, 15, 30, 8]
+let budget = 100
+
+let total = reduce(items, 0, |acc, x| acc + x)
+let remaining = budget - total
+let over_budget = remaining < 0
+
+watch remaining {
+    if over_budget {
+        println("over budget!")
+    }
+}

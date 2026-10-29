@@ -1,0 +1,13 @@
+let mut sum = 0
+
+watch {
+
+let mut acc = 0
+
+let mut i = 0
+    while i < 3 {
+        acc = acc + i
+        i = i + 1
+    }
+    sum = acc
+}

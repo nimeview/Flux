@@ -1,0 +1,11 @@
+import collections
+let mut total = 0
+
+watch {
+
+let mut acc = 0
+    for i in range(3) {
+        acc = acc + i
+    }
+    total = acc
+}

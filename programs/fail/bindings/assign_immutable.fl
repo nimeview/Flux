@@ -1,0 +1,6 @@
+// expect: fail E009 — assign to immutable local
+fn bad() -> Int {
+    let x = 5
+    x = 10
+    return x
+}

@@ -1,0 +1,42 @@
+[package]
+name = "flux_cli"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+name = "flux_cli"
+path = "src/lib.rs"
+
+[[bin]]
+name = "flux"
+path = "src/main.rs"
+
+[dependencies]
+flux_driver = { path = "../flux_driver", features = ["jit"] }
+flux_diagnostics = { path = "../flux_diagnostics" }
+flux_syntax = { path = "../flux-syntax" }
+flux_hir = { path = "../flux_hir" }
+flux_types = { path = "../flux_types" }
+flux_ir = { path = "../flux_ir" }
+flux_runtime = { path = "../flux-runtime", features = ["jit"] }
+flux_resolve = { path = "../flux_resolve" }
+flux_fmt = { path = "../flux_fmt" }
+flux_lsp = { path = "../flux_lsp" }
+flux_wasm = { path = "../flux_wasm" }
+miette = { version = "7", features = ["fancy"] }
+serde_json = "1"
+clap = { version = "4", features = ["derive"] }
+
+[features]
+default = ["jit"]
+jit = ["flux_runtime/jit", "flux_driver/jit"]
+
+[dev-dependencies]
+flux_cli = { path = ".", features = ["jit"] }
+flux_jit = { path = "../flux_jit" }
+criterion = "0.5"
+tempfile = "3"
+
+[[bench]]
+name = "jit_bench"
+harness = false

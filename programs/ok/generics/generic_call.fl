@@ -1,0 +1,4 @@
+fn id[T](x: T) -> T { x }
+
+let int_result = id(42)
+let str_result = id("hi")

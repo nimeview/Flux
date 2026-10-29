@@ -1,0 +1,24 @@
+//! Task Board — an event-driven workflow with live counters.
+//!
+//! `AddTask`/`CompleteTask` drive the `pending`/`done` counters through `on`
+//! handlers; `total` and `completion_pct` recompute after every event.
+//!
+//! Run: flux run programs/apps/tasks.fl
+
+event AddTask
+event CompleteTask
+
+let mut pending = 0
+let mut done = 0
+
+on AddTask {
+    pending = pending + 1
+}
+
+on CompleteTask {
+    pending = pending - 1
+    done = done + 1
+}
+
+let total = pending + done
+let completion_pct = if total == 0 { 0.0 } else { done * 100.0 / total }

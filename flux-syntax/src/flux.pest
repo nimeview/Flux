@@ -1,0 +1,183 @@
+WHITESPACE = _{ " " | "\t" | "\r" | "\n" }
+COMMENT = _{ "//" ~ (!"\n" ~ ANY)* }
+
+program = { SOI ~ item* ~ EOI }
+
+item = {
+    import_decl
+  | type_alias_decl
+  | struct_decl
+  | enum_decl
+  | trait_decl
+  | impl_decl
+  | event_decl
+  | fn_decl
+  | rfn_decl
+  | watch_stmt
+  | on_stmt
+  | const_binding
+  | derived_binding
+  | let_binding
+  | if_stmt
+}
+
+type_alias_decl = { pub_modifier? ~ "type" ~ ident ~ "=" ~ type_name }
+const_binding = { pub_modifier? ~ "const" ~ ident ~ type_ann? ~ "=" ~ expr }
+derived_binding = { pub_modifier? ~ "derived" ~ let_pattern ~ type_ann? ~ "=" ~ expr }
+let_binding = { pub_modifier? ~ "let" ~ mut_modifier? ~ let_pattern ~ type_ann? ~ "=" ~ expr }
+mut_modifier = { "mut" }
+let_pattern = { struct_pat | ident }
+import_decl = { "import" ~ import_path ~ import_as? ~ import_symbols? }
+import_as = { "as" ~ ident }
+import_path = @{ (ASCII_ALPHANUMERIC | "_" | "." | "/")+ }
+import_symbols = { "{" ~ ident_list ~ "}" }
+ident_list = { ident ~ ("," ~ ident)* }
+
+pub_modifier = { "pub" }
+
+struct_decl = { pub_modifier? ~ "struct" ~ ident ~ type_params? ~ struct_fields }
+struct_fields = { "{" ~ struct_field ~ ("," ~ struct_field)* ~ "}" }
+struct_field = { ident ~ ":" ~ type_name }
+
+enum_decl = { pub_modifier? ~ "enum" ~ ident ~ enum_variants }
+enum_variants = { "{" ~ enum_variant ~ ("," ~ enum_variant)* ~ "}" }
+enum_variant = { ident ~ enum_payload? }
+enum_payload = { tuple_payload | struct_payload }
+tuple_payload = { "(" ~ type_name ~ ")" }
+struct_payload = { "{" ~ struct_field ~ ("," ~ struct_field)* ~ "}" }
+
+event_decl = { pub_modifier? ~ "event" ~ ident ~ event_params? }
+event_params = { "(" ~ param_list? ~ ")" }
+
+type_params = { "[" ~ ident ~ ("," ~ ident)* ~ "]" }
+
+trait_decl = { pub_modifier? ~ "trait" ~ ident ~ trait_body }
+trait_body = { "{" ~ trait_method* ~ "}" }
+trait_method = { "fn" ~ ident ~ fn_sig ~ ";" }
+
+impl_decl = { "impl" ~ ident ~ "for" ~ type_name ~ impl_body }
+impl_body = { "{" ~ impl_method* ~ "}" }
+impl_method = { "fn" ~ ident ~ fn_sig ~ block }
+
+fn_decl = { pub_modifier? ~ "fn" ~ ident ~ type_params? ~ fn_sig ~ block }
+rfn_decl = { pub_modifier? ~ "rfn" ~ ident ~ type_params? ~ fn_sig ~ block }
+fn_sig = { "(" ~ param_list? ~ ")" ~ return_type? }
+return_type = { "->" ~ type_name }
+
+watch_stmt = { "watch" ~ ident? ~ block }
+on_stmt = { "on" ~ ident ~ handler }
+
+handler = { "{" ~ handler_body ~ "}" }
+handler_body = { handler_param ~ block_stmts | block_stmts }
+handler_param = { ident ~ "->" }
+
+block = { "{" ~ block_stmts ~ "}" }
+block_stmts = { stmt* }
+
+stmt = {
+    let_stmt
+  | assign_stmt
+  | emit_stmt
+  | return_stmt
+  | break_stmt
+  | continue_stmt
+  | if_stmt
+  | while_stmt
+  | for_stmt
+  | watch_stmt
+  | on_stmt
+  | expr_stmt
+}
+
+return_stmt = { "return" ~ expr? }
+break_stmt = { "break" }
+continue_stmt = { "continue" }
+
+let_stmt = { "let" ~ mut_modifier? ~ let_pattern ~ type_ann? ~ "=" ~ expr }
+assign_stmt = { ident ~ "=" ~ expr }
+emit_stmt = { "emit" ~ ident ~ emit_args? }
+emit_args = { "(" ~ expr_list? ~ ")" }
+expr_stmt = { expr }
+
+if_stmt = { "if" ~ expr ~ block ~ else_clause? }
+else_clause = { "else" ~ (if_stmt | block) }
+while_stmt = { "while" ~ expr ~ block }
+for_stmt = { "for" ~ ident ~ "in" ~ expr ~ block }
+
+// Expressions — precedence low → high
+expr = { match_expr | if_expr | or_expr }
+
+match_expr = { "match" ~ or_expr ~ "{" ~ match_arm ~ ("," ~ match_arm)* ~ "}" }
+match_arm = { match_pattern ~ guard? ~ "=>" ~ expr }
+guard = { "if" ~ expr }
+match_pattern = { tuple_pat | struct_pat | simple_pat }
+simple_pat = { ident }
+tuple_pat = { ident ~ "(" ~ ident_list? ~ ")" }
+struct_pat = { ident ~ "{" ~ ident_list ~ "}" }
+
+if_expr = { "if" ~ or_expr ~ "{" ~ expr ~ "}" ~ "else" ~ "{" ~ expr ~ "}" }
+
+or_expr = { and_expr ~ ("||" ~ and_expr)* }
+and_expr = { eq_expr ~ ("&&" ~ eq_expr)* }
+eq_expr = { rel_expr ~ (eq_op ~ rel_expr)* }
+eq_op = { "==" | "!=" }
+rel_expr = { add_expr ~ (rel_op ~ add_expr)* }
+rel_op = { "<=" | ">=" | "<" | ">" }
+add_expr = { mul_expr ~ (add_op ~ mul_expr)* }
+add_op = { "+" | "-" }
+mul_expr = { cast_expr ~ (mul_op ~ cast_expr)* }
+mul_op = { "*" | "/" }
+
+cast_expr = { unary_expr ~ ("as" ~ type_name)* }
+
+unary_expr = { unary_op ~ unary_expr | postfix_expr }
+unary_op = { "-" | "!" }
+
+postfix_expr = { primary_expr ~ (call_suffix | field_suffix)* }
+call_suffix = { call_args }
+field_suffix = { "." ~ ident }
+call_args = { "(" ~ expr_list? ~ ")" }
+
+primary_expr = {
+    closure_expr
+  | struct_lit
+  | array_lit
+  | float_lit
+  | int_lit
+  | string_lit
+  | bool_lit
+  | ident
+  | "(" ~ expr ~ ")"
+}
+
+closure_expr = { "|" ~ closure_params? ~ "|" ~ expr }
+closure_params = { closure_param ~ ("," ~ closure_param)* }
+closure_param = { ident ~ (":" ~ type_name)? }
+
+array_lit = { "[" ~ expr_list? ~ "]" }
+struct_lit = { ident ~ "{" ~ field_init ~ ("," ~ field_init)* ~ "}" }
+field_init = { ident ~ ":" ~ expr }
+
+param_list = { param ~ ("," ~ param)* }
+param = { ident ~ ":" ~ type_name }
+expr_list = { expr ~ ("," ~ expr)* }
+
+type_ann = { ":" ~ type_name }
+type_name = { generic_type | result_type | option_type | array_type | simple_type }
+generic_type = { ident ~ "[" ~ type_name ~ ("," ~ type_name)* ~ "]" }
+option_type = { "Option" ~ "[" ~ type_name ~ "]" }
+result_type = { "Result" ~ "[" ~ type_name ~ "," ~ type_name ~ "]" }
+array_type = { "[" ~ type_name ~ "]" }
+simple_type = { ident }
+
+ident = @{ (ASCII_ALPHA | "_") ~ (ASCII_ALPHANUMERIC | "_")* }
+
+float_lit = ${ ASCII_DIGIT+ ~ "." ~ ASCII_DIGIT+ ~ float_suffix? }
+float_suffix = _{ "f32" | "f64" }
+int_lit = ${ ASCII_DIGIT+ ~ int_suffix? }
+int_suffix = _{ "i8" | "i16" | "i32" | "i64" | "u8" | "u16" | "u32" | "u64" }
+string_lit = ${ "\"" ~ string_content* ~ "\"" }
+string_content = _{ string_char | interp_expr }
+string_char = @{ !( "\"" | "{" ) ~ ANY }
+interp_expr = { "{" ~ ident ~ "}" }
+bool_lit = { "true" | "false" }

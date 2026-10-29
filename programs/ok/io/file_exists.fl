@@ -1,0 +1,12 @@
+import io
+fn exists_demo() -> Bool {
+    let path = "programs/ok/io/exists_fixture.txt"
+    let _w = write_file(path, "data")
+    file_exists(path)
+}
+
+watch {
+    exists_demo()
+}
+
+let found = if file_exists("programs/ok/io/exists_fixture.txt") { 1 } else { 0 }

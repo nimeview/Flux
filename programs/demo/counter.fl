@@ -1,0 +1,10 @@
+// Click counter — event-driven UI state
+event Click
+
+let mut count = 0
+let doubled = count * 2
+let tripled = count * 3
+
+on Click {
+    count = count + 1
+}

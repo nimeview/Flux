@@ -1,0 +1,43 @@
+// Full-featured reactive dashboard (v0.1 showcase)
+let version = 1
+
+let mut temperature = 20
+let humidity = 50
+let mode = 1
+
+let threshold = if mode == 1 { 25 } else { 30 }
+
+fn frozen_bonus() -> Int {
+    snap(temperature) + 100
+}
+
+rfn comfort_score() -> Int {
+    temperature - humidity / 2
+}
+
+let prefix = "status:"
+let status_label = prefix + "ok"
+let temp_ok = temperature >= 18 && temperature <= 26
+let comfort = comfort_score()
+let adjusted = if temperature < 15 { 15 } else { if temperature > 30 { 30 } else { temperature } }
+let bonus = frozen_bonus()
+let health = if temp_ok && comfort > 0 { 100 } else { 50 }
+let mut alert_count = 0
+watch temperature {
+    if temperature > threshold {
+        alert_count = alert_count + 1
+    }
+}
+
+let mut rolling = 0
+watch {
+    for i in [1, 2, 3, 4, 5] {
+        rolling = rolling + i
+    }
+}
+
+event Refresh
+
+on Refresh {
+    temperature = temperature + 1
+}

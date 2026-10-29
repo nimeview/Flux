@@ -1,0 +1,20 @@
+[package]
+name = "flux_lsp"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+flux_driver = { path = "../flux_driver" }
+flux_syntax = { path = "../flux-syntax" }
+flux_diagnostics = { path = "../flux_diagnostics" }
+flux_hir = { path = "../flux_hir" }
+flux_types = { path = "../flux_types" }
+flux_fmt = { path = "../flux_fmt" }
+miette = "7"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+lsp-server = "0.8"
+# Pinned below 0.96 to keep `Url` (`url::Url`) with `to_file_path`/`from_file_path`
+# instead of the newer `Uri` newtype, which dropped filesystem-path conversions.
+lsp-types = "=0.95.1"

@@ -1,0 +1,7 @@
+event inc
+
+let counter = 0
+
+on inc {
+    counter = counter + 1
+}

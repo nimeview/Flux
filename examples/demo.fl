@@ -1,0 +1,14 @@
+import io
+let arr = [1, 3, 5, 7, 9, 11]
+let mut a = 0
+
+watch {
+    for i in arr {
+        a = i
+        watch a {
+            print("No")
+        }
+        print(i)
+    }
+
+}

@@ -1,0 +1,11 @@
+fn count_true() -> Int {
+    let mut n = 3
+    let mut steps = 0
+    while n > 0 {
+        n = n - 1
+        steps = steps + 1
+    }
+    return steps
+}
+
+let total_steps = count_true()
