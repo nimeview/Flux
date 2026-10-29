@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+#[cfg(feature = "jit")]
 use std::rc::Rc;
 
 use flux_ir::CompiledProgram;
@@ -188,6 +189,7 @@ impl ActiveBackend {
     }
 
     #[cfg(not(feature = "jit"))]
+    #[allow(dead_code)]
     pub fn jit_stats(&self) -> Option<()> {
         None
     }

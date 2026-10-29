@@ -418,50 +418,43 @@ fn finish_lower(
     project_root: Option<&Path>,
     diagnostics: &mut DiagnosticBag,
 ) -> Result<Artifacts, CompileFailed> {
-    if options.analysis_cache {
-        if let Some(key) = cache_key.as_deref() {
-            if let Some(hit) = get_analysis_cache(key) {
-                return Ok(Artifacts {
-                    source,
-                    hir: hit.hir,
-                    typed: hit.typed,
-                    types: hit.types,
-                    ir: None,
-                });
+    let cached = if options.analysis_cache {
+        cache_key.as_deref().and_then(get_analysis_cache)
+    } else {
+        None
+    };
+    let (hir, typed, types) = if let Some(hit) = cached {
+        (hit.hir, hit.typed, hit.types)
+    } else {
+        flux_types::monomorphize_program(&mut hir, source.id, diagnostics);
+        let Some(typed) = typecheck_program(&hir, source.id, diagnostics) else {
+            return Err(CompileFailed {
+                source,
+                diagnostics: std::mem::take(diagnostics),
+            });
+        };
+        if diagnostics.has_errors() {
+            return Err(CompileFailed {
+                source,
+                diagnostics: std::mem::take(diagnostics),
+            });
+        }
+        let types = build_type_map(&hir, &typed);
+
+        if options.analysis_cache {
+            if let Some(key) = cache_key.as_deref() {
+                put_analysis_cache(
+                    key,
+                    CachedAnalysis {
+                        hir: hir.clone(),
+                        typed: typed.clone(),
+                        types: types.clone(),
+                    },
+                );
             }
         }
-    }
-
-    flux_types::monomorphize_program(&mut hir, source.id, diagnostics);
-
-    let Some(typed) = typecheck_program(&hir, source.id, diagnostics) else {
-        return Err(CompileFailed {
-            source,
-            diagnostics: std::mem::take(diagnostics),
-        });
+        (hir, typed, types)
     };
-
-    if diagnostics.has_errors() {
-        return Err(CompileFailed {
-            source,
-            diagnostics: std::mem::take(diagnostics),
-        });
-    }
-
-    let types = build_type_map(&hir, &typed);
-
-    if options.analysis_cache {
-        if let Some(key) = cache_key.as_deref() {
-            put_analysis_cache(
-                key,
-                CachedAnalysis {
-                    hir: hir.clone(),
-                    typed: typed.clone(),
-                    types: types.clone(),
-                },
-            );
-        }
-    }
 
     if options.phase == CompilePhase::Check {
         return Ok(Artifacts {

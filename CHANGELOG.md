@@ -21,6 +21,8 @@ All notable changes to Flux are documented here.
 
 ### Fixed
 - Compile cache stale hits when dependency modules change
+- Full file compilation now regenerates or reuses IR after an analysis-cache hit
+- Standard-library imports no longer hide local modules with the same name
 - JIT Cranelift `bitcast` memflags (float/int slots compile correctly); `/` matches VM float promotion
 
 ---

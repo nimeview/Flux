@@ -180,6 +180,11 @@ impl ModuleLoader {
 
         let base_dir = canonical.parent()?;
         for import in imports {
+            if std_module_name(&import.path).is_some()
+                && !local_module_exists(base_dir, &import.path)
+            {
+                continue;
+            }
             let Some(import_path) = resolve_import_path(
                 base_dir,
                 &import.path,
@@ -344,6 +349,9 @@ pub fn link_modules(
 
     let mut imports = Vec::new();
     for import in extract_imports(&root_mod.ast) {
+        if std_module_name(&import.path).is_some() && !local_module_exists(base_dir, &import.path) {
+            continue;
+        }
         let alias = import.alias.clone().unwrap_or_else(|| {
             import
                 .path
@@ -424,6 +432,11 @@ pub fn link_modules(
         modules: resolved.modules.clone(),
         imports,
     })
+}
+
+fn local_module_exists(base_dir: &Path, import_path: &str) -> bool {
+    let path = import_path.replace('.', std::path::MAIN_SEPARATOR_STR);
+    base_dir.join(with_module_extension(&path)).exists()
 }
 
 fn pub_export_names(program: &Program) -> Vec<String> {

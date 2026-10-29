@@ -1,12 +1,22 @@
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 use std::thread;
 
 use flux_value::{
     clear_for_tests, get_string, intern_string, tagged_to_value, value_to_tagged, Value,
 };
 
+static TEST_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+fn heap_test_lock() -> MutexGuard<'static, ()> {
+    TEST_LOCK
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .expect("heap test lock poisoned")
+}
+
 #[test]
 fn value_tagged_roundtrip_primitives() {
+    let _guard = heap_test_lock();
     clear_for_tests();
     let cases = [
         Value::int_i64(42),
@@ -23,6 +33,7 @@ fn value_tagged_roundtrip_primitives() {
 
 #[test]
 fn value_tagged_roundtrip_enum_and_array() {
+    let _guard = heap_test_lock();
     clear_for_tests();
     let en = Value::UserEnum {
         type_name: "Color".into(),
@@ -37,6 +48,7 @@ fn value_tagged_roundtrip_enum_and_array() {
 
 #[test]
 fn intern_string_is_stable_across_threads() {
+    let _guard = heap_test_lock();
     clear_for_tests();
     let hello = Arc::new("shared".to_string());
     let handles: Vec<_> = (0..4)
@@ -52,6 +64,7 @@ fn intern_string_is_stable_across_threads() {
 
 #[test]
 fn heap_stores_are_visible_from_other_threads() {
+    let _guard = heap_test_lock();
     clear_for_tests();
     let id = thread::spawn(|| intern_string("cross-thread"))
         .join()
