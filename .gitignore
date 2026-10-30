@@ -11,5 +11,6 @@
 .DS_Store
 **/.DS_Store
 
-# Per-session Claude Code continuation counters
-.claude/.continuation_state/
+# Claude Code project files (kept locally, not versioned)
+/.claude/
+/CLAUDE.md

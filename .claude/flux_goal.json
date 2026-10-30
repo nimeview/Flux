@@ -1,6 +1,0 @@
-{
-  "status": "active",
-  "continue_on_stop": true,
-  "max_auto_continuations_per_session": 3,
-  "objective": "Finish the dependable Flux Core milestone described in CLAUDE.md, then validate ordinary general-purpose programming with representative programs."
-}
