@@ -19,8 +19,18 @@ impl miette::SourceCode for SourceFile {
         context_lines_before: usize,
         context_lines_after: usize,
     ) -> Result<Box<dyn miette::SpanContents<'a> + 'a>, miette::MietteError> {
-        self.contents
-            .read_span(span, context_lines_before, context_lines_after)
+        let contents = self
+            .contents
+            .read_span(span, context_lines_before, context_lines_after)?;
+        // Name the snippet so rendered diagnostics show which file they are in.
+        Ok(Box::new(miette::MietteSpanContents::new_named(
+            self.path.clone(),
+            contents.data(),
+            *contents.span(),
+            contents.line(),
+            contents.column(),
+            contents.line_count(),
+        )))
     }
 }
 

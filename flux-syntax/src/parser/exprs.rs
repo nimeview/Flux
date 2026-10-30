@@ -321,6 +321,7 @@ fn parse_chained_mul(source_id: SourceId, pair: pest::iterators::Pair<'_, Rule>)
         let op = match op_pair.as_str() {
             "*" => BinaryOp::Mul,
             "/" => BinaryOp::Div,
+            "%" => BinaryOp::Rem,
             _ => continue,
         };
         let rhs = parse_expr(source_id, inner.next().expect("mul rhs"));

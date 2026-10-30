@@ -4,8 +4,8 @@ use std::sync::{Mutex, OnceLock};
 
 use flux_value::{
     array_finish, array_get, array_len, array_push, get_enum, get_string, intern_string,
-    make_int_range_array, store_enum, tagged_to_value, value_to_tagged, TaggedVal, TAG_ENUM,
-    TAG_STRING,
+    make_int_range_array, store_enum, tag_kind, tagged_to_value, value_to_tagged, TaggedVal,
+    TAG_ENUM, TAG_FLOAT, TAG_INT, TAG_STRING,
 };
 
 type EmitHook = Box<dyn Fn(u64, TaggedVal) + Send>;
@@ -76,6 +76,18 @@ pub extern "C" fn flux_jit_string_concat(
 
 #[no_mangle]
 pub extern "C" fn flux_jit_value_eq(tag_a: u64, data_a: u64, tag_b: u64, data_b: u64) -> u64 {
+    let numeric = |tag| matches!(tag_kind(tag), TAG_INT | TAG_FLOAT);
+    if numeric(tag_a) && numeric(tag_b) {
+        let a = tagged_to_value(TaggedVal {
+            tag: tag_a,
+            data: data_a,
+        });
+        let b = tagged_to_value(TaggedVal {
+            tag: tag_b,
+            data: data_b,
+        });
+        return flux_value::values_equal(&a, &b) as u64;
+    }
     if tag_a != tag_b {
         return 0;
     }
@@ -190,5 +202,66 @@ pub extern "C" fn flux_jit_call_builtin(
 pub extern "C" fn flux_jit_cast(tag: u64, data: u64, ty_id: u64) -> TaggedVal {
     let ty = get_string(ty_id).unwrap_or_default();
     let v = tagged_to_value(TaggedVal { tag, data });
-    value_to_tagged(&flux_value::cast_value(&v, &ty))
+    match flux_value::cast(&v, &ty) {
+        Ok(v) => value_to_tagged(&v),
+        Err(e) => TaggedVal::error(e),
+    }
+}
+
+/// Slow path for `+ - * / %`: every operand mix outside the inline
+/// `Int64`/`Float64` fast path, and every fast-path overflow or zero divisor.
+/// Uses the VM's `flux_value::binary`, so both engines agree by construction.
+#[no_mangle]
+pub extern "C" fn flux_jit_arith(
+    op: u64,
+    tag_a: u64,
+    data_a: u64,
+    tag_b: u64,
+    data_b: u64,
+) -> TaggedVal {
+    let Some(op) = flux_value::NumOp::from_code(op) else {
+        return TaggedVal::error(flux_value::ArithError::InvalidOperands);
+    };
+    if op == flux_value::NumOp::Add && tag_a == TAG_STRING && tag_b == TAG_STRING {
+        return flux_jit_string_concat(tag_a, data_a, tag_b, data_b);
+    }
+    let a = tagged_to_value(TaggedVal {
+        tag: tag_a,
+        data: data_a,
+    });
+    let b = tagged_to_value(TaggedVal {
+        tag: tag_b,
+        data: data_b,
+    });
+    match flux_value::binary(op, &a, &b) {
+        Ok(v) => value_to_tagged(&v),
+        Err(e) => TaggedVal::error(e),
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn flux_jit_neg(tag: u64, data: u64) -> TaggedVal {
+    match flux_value::negate(&tagged_to_value(TaggedVal { tag, data })) {
+        Ok(v) => value_to_tagged(&v),
+        Err(e) => TaggedVal::error(e),
+    }
+}
+
+/// Ordered comparison slow path. `op`: 0 = `<`, 1 = `<=`, 2 = `>`, 3 = `>=`.
+#[no_mangle]
+pub extern "C" fn flux_jit_cmp(op: u64, tag_a: u64, data_a: u64, tag_b: u64, data_b: u64) -> u64 {
+    let a = tagged_to_value(TaggedVal {
+        tag: tag_a,
+        data: data_a,
+    });
+    let b = tagged_to_value(TaggedVal {
+        tag: tag_b,
+        data: data_b,
+    });
+    flux_value::compare(&a, &b).is_some_and(|o| match op {
+        0 => o.is_lt(),
+        1 => o.is_le(),
+        2 => o.is_gt(),
+        _ => o.is_ge(),
+    }) as u64
 }

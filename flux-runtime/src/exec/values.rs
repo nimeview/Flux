@@ -4,44 +4,10 @@
 use std::collections::HashSet;
 
 use flux_ir::{CompiledWatch, IrValue};
-use flux_value::{
-    add_int, div_int, float_from_f64, mul_int, sub_int, FloatWidth, IntWidth, OverflowError,
-};
+use flux_value::{ArithError, NumOp};
 
 use crate::graph::RuntimeValue;
 use crate::vm::{debug_assert_vm, stack_pop};
-
-fn int_pair(a: &RuntimeValue, b: &RuntimeValue) -> Option<(IntWidth, u64, IntWidth, u64)> {
-    match (a, b) {
-        (
-            RuntimeValue::Int {
-                width: wa,
-                bits: av,
-            },
-            RuntimeValue::Int {
-                width: wb,
-                bits: bv,
-            },
-        ) => Some((*wa, *av, *wb, *bv)),
-        _ => None,
-    }
-}
-
-fn push_overflow(stack: &mut Vec<RuntimeValue>, result: Result<RuntimeValue, OverflowError>) {
-    match result {
-        Ok(v) => stack.push(v),
-        Err(OverflowError::DivByZero) => {
-            stack.push(RuntimeValue::Result(Err(Box::new(RuntimeValue::String(
-                "div by zero".into(),
-            )))));
-        }
-        Err(_) => {
-            stack.push(RuntimeValue::Result(Err(Box::new(RuntimeValue::String(
-                "overflow".into(),
-            )))));
-        }
-    }
-}
 
 pub(super) fn variant_tag_eq(val: Option<&RuntimeValue>, variant: &str) -> bool {
     match val {
@@ -99,97 +65,40 @@ pub(super) fn extract_variant_payload(
     }
 }
 
+/// Ordered comparison; NaN compares false, matching IEEE.
 pub(super) fn cmp<F>(stack: &mut Vec<RuntimeValue>, f: F)
 where
-    F: FnOnce(f64, f64) -> bool,
+    F: FnOnce(std::cmp::Ordering) -> bool,
 {
-    let b = stack_pop(stack, "comparison rhs").as_float();
-    let a = stack_pop(stack, "comparison lhs").as_float();
-    if let (Some(a), Some(b)) = (a, b) {
-        stack.push(RuntimeValue::Bool(f(a, b)));
-    } else {
-        debug_assert_vm(false, "comparison: expected numeric operands on stack");
-    }
+    let b = stack_pop(stack, "comparison rhs");
+    let a = stack_pop(stack, "comparison lhs");
+    debug_assert_vm(
+        a.is_numeric() && b.is_numeric(),
+        "comparison: expected numeric operands on stack",
+    );
+    stack.push(RuntimeValue::Bool(
+        flux_value::compare(&a, &b).is_some_and(f),
+    ));
 }
 
-pub(super) fn add_binop(stack: &mut Vec<RuntimeValue>) {
-    let b = stack_pop(stack, "Add rhs");
-    let a = stack_pop(stack, "Add lhs");
-    match (&a, &b) {
-        (RuntimeValue::String(a), RuntimeValue::String(b)) => {
-            stack.push(RuntimeValue::String(format!("{a}{b}")));
-        }
-        _ if int_pair(&a, &b).is_some() => {
-            let (wa, av, wb, bv) = int_pair(&a, &b).unwrap();
-            push_overflow(stack, add_int(wa, av, wb, bv));
-        }
-        _ if a.as_float().is_some() && b.as_float().is_some() => {
-            stack.push(float_from_f64(
-                FloatWidth::F64,
-                a.as_float().unwrap() + b.as_float().unwrap(),
-            ));
-        }
-        _ => {
-            debug_assert_vm(
-                false,
-                &format!("Add: incompatible operands {a:?} and {b:?}"),
-            );
-        }
-    }
+pub(super) fn eq_binop(stack: &mut Vec<RuntimeValue>, negate: bool) {
+    let b = stack_pop(stack, "equality rhs");
+    let a = stack_pop(stack, "equality lhs");
+    stack.push(RuntimeValue::Bool(
+        flux_value::values_equal(&a, &b) != negate,
+    ));
 }
 
-pub(super) fn sub_binop(stack: &mut Vec<RuntimeValue>) {
-    let b = stack_pop(stack, "Sub rhs");
-    let a = stack_pop(stack, "Sub lhs");
-    if let Some((wa, av, wb, bv)) = int_pair(&a, &b) {
-        push_overflow(stack, sub_int(wa, av, wb, bv));
-    } else if a.as_float().is_some() && b.as_float().is_some() {
-        stack.push(float_from_f64(
-            FloatWidth::F64,
-            a.as_float().unwrap() - b.as_float().unwrap(),
-        ));
-    } else {
-        debug_assert_vm(
-            false,
-            &format!("Sub: incompatible operands {a:?} and {b:?}"),
-        );
+/// `+ - * / %`; `+` also concatenates strings.
+pub(super) fn arith_binop(stack: &mut Vec<RuntimeValue>, op: NumOp) -> Result<(), ArithError> {
+    let b = stack_pop(stack, "arithmetic rhs");
+    let a = stack_pop(stack, "arithmetic lhs");
+    if let (NumOp::Add, RuntimeValue::String(a), RuntimeValue::String(b)) = (op, &a, &b) {
+        stack.push(RuntimeValue::String(format!("{a}{b}")));
+        return Ok(());
     }
-}
-
-pub(super) fn mul_binop(stack: &mut Vec<RuntimeValue>) {
-    let b = stack_pop(stack, "Mul rhs");
-    let a = stack_pop(stack, "Mul lhs");
-    if let Some((wa, av, wb, bv)) = int_pair(&a, &b) {
-        push_overflow(stack, mul_int(wa, av, wb, bv));
-    } else if a.as_float().is_some() && b.as_float().is_some() {
-        stack.push(float_from_f64(
-            FloatWidth::F64,
-            a.as_float().unwrap() * b.as_float().unwrap(),
-        ));
-    } else {
-        debug_assert_vm(
-            false,
-            &format!("Mul: incompatible operands {a:?} and {b:?}"),
-        );
-    }
-}
-
-pub(super) fn div_binop(stack: &mut Vec<RuntimeValue>) {
-    let b = stack_pop(stack, "Div rhs");
-    let a = stack_pop(stack, "Div lhs");
-    if let Some((wa, av, wb, bv)) = int_pair(&a, &b) {
-        push_overflow(stack, div_int(wa, av, wb, bv));
-    } else if a.as_float().is_some() && b.as_float().is_some() {
-        stack.push(float_from_f64(
-            FloatWidth::F64,
-            a.as_float().unwrap() / b.as_float().unwrap(),
-        ));
-    } else {
-        debug_assert_vm(
-            false,
-            &format!("Div: incompatible operands {a:?} and {b:?}"),
-        );
-    }
+    stack.push(flux_value::binary(op, &a, &b)?);
+    Ok(())
 }
 
 pub(super) fn watch_should_run(watch: &CompiledWatch, changed: &HashSet<String>) -> bool {

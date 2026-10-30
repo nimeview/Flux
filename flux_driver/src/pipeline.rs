@@ -12,8 +12,11 @@ use flux_diagnostics::{
 };
 use flux_hir::{lower_linked_program, lower_program, HirProgram};
 use flux_ir::{Codegen, CompiledProgram, IrCodegen};
-use flux_resolve::{find_project_root, resolve_file, resolve_file_with_root, ResolvedProgram};
-use flux_runtime::{ExecutionMode, Executor};
+use flux_resolve::{
+    find_project_root, resolve_file_with_root, try_resolve_file_with_root, ResolveFailure,
+    ResolvedProgram,
+};
+use flux_runtime::{ExecutionMode, Executor, ExecutorError};
 use flux_syntax::{parse_program, Program};
 use flux_types::{typecheck_program, TypedProgram};
 
@@ -140,16 +143,12 @@ pub fn compile_with_options(
             diagnostics,
         });
     };
-    let executor = Executor::with_mode(ir, options.mode).map_err(|msg| {
-        diagnostics.push(FluxError::Parse {
-            message: format!("VM validation failed: {msg}"),
-            span: span_to_miette(Span {
-                source: artifacts.source.id,
-                start: 0,
-                end: 0,
-            }),
-            source_id: artifacts.source.id,
-        });
+    let executor = Executor::with_mode(ir, options.mode).map_err(|err| {
+        diagnostics.push(executor_error_diagnostic(
+            err,
+            &artifacts.hir,
+            &artifacts.source,
+        ));
         CompileFailed {
             source: artifacts.source.clone(),
             diagnostics,
@@ -165,19 +164,80 @@ pub fn compile_with_options(
     })
 }
 
-/// Type-check a `.fl` file from disk (parse → resolve → HIR → types; no IR or VM).
-pub fn check_file(path: &Path) -> Result<Checked, CompileFailed> {
-    let mut diagnostics = DiagnosticBag::new();
-    let Some(resolved) = resolve_file(path, &mut diagnostics) else {
-        let source = SourceFile {
+/// Turns an executor start-up failure into a diagnostic. Runtime errors point
+/// at the binding being evaluated when it is in the rendered source.
+fn executor_error_diagnostic(
+    err: ExecutorError,
+    hir: &HirProgram,
+    source: &SourceFile,
+) -> FluxError {
+    let file_start = Span {
+        source: source.id,
+        start: 0,
+        end: 0,
+    };
+    match err {
+        ExecutorError::Invalid(msg) => FluxError::Parse {
+            message: format!("VM validation failed: {msg}"),
+            span: span_to_miette(file_start),
+            source_id: source.id,
+        },
+        ExecutorError::Runtime(err) => {
+            let span = err
+                .binding
+                .as_deref()
+                .and_then(|name| binding_span(hir, name))
+                .filter(|span| span.source == source.id)
+                .unwrap_or(file_start);
+            FluxError::Runtime {
+                message: err.to_string(),
+                span: span_to_miette(span),
+                source_id: source.id,
+            }
+        }
+    }
+}
+
+fn binding_span(hir: &HirProgram, name: &str) -> Option<Span> {
+    hir.items.iter().find_map(|item| match item {
+        flux_hir::HirItem::Binding(b)
+            if hir.names.get(&b.name).map(String::as_str) == Some(name) =>
+        {
+            Some(b.span)
+        }
+        _ => None,
+    })
+}
+
+/// Builds the failure for a module-resolution error, attaching the source the
+/// first error points into so it renders with the right file and snippet.
+fn resolve_failed(
+    path: &Path,
+    failure: ResolveFailure,
+    diagnostics: DiagnosticBag,
+) -> CompileFailed {
+    let source = diagnostics
+        .errors
+        .first()
+        .and_then(|e| failure.source(e.source_id()))
+        .cloned()
+        .unwrap_or_else(|| SourceFile {
             id: SourceId(0),
             path: path.display().to_string(),
             contents: String::new(),
-        };
-        return Err(CompileFailed {
-            source,
-            diagnostics,
         });
+    CompileFailed {
+        source,
+        diagnostics,
+    }
+}
+
+/// Type-check a `.fl` file from disk (parse → resolve → HIR → types; no IR or VM).
+pub fn check_file(path: &Path) -> Result<Checked, CompileFailed> {
+    let mut diagnostics = DiagnosticBag::new();
+    let resolved = match try_resolve_file_with_root(path, None, &mut diagnostics) {
+        Ok(resolved) => resolved,
+        Err(failure) => return Err(resolve_failed(path, failure, diagnostics)),
     };
     let root = resolved.root.clone();
     let project_root = find_project_root(path);
@@ -229,16 +289,9 @@ pub fn compile_file(path: &Path, options: CompileOptions) -> Result<Compiled, Co
         });
     }
     let mut diagnostics = DiagnosticBag::new();
-    let Some(resolved) = resolve_file(path, &mut diagnostics) else {
-        let source = SourceFile {
-            id: SourceId(0),
-            path: path.display().to_string(),
-            contents: String::new(),
-        };
-        return Err(CompileFailed {
-            source,
-            diagnostics,
-        });
+    let resolved = match try_resolve_file_with_root(path, None, &mut diagnostics) {
+        Ok(resolved) => resolved,
+        Err(failure) => return Err(resolve_failed(path, failure, diagnostics)),
     };
     let root = resolved.root.clone();
     let project_root = find_project_root(path);
@@ -264,16 +317,12 @@ pub fn compile_file(path: &Path, options: CompileOptions) -> Result<Compiled, Co
             diagnostics,
         });
     };
-    let executor = Executor::with_mode(ir, options.mode).map_err(|msg| {
-        diagnostics.push(FluxError::Parse {
-            message: format!("VM validation failed: {msg}"),
-            span: span_to_miette(Span {
-                source: artifacts.source.id,
-                start: 0,
-                end: 0,
-            }),
-            source_id: artifacts.source.id,
-        });
+    let executor = Executor::with_mode(ir, options.mode).map_err(|err| {
+        diagnostics.push(executor_error_diagnostic(
+            err,
+            &artifacts.hir,
+            &artifacts.source,
+        ));
         CompileFailed {
             source: artifacts.source.clone(),
             diagnostics,

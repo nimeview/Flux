@@ -10,6 +10,7 @@ pub(crate) fn is_numeric_code(code: &[Inst], jit_fns: &HashSet<String>) -> bool 
         | Inst::Sub
         | Inst::Mul
         | Inst::Div
+        | Inst::Rem
         | Inst::Neg
         | Inst::Not
         | Inst::CmpEq

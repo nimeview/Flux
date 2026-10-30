@@ -63,13 +63,51 @@ pub fn resolve_file_with_root(
     root_contents: Option<&str>,
     diagnostics: &mut DiagnosticBag,
 ) -> Option<ResolvedProgram> {
+    try_resolve_file_with_root(path, root_contents, diagnostics).ok()
+}
+
+/// Sources that were read before resolution failed, so callers can render
+/// diagnostics against the file they point into (including imported modules).
+#[derive(Debug, Clone, Default)]
+pub struct ResolveFailure {
+    pub sources: Vec<SourceFile>,
+}
+
+impl ResolveFailure {
+    /// The source a diagnostic with `id` belongs to, if it was read.
+    pub fn source(&self, id: SourceId) -> Option<&SourceFile> {
+        self.sources.iter().find(|s| s.id == id)
+    }
+}
+
+/// Like [`resolve_file_with_root`], but on failure returns every source read so far.
+/// Failure always leaves at least one error in `diagnostics`.
+pub fn try_resolve_file_with_root(
+    path: &Path,
+    root_contents: Option<&str>,
+    diagnostics: &mut DiagnosticBag,
+) -> Result<ResolvedProgram, ResolveFailure> {
     let mut loader = ModuleLoader::new(path);
-    loader.load_recursive(path, root_contents, diagnostics)?;
-    let root = loader.modules.first()?.source.clone();
-    Some(ResolvedProgram {
-        root,
-        modules: loader.modules,
-    })
+    let loaded = loader.load_recursive(path, root_contents, diagnostics);
+    match (loaded, loader.modules.first()) {
+        (Some(()), Some(root)) => Ok(ResolvedProgram {
+            root: root.source.clone(),
+            modules: loader.modules,
+        }),
+        _ => {
+            if !diagnostics.has_errors() {
+                diagnostics.push(FluxError::Parse {
+                    message: format!("failed to resolve {}", path.display()),
+                    span: span_to_miette(flux_diagnostics::Span::DUMMY),
+                    source_id: SourceId(0),
+                });
+            }
+            let mut sources: Vec<SourceFile> =
+                loader.modules.into_iter().map(|m| m.source).collect();
+            sources.extend(loader.failed_source);
+            Err(ResolveFailure { sources })
+        }
+    }
 }
 
 struct ModuleLoader {
@@ -79,6 +117,8 @@ struct ModuleLoader {
     project_root: PathBuf,
     path_deps: HashMap<String, PathBuf>,
     next_id: u32,
+    /// Source whose parse failed; it never becomes a [`LoadedModule`].
+    failed_source: Option<SourceFile>,
 }
 
 impl ModuleLoader {
@@ -95,6 +135,7 @@ impl ModuleLoader {
             project_root,
             path_deps,
             next_id: 0,
+            failed_source: None,
         }
     }
 
@@ -163,11 +204,14 @@ impl ModuleLoader {
         };
 
         let mut local_diag = DiagnosticBag::new();
-        let ast = parse_program(source_id, &contents, &mut local_diag)?;
-        if local_diag.has_errors() {
-            diagnostics.errors.extend(local_diag.errors);
+        let ast = parse_program(source_id, &contents, &mut local_diag);
+        let failed = ast.is_none() || local_diag.has_errors();
+        diagnostics.errors.extend(local_diag.errors);
+        diagnostics.warnings.extend(local_diag.warnings);
+        let Some(ast) = ast.filter(|_| !failed) else {
+            self.failed_source = Some(source);
             return None;
-        }
+        };
 
         let imports = extract_imports(&ast);
         let module = LoadedModule {

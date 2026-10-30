@@ -140,6 +140,7 @@ fn emit_expr(expr: &HirExpr, program: &HirProgram, code: &mut Vec<Inst>) {
                         BinaryOp::Sub => Inst::Sub,
                         BinaryOp::Mul => Inst::Mul,
                         BinaryOp::Div => Inst::Div,
+                        BinaryOp::Rem => Inst::Rem,
                         BinaryOp::Eq => Inst::CmpEq,
                         BinaryOp::Ne => Inst::CmpNe,
                         BinaryOp::Lt => Inst::CmpLt,

@@ -33,22 +33,10 @@ pub(super) fn infer_binary(
                 Some(Type::Error)
             }
         }
-        BinaryOp::Sub | BinaryOp::Mul => {
+        // Int op Int stays Int (`/` truncates); any float operand widens to Float.
+        BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div | BinaryOp::Rem => {
             if numeric_compatible(&l, &r) {
                 Some(widen_numeric(&l, &r))
-            } else {
-                diagnostics.push(FluxError::TypeMismatch {
-                    expected: "numeric type".into(),
-                    found: format!("{} and {}", l.display(), r.display()),
-                    span: span_to_miette(span),
-                    source_id: source,
-                });
-                Some(Type::Error)
-            }
-        }
-        BinaryOp::Div => {
-            if numeric_compatible(&l, &r) {
-                Some(Type::Float)
             } else {
                 diagnostics.push(FluxError::TypeMismatch {
                     expected: "numeric type".into(),

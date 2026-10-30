@@ -7,7 +7,19 @@ use flux_ir::CompiledProgram;
 use crate::graph::{ReactiveGraph, RuntimeValue};
 use crate::ExecutionMode;
 
-type HandlerResult = (RuntimeValue, Vec<(String, RuntimeValue)>, Vec<u64>);
+/// A JIT-computed value, or the runtime error the compiled code raised.
+pub type JitResult = Result<RuntimeValue, flux_value::ArithError>;
+
+type HandlerResult = (JitResult, Vec<(String, RuntimeValue)>, Vec<u64>);
+
+#[cfg(feature = "jit")]
+fn from_tagged(tv: flux_value::TaggedVal) -> JitResult {
+    if tv.is_error() {
+        Err(flux_value::ArithError::from_code(tv.data))
+    } else {
+        Ok(flux_value::tagged_to_value(tv))
+    }
+}
 
 /// Read-only context shared while evaluating derived nodes.
 pub struct EvalContext<'a> {
@@ -20,7 +32,7 @@ pub struct EvalContext<'a> {
 pub trait ExecBackend {
     fn mode(&self) -> ExecutionMode;
 
-    fn try_eval_derived(&mut self, name: &str, ctx: &EvalContext<'_>) -> Option<RuntimeValue>;
+    fn try_eval_derived(&mut self, name: &str, ctx: &EvalContext<'_>) -> Option<JitResult>;
 }
 
 #[derive(Debug, Default, Clone, Copy)]
@@ -31,7 +43,7 @@ impl ExecBackend for VmBackend {
         ExecutionMode::Vm
     }
 
-    fn try_eval_derived(&mut self, _name: &str, _ctx: &EvalContext<'_>) -> Option<RuntimeValue> {
+    fn try_eval_derived(&mut self, _name: &str, _ctx: &EvalContext<'_>) -> Option<JitResult> {
         None
     }
 }
@@ -66,7 +78,7 @@ impl JitBackend {
         name: &str,
         args: &[RuntimeValue],
         graph: &ReactiveGraph,
-    ) -> Option<RuntimeValue> {
+    ) -> Option<JitResult> {
         let mut slots = build_slot_buffer(&self.engine, graph);
         for (i, arg) in args.iter().enumerate() {
             let tv = flux_value::value_to_tagged(arg);
@@ -76,7 +88,7 @@ impl JitBackend {
         }
         self.engine
             .call_fn_with_slots(name, &slots)
-            .map(flux_value::tagged_to_value)
+            .map(from_tagged)
     }
 
     pub fn try_run_handler(
@@ -89,11 +101,12 @@ impl JitBackend {
         let param_tv = param.map(flux_value::value_to_tagged);
         slots = self.engine.build_stmt_slots(key, &slots, param_tv);
         flux_jit::take_emit_events();
-        let result = self
-            .engine
-            .run_stmts_with(key, &slots)
-            .map(flux_value::tagged_to_value)?;
+        let result = self.engine.run_stmts_with(key, &slots).map(from_tagged)?;
         let emitted = flux_jit::take_emit_events();
+        if result.is_err() {
+            // The handler aborted; its queued emits and slot writes are discarded.
+            return Some((result, Vec::new(), slots));
+        }
         let event_table: HashMap<u64, String> = self
             .engine
             .event_indices
@@ -123,14 +136,12 @@ impl JitBackend {
         })
     }
 
-    pub fn try_eval_derived(&self, name: &str, graph: &ReactiveGraph) -> Option<RuntimeValue> {
+    pub fn try_eval_derived(&self, name: &str, graph: &ReactiveGraph) -> Option<JitResult> {
         if self.engine.vm_fallback.contains(name) {
             return None;
         }
         let slots = build_slot_buffer(&self.engine, graph);
-        self.engine
-            .eval_expr_with(name, &slots)
-            .map(flux_value::tagged_to_value)
+        self.engine.eval_expr_with(name, &slots).map(from_tagged)
     }
 }
 
@@ -213,7 +224,7 @@ impl ActiveBackend {
         name: &str,
         args: &[RuntimeValue],
         graph: &ReactiveGraph,
-    ) -> Option<RuntimeValue> {
+    ) -> Option<JitResult> {
         match self {
             Self::Jit(b) => b.try_call_fn(name, args, graph),
             Self::Vm(_) => None,
@@ -226,7 +237,7 @@ impl ActiveBackend {
         _name: &str,
         _args: &[RuntimeValue],
         _graph: &ReactiveGraph,
-    ) -> Option<RuntimeValue> {
+    ) -> Option<JitResult> {
         None
     }
 
@@ -274,7 +285,7 @@ impl ExecBackend for ActiveBackend {
         }
     }
 
-    fn try_eval_derived(&mut self, name: &str, ctx: &EvalContext<'_>) -> Option<RuntimeValue> {
+    fn try_eval_derived(&mut self, name: &str, ctx: &EvalContext<'_>) -> Option<JitResult> {
         match self {
             Self::Vm(b) => b.try_eval_derived(name, ctx),
             #[cfg(feature = "jit")]

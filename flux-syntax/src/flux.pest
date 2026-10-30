@@ -126,7 +126,7 @@ rel_op = { "<=" | ">=" | "<" | ">" }
 add_expr = { mul_expr ~ (add_op ~ mul_expr)* }
 add_op = { "+" | "-" }
 mul_expr = { cast_expr ~ (mul_op ~ cast_expr)* }
-mul_op = { "*" | "/" }
+mul_op = { "*" | "/" | "%" }
 
 cast_expr = { unary_expr ~ ("as" ~ type_name)* }
 

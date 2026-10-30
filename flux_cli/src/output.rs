@@ -98,6 +98,16 @@ pub fn report_errors(source: &SourceFile, bag: &DiagnosticBag) -> Result<(), ()>
     Err(())
 }
 
+/// Reports a failed compilation. Always returns `Err`, even if the bag is
+/// unexpectedly empty, so a failure can never exit as success.
+#[allow(clippy::result_unit_err)]
+pub fn report_failure(source: &SourceFile, bag: &DiagnosticBag) -> Result<(), ()> {
+    if report_errors(source, bag).is_ok() {
+        eprintln!("error: {}: compilation failed", source.path);
+    }
+    Err(())
+}
+
 fn render_diagnostic<D: miette::Diagnostic + Send + Sync + 'static>(
     handler: &GraphicalReportHandler,
     source: &SourceFile,

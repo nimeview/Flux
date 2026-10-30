@@ -399,6 +399,7 @@ pub enum BinaryOp {
     Sub,
     Mul,
     Div,
+    Rem,
 }
 
 #[derive(Debug, Clone)]

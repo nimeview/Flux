@@ -191,6 +191,15 @@ pub enum FluxError {
         span: miette::SourceSpan,
         source_id: SourceId,
     },
+
+    #[error("{message}")]
+    #[diagnostic(code(flux::E018))]
+    Runtime {
+        message: String,
+        #[label("while evaluating this")]
+        span: miette::SourceSpan,
+        source_id: SourceId,
+    },
 }
 
 impl FluxError {
@@ -212,11 +221,12 @@ impl FluxError {
             | Self::CyclicImport { source_id, .. }
             | Self::UnknownExport { source_id, .. }
             | Self::ImmutableLetReadsReactive { source_id, .. }
-            | Self::SideEffectInDerived { source_id, .. } => *source_id,
+            | Self::SideEffectInDerived { source_id, .. }
+            | Self::Runtime { source_id, .. } => *source_id,
         }
     }
 
-    /// Stable diagnostic code (`E000`–`E017`).
+    /// Stable diagnostic code (`E000`–`E018`).
     pub fn code(&self) -> &'static str {
         match self {
             Self::Parse { .. } => "E000",
@@ -236,6 +246,7 @@ impl FluxError {
             Self::UnknownExport { .. } => "E014",
             Self::ImmutableLetReadsReactive { .. } => "E016",
             Self::SideEffectInDerived { .. } => "E017",
+            Self::Runtime { .. } => "E018",
         }
     }
 
@@ -259,6 +270,7 @@ impl FluxError {
             | Self::UnknownExport { span, .. }
             | Self::ImmutableLetReadsReactive { span, .. }
             | Self::SideEffectInDerived { span, .. }
+            | Self::Runtime { span, .. }
             | Self::DuplicateDefinition { span, .. } => *span,
         };
         crate::warning::span_from_miette(source_id, miette_span)

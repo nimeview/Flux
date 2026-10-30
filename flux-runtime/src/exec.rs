@@ -17,6 +17,7 @@ use std::collections::{HashMap, HashSet};
 use flux_ir::{CompiledFunction, CompiledProgram, HandlerKind, NodeKind as IrNodeKind};
 
 use crate::backend::{ActiveBackend, EvalContext, ExecBackend};
+use crate::error::{ExecutorError, RuntimeError};
 use crate::graph::{NodeKind, ReactiveGraph, RuntimeValue};
 use crate::vm::validate_program;
 use crate::ExecutionMode;
@@ -61,17 +62,19 @@ pub struct Executor {
     backend: ActiveBackend,
     /// Active while evaluating a derived node with lazy `if` — records graph reads.
     tracking_scope: Option<HashSet<crate::graph::NodeId>>,
+    /// First runtime error; once set, evaluation unwinds and nothing else runs.
+    trap: Option<RuntimeError>,
 }
 
 impl Executor {
     /// Create an executor with the default VM engine.
-    pub fn new(program: CompiledProgram) -> Result<Self, String> {
+    pub fn new(program: CompiledProgram) -> Result<Self, ExecutorError> {
         Self::with_mode(program, ExecutionMode::Vm)
     }
 
     /// Create an executor with an explicit engine choice.
-    pub fn with_mode(program: CompiledProgram, mode: ExecutionMode) -> Result<Self, String> {
-        validate_program(&program)?;
+    pub fn with_mode(program: CompiledProgram, mode: ExecutionMode) -> Result<Self, ExecutorError> {
+        validate_program(&program).map_err(ExecutorError::Invalid)?;
 
         let functions = program
             .functions
@@ -113,7 +116,9 @@ impl Executor {
         }
 
         if !graph.is_acyclic() {
-            return Err("reactive graph contains a dependency cycle".to_string());
+            return Err(ExecutorError::Invalid(
+                "reactive graph contains a dependency cycle".to_string(),
+            ));
         }
 
         let node_index: HashMap<String, usize> = program
@@ -137,13 +142,58 @@ impl Executor {
             changed_nodes: HashSet::new(),
             backend,
             tracking_scope: None,
+            trap: None,
         };
+        // Initial values are assigned without propagation; derived values and
+        // watches then run once over the fully initialized graph.
+        this.defer_propagation = true;
         for stmt in &this.program.init_stmts.clone() {
             this.run_stmt(stmt, &mut HashMap::new());
+            if this.trap.is_some() {
+                let binding = match stmt {
+                    flux_ir::IrStmt::Assign { target, .. } => Some(target.as_str()),
+                    _ => None,
+                };
+                this.set_trap_context("module initialization", binding);
+                break;
+            }
         }
+        this.defer_propagation = false;
+        this.mutated_sources.clear();
+        this.changed_nodes.clear();
         this.recompute_all();
         this.run_watches();
+        if let Some(err) = this.trap.take() {
+            return Err(ExecutorError::Runtime(err));
+        }
         Ok(this)
+    }
+
+    /// The first runtime error raised, if any. Once set, the executor stops
+    /// running code; values computed before the error stay readable.
+    pub fn runtime_error(&self) -> Option<&RuntimeError> {
+        self.trap.as_ref()
+    }
+
+    pub(crate) fn raise(&mut self, kind: flux_value::ArithError) {
+        if self.trap.is_none() {
+            self.trap = Some(RuntimeError {
+                kind,
+                context: None,
+                binding: None,
+            });
+        }
+    }
+
+    /// Attach `context` (and the binding, if any) to a pending runtime error
+    /// that has none yet; the innermost caller that knows wins.
+    fn set_trap_context(&mut self, context: &str, binding: Option<&str>) {
+        if let Some(err) = &mut self.trap {
+            if err.context.is_none() {
+                err.context = Some(context.to_string());
+                err.binding = binding.map(str::to_string);
+            }
+        }
     }
 
     pub fn get_number(&self, name: &str) -> Option<f64> {
@@ -177,6 +227,9 @@ impl Executor {
 
     /// Emit an event by name (for tests and host integration).
     pub fn emit(&mut self, event: &str, payload: RuntimeValue) {
+        if self.trap.is_some() {
+            return;
+        }
         let Some(&event_id) = self.graph.name_to_id.get(event) else {
             return;
         };
@@ -206,12 +259,19 @@ impl Executor {
             if !self.try_run_jit_on(idx, &handler.body, &mut locals, payload.clone()) {
                 self.run_stmts(&handler.body, &mut locals);
             }
+            if self.trap.is_some() {
+                self.set_trap_context(&format!("`on {event}`"), None);
+                break;
+            }
             self.flush_propagation();
         }
         self.defer_propagation = was_deferred;
     }
 
     pub fn set_source(&mut self, name: &str, value: RuntimeValue) {
+        if self.trap.is_some() {
+            return;
+        }
         if !self.graph.set_by_name(name, value) {
             return;
         }
@@ -254,6 +314,10 @@ impl Executor {
             .collect();
         for name in derived {
             let value = self.eval_derived(&name);
+            if self.trap.is_some() {
+                self.set_trap_context(&format!("`{name}`"), Some(&name));
+                return;
+            }
             if let Some(id) = self.graph.name_to_id.get(&name).copied() {
                 self.graph.nodes[id.0 as usize].value = value;
             }
@@ -274,7 +338,11 @@ impl Executor {
         };
         let jit_value = self.backend.try_eval_derived(name, &ctx);
         let value = match jit_value {
-            Some(v) => {
+            Some(Err(e)) => {
+                self.raise(e);
+                RuntimeValue::Unit
+            }
+            Some(Ok(v)) => {
                 if dynamic {
                     if let Some(deps) = self.backend.lazy_if_deps_for(name) {
                         if let Some(scope) = &mut self.tracking_scope {
@@ -382,6 +450,10 @@ impl Executor {
             }
             let old = self.graph.nodes[id.0 as usize].value.clone();
             let value = self.eval_derived(&name);
+            if self.trap.is_some() {
+                self.set_trap_context(&format!("`{name}`"), Some(&name));
+                return;
+            }
             if old != value {
                 self.changed_nodes.insert(name.clone());
             }
@@ -413,10 +485,15 @@ impl Executor {
         let key = format!("__on_{idx}");
         let handler = &self.program.on_handlers[idx];
         let param_ref = handler.param.as_ref().map(|_| &param);
-        let Some((_, emits, slots)) = self.backend.try_run_handler(&key, &self.graph, param_ref)
+        let Some((result, emits, slots)) =
+            self.backend.try_run_handler(&key, &self.graph, param_ref)
         else {
             return false;
         };
+        if let Err(e) = result {
+            self.raise(e);
+            return true;
+        }
         for (event, payload) in emits {
             self.emit(&event, payload);
         }
@@ -426,9 +503,14 @@ impl Executor {
 
     fn try_run_jit_watch(&mut self, idx: usize, body: &[flux_ir::IrStmt]) -> bool {
         let key = format!("__watch_{idx}");
-        let Some((_, emits, slots)) = self.backend.try_run_handler(&key, &self.graph, None) else {
+        let Some((result, emits, slots)) = self.backend.try_run_handler(&key, &self.graph, None)
+        else {
             return false;
         };
+        if let Err(e) = result {
+            self.raise(e);
+            return true;
+        }
         for (event, payload) in emits {
             self.emit(&event, payload);
         }
@@ -473,6 +555,9 @@ impl Executor {
     }
 
     fn run_watches(&mut self) {
+        if self.trap.is_some() {
+            return;
+        }
         self.in_watch = true;
         let changed = std::mem::take(&mut self.changed_nodes);
         let run_all = changed.is_empty();
@@ -503,6 +588,10 @@ impl Executor {
             let body = self.program.watches[idx].body.clone();
             if !self.try_run_jit_watch(idx, &body) {
                 self.run_stmts(&body, &mut HashMap::new());
+            }
+            if self.trap.is_some() {
+                self.set_trap_context("`watch`", None);
+                break;
             }
         }
         self.in_watch = false;

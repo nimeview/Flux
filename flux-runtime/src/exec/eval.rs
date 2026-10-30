@@ -8,9 +8,10 @@ use flux_ir::Inst;
 use crate::graph::RuntimeValue;
 use crate::vm::{debug_assert_vm, resolve_load, stack_pop, stack_pop_opt};
 
+use flux_value::NumOp;
+
 use super::values::{
-    add_binop, cmp, div_binop, extract_variant_payload, mul_binop, sub_binop, to_runtime,
-    variant_tag_eq,
+    arith_binop, cmp, eq_binop, extract_variant_payload, to_runtime, variant_tag_eq,
 };
 use super::{Executor, FlowControl};
 
@@ -22,22 +23,38 @@ impl Executor {
     ) -> RuntimeValue {
         let mut stack: Vec<RuntimeValue> = Vec::new();
         for inst in code {
+            // A runtime error aborts evaluation; nested evaluations (calls,
+            // short-circuit operands) surface here on the next instruction.
+            if self.trap.is_some() {
+                return RuntimeValue::Unit;
+            }
             match inst {
                 Inst::Const(v) => stack.push(to_runtime(v)),
                 Inst::Load(name) => {
                     self.record_dep_load(name, locals);
                     stack.push(resolve_load(name, locals, &self.graph, &self.functions));
                 }
-                Inst::Add => add_binop(&mut stack),
-                Inst::Sub => sub_binop(&mut stack),
-                Inst::Mul => mul_binop(&mut stack),
-                Inst::Div => div_binop(&mut stack),
+                Inst::Add | Inst::Sub | Inst::Mul | Inst::Div | Inst::Rem => {
+                    let op = match inst {
+                        Inst::Add => NumOp::Add,
+                        Inst::Sub => NumOp::Sub,
+                        Inst::Mul => NumOp::Mul,
+                        Inst::Div => NumOp::Div,
+                        _ => NumOp::Rem,
+                    };
+                    if let Err(e) = arith_binop(&mut stack, op) {
+                        self.raise(e);
+                        return RuntimeValue::Unit;
+                    }
+                }
                 Inst::Neg => {
                     let v = stack_pop(&mut stack, "Neg");
-                    if let Some(n) = v.as_float() {
-                        stack.push(RuntimeValue::float_f64(-n));
-                    } else {
-                        debug_assert_vm(false, &format!("Neg: expected numeric value, got {v:?}"));
+                    match flux_value::negate(&v) {
+                        Ok(n) => stack.push(n),
+                        Err(e) => {
+                            self.raise(e);
+                            return RuntimeValue::Unit;
+                        }
                     }
                 }
                 Inst::Not => {
@@ -48,12 +65,12 @@ impl Executor {
                         debug_assert_vm(false, &format!("Not: expected bool value, got {v:?}"));
                     }
                 }
-                Inst::CmpEq => cmp(&mut stack, |a, b| a == b),
-                Inst::CmpNe => cmp(&mut stack, |a, b| a != b),
-                Inst::CmpLt => cmp(&mut stack, |a, b| a < b),
-                Inst::CmpLe => cmp(&mut stack, |a, b| a <= b),
-                Inst::CmpGt => cmp(&mut stack, |a, b| a > b),
-                Inst::CmpGe => cmp(&mut stack, |a, b| a >= b),
+                Inst::CmpEq => eq_binop(&mut stack, false),
+                Inst::CmpNe => eq_binop(&mut stack, true),
+                Inst::CmpLt => cmp(&mut stack, |o| o.is_lt()),
+                Inst::CmpLe => cmp(&mut stack, |o| o.is_le()),
+                Inst::CmpGt => cmp(&mut stack, |o| o.is_gt()),
+                Inst::CmpGe => cmp(&mut stack, |o| o.is_ge()),
                 Inst::ShortAnd(right) => {
                     let a = stack_pop(&mut stack, "ShortAnd lhs")
                         .as_bool()
@@ -123,7 +140,13 @@ impl Executor {
                 }
                 Inst::Cast { ty } => {
                     let val = stack_pop(&mut stack, &format!("Cast as {ty}"));
-                    stack.push(flux_value::cast_value(&val, ty));
+                    match flux_value::cast(&val, ty) {
+                        Ok(v) => stack.push(v),
+                        Err(e) => {
+                            self.raise(e);
+                            return RuntimeValue::Unit;
+                        }
+                    }
                 }
                 Inst::MakeArray(count) => {
                     let mut items = Vec::with_capacity(*count);
@@ -339,8 +362,13 @@ impl Executor {
             );
             return RuntimeValue::Unit;
         };
-        if let Some(result) = self.backend.try_call_fn(name, args, &self.graph) {
-            return result;
+        match self.backend.try_call_fn(name, args, &self.graph) {
+            Some(Ok(result)) => return result,
+            Some(Err(e)) => {
+                self.raise(e);
+                return RuntimeValue::Unit;
+            }
+            None => {}
         }
         let func = func.clone();
         let mut locals = HashMap::new();

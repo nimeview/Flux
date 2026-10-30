@@ -17,11 +17,21 @@ pub struct PackageManifest {
     pub dependencies: HashMap<String, DependencySpec>,
 }
 
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct RunSection {
-    /// Enable Cranelift JIT when running via `flux run` (default: false).
-    #[serde(default)]
+    /// Run with the Cranelift JIT (default: true). `false` selects the VM.
+    #[serde(default = "default_jit")]
     pub jit: bool,
+}
+
+impl Default for RunSection {
+    fn default() -> Self {
+        Self { jit: default_jit() }
+    }
+}
+
+fn default_jit() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, Deserialize)]

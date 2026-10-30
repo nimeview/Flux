@@ -2,7 +2,9 @@ use std::fs;
 use std::path::PathBuf;
 
 use flux_diagnostics::{DiagnosticBag, FluxError};
-use flux_resolve::{link_modules, resolve_file, resolve_file_with_root};
+use flux_resolve::{
+    link_modules, resolve_file, resolve_file_with_root, try_resolve_file_with_root,
+};
 
 fn temp_root(name: &str) -> PathBuf {
     std::env::temp_dir().join(format!("flux_resolve_{name}_{}", std::process::id()))
@@ -90,4 +92,41 @@ fn selective_import_symbols_are_validated() {
     let resolved = resolve_file(&path, &mut diag).expect("resolve");
     let linked = link_modules(&resolved, &mut diag).expect("link");
     assert_eq!(linked.imports[0].symbols, Vec::<String>::new());
+}
+
+#[test]
+fn syntax_error_in_root_is_reported() {
+    let root = temp_root("root_syntax");
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(&root).unwrap();
+    fs::write(root.join("main.fl"), "let x =\n").unwrap();
+
+    let mut diag = DiagnosticBag::new();
+    let failure = try_resolve_file_with_root(&root.join("main.fl"), None, &mut diag)
+        .expect_err("malformed root must fail");
+    let err = diag.errors.first().expect("parse diagnostic");
+    assert!(matches!(err, FluxError::Parse { .. }), "{err:?}");
+    let source = failure.source(err.source_id()).expect("failing source");
+    assert!(source.path.ends_with("main.fl"));
+
+    let _ = fs::remove_dir_all(&root);
+}
+
+#[test]
+fn syntax_error_in_import_is_reported_against_imported_source() {
+    let root = temp_root("import_syntax");
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(&root).unwrap();
+    fs::write(root.join("main.fl"), "import util\nlet y = 1\n").unwrap();
+    fs::write(root.join("util.fl"), "pub fn f( -> Int { 1 }\n").unwrap();
+
+    let mut diag = DiagnosticBag::new();
+    let failure = try_resolve_file_with_root(&root.join("main.fl"), None, &mut diag)
+        .expect_err("malformed import must fail");
+    let err = diag.errors.first().expect("parse diagnostic");
+    assert!(matches!(err, FluxError::Parse { .. }), "{err:?}");
+    let source = failure.source(err.source_id()).expect("failing source");
+    assert!(source.path.ends_with("util.fl"), "{}", source.path);
+
+    let _ = fs::remove_dir_all(&root);
 }

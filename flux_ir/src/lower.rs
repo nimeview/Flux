@@ -119,6 +119,18 @@ pub fn lower_to_ir(
 
     for item in &program.items {
         match item {
+            // A source whose initializer is not a literal (`let mut a = -x + 1`)
+            // starts as Unit and is assigned during module init, in declaration order.
+            HirItem::Binding(b)
+                if b.kind == BindingKind::Source && const_expr(&b.value).is_none() =>
+            {
+                if let Some(target) = program.names.get(&b.name) {
+                    init_stmts.push(IrStmt::Assign {
+                        target: target.clone(),
+                        expr: lower_expr(&b.value, program),
+                    });
+                }
+            }
             HirItem::Binding(_) | HirItem::Event(_) => {}
             HirItem::SourceAssign(a) => {
                 if let Some(target) = program.names.get(&a.name) {

@@ -7,5 +7,6 @@ edition.workspace = true
 flux_diagnostics = { path = "../flux_diagnostics" }
 flux_syntax = { path = "../flux-syntax" }
 flux_std = { path = "../flux_std" }
+flux_value = { path = "../flux_value" }
 flux_resolve = { path = "../flux_resolve" }
 miette = { version = "7", features = ["fancy"] }

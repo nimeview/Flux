@@ -471,6 +471,7 @@ fn expr_fmt(expr: &flux_syntax::Expr) -> String {
                 flux_syntax::BinaryOp::Sub => "-",
                 flux_syntax::BinaryOp::Mul => "*",
                 flux_syntax::BinaryOp::Div => "/",
+                flux_syntax::BinaryOp::Rem => "%",
             };
             format!("{} {op} {}", expr_fmt(left), expr_fmt(right))
         }

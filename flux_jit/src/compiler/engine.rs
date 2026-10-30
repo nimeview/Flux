@@ -31,6 +31,9 @@ pub(crate) struct HostFuncs {
     pub enum_payload_get: FuncId,
     pub call_builtin: FuncId,
     pub cast: FuncId,
+    pub arith: FuncId,
+    pub neg: FuncId,
+    pub cmp: FuncId,
 }
 
 impl HostFuncs {
@@ -150,6 +153,34 @@ impl HostFuncs {
             .declare_function("flux_jit_cast", Linkage::Import, &cast_sig)
             .expect("declare flux_jit_cast");
 
+        let mut arith_sig = module.make_signature();
+        for _ in 0..5 {
+            arith_sig.params.push(AbiParam::new(types::I64));
+        }
+        arith_sig.returns.push(AbiParam::new(types::I64));
+        arith_sig.returns.push(AbiParam::new(types::I64));
+        let arith = module
+            .declare_function("flux_jit_arith", Linkage::Import, &arith_sig)
+            .expect("declare flux_jit_arith");
+
+        let mut neg_sig = module.make_signature();
+        neg_sig.params.push(AbiParam::new(types::I64));
+        neg_sig.params.push(AbiParam::new(types::I64));
+        neg_sig.returns.push(AbiParam::new(types::I64));
+        neg_sig.returns.push(AbiParam::new(types::I64));
+        let neg = module
+            .declare_function("flux_jit_neg", Linkage::Import, &neg_sig)
+            .expect("declare flux_jit_neg");
+
+        let mut cmp_sig = module.make_signature();
+        for _ in 0..5 {
+            cmp_sig.params.push(AbiParam::new(types::I64));
+        }
+        cmp_sig.returns.push(AbiParam::new(types::I64));
+        let cmp = module
+            .declare_function("flux_jit_cmp", Linkage::Import, &cmp_sig)
+            .expect("declare flux_jit_cmp");
+
         Self {
             array_push,
             array_finish,
@@ -164,6 +195,9 @@ impl HostFuncs {
             enum_payload_get,
             call_builtin,
             cast,
+            arith,
+            neg,
+            cmp,
         }
     }
 }
@@ -260,6 +294,9 @@ impl JitEngine {
             crate::host::flux_jit_call_builtin as *const u8,
         );
         jit_builder.symbol("flux_jit_cast", crate::host::flux_jit_cast as *const u8);
+        jit_builder.symbol("flux_jit_arith", crate::host::flux_jit_arith as *const u8);
+        jit_builder.symbol("flux_jit_neg", crate::host::flux_jit_neg as *const u8);
+        jit_builder.symbol("flux_jit_cmp", crate::host::flux_jit_cmp as *const u8);
         let module = JITModule::new(jit_builder);
 
         let tables = JitTables::build(program);

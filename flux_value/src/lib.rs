@@ -1,3 +1,4 @@
+mod arith;
 mod convert;
 mod display;
 mod heap;
@@ -5,18 +6,19 @@ mod ops;
 mod tagged;
 mod width;
 
+pub use arith::{
+    binary, cast, compare, int_from_i128, negate, promote_int, values_equal, ArithError, NumOp,
+};
 pub use convert::{tagged_to_value, value_to_tagged};
 pub use display::render;
 pub use heap::{
     array_finish, array_get, array_len, array_push, clear_for_tests, get_array, get_enum,
     get_string, intern_string, make_int_range_array, store_enum,
 };
-pub use ops::{
-    add_int, cast_value, div_int, float_from_f64, float_to_f64, int_from_i64, int_to_i64, mul_int,
-    sub_int,
-};
+pub use ops::{float_from_f64, float_to_f64, int_from_i64, int_to_i64};
 pub use tagged::{
-    TaggedVal, TAG_ARRAY, TAG_BOOL, TAG_CHAR, TAG_ENUM, TAG_FLOAT, TAG_INT, TAG_STRING, TAG_UNIT,
+    float_tag, int_tag, tag_float_width, tag_int_width, tag_kind, TaggedVal, TAG_ARRAY, TAG_BOOL,
+    TAG_CHAR, TAG_ENUM, TAG_ERROR, TAG_FLOAT, TAG_INT, TAG_STRING, TAG_UNIT,
 };
 pub use width::{FloatWidth, IntWidth, OverflowError};
 

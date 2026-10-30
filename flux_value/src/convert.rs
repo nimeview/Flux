@@ -2,19 +2,21 @@
 
 use crate::heap::{get_array, get_enum, get_string, intern_string, store_enum};
 use crate::ops::{float_to_f64, int_to_i64};
-use crate::width::{FloatWidth, IntWidth};
-use crate::{
-    TaggedVal, Value, TAG_ARRAY, TAG_BOOL, TAG_CHAR, TAG_ENUM, TAG_FLOAT, TAG_INT, TAG_STRING,
-};
+use crate::tagged::{float_tag, int_tag, tag_float_width, tag_int_width, tag_kind};
+use crate::{TaggedVal, Value, TAG_ARRAY, TAG_BOOL, TAG_CHAR, TAG_ENUM, TAG_STRING};
 
 /// Encode a runtime value into the JIT slot representation.
 pub fn value_to_tagged(v: &Value) -> TaggedVal {
     match v {
-        Value::Int { width, bits } => {
-            let _ = width;
-            TaggedVal::from_int(int_to_i64(*width, *bits))
-        }
-        Value::Float { width, bits } => TaggedVal::from_float(float_to_f64(*width, *bits)),
+        // Ints keep their sign-extended value in `data` so hosts can read it as i64.
+        Value::Int { width, bits } => TaggedVal {
+            tag: int_tag(*width),
+            data: int_to_i64(*width, *bits) as u64,
+        },
+        Value::Float { width, bits } => TaggedVal {
+            tag: float_tag(*width),
+            data: float_to_f64(*width, *bits).to_bits(),
+        },
         Value::Char(c) => TaggedVal {
             tag: TAG_CHAR,
             data: *c as u64,
@@ -40,15 +42,21 @@ pub fn value_to_tagged(v: &Value) -> TaggedVal {
 
 /// Decode a tagged slot value into a runtime value.
 pub fn tagged_to_value(tv: TaggedVal) -> Value {
-    match tv.tag {
-        TAG_INT => Value::Int {
-            width: IntWidth::I64,
-            bits: tv.data,
-        },
-        TAG_FLOAT => Value::Float {
-            width: FloatWidth::F64,
-            bits: tv.data,
-        },
+    if let Some(width) = tag_int_width(tv.tag) {
+        let mask = if width.bits() == 64 {
+            u64::MAX
+        } else {
+            (1u64 << width.bits()) - 1
+        };
+        return Value::Int {
+            width,
+            bits: tv.data & mask,
+        };
+    }
+    if let Some(width) = tag_float_width(tv.tag) {
+        return crate::ops::float_from_f64(width, f64::from_bits(tv.data));
+    }
+    match tag_kind(tv.tag) {
         TAG_CHAR => Value::Char(tv.data as u32),
         TAG_BOOL => Value::Bool(tv.data != 0),
         TAG_ARRAY => get_array(tv.data)

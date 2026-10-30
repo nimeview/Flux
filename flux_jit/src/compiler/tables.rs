@@ -27,6 +27,9 @@ fn walk_code(strings: &mut HashMap<String, u64>, code: &[Inst]) {
                 intern_string(strings, variant);
             }
             Inst::VariantTagEq(v) | Inst::EnumTagEq(v) => intern_string(strings, v),
+            // Lowering passes cast targets and builtin names to the host by id.
+            Inst::Cast { ty } => intern_string(strings, ty),
+            Inst::Call { name, .. } => intern_string(strings, name),
             Inst::ShortAnd(inner) | Inst::ShortOr(inner) => walk_code(strings, inner),
             Inst::LazyIf {
                 then_branch,

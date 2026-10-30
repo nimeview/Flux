@@ -17,7 +17,7 @@ use sha2::{Digest, Sha256};
 use crate::paths::{cache_dir, ensure_project_dirs};
 
 const CACHE_MAGIC: &[u8; 6] = b"FLXIR\0";
-const CACHE_VERSION: u8 = 1;
+const CACHE_VERSION: u8 = 2;
 
 #[derive(Default)]
 pub struct CompileCache {

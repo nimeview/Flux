@@ -39,7 +39,9 @@ pub fn parse_program(
         Ok(mut pairs) => pairs.next()?.into_inner(),
         Err(err) => {
             diagnostics.push(FluxError::Parse {
-                message: err.to_string(),
+                // The span already carries the location; pest's `Display` would
+                // render a second snippet inside the diagnostic.
+                message: err.variant.message().into_owned(),
                 span: span_to_miette(span_from_pest_error(source_id, &err)),
                 source_id,
             });

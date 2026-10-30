@@ -1,15 +1,18 @@
 mod backend;
+mod error;
 mod exec;
 mod graph;
 mod vm;
 
 #[cfg(feature = "jit")]
 pub use backend::JitBackend;
-pub use backend::{EvalContext, ExecBackend, VmBackend};
+pub use backend::{EvalContext, ExecBackend, JitResult, VmBackend};
+pub use error::{ExecutorError, RuntimeError};
 pub use exec::Executor;
 pub use flux_ir::{EffectMeta, EffectTrigger, HandlerKind};
 #[cfg(feature = "jit")]
 pub use flux_jit::JitStats;
+pub use flux_value::ArithError;
 pub use graph::{NodeId, NodeKind, ReactiveGraph, RuntimeValue};
 
 /// Which execution engine the `Executor` uses.

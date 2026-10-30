@@ -70,6 +70,8 @@ pub enum Inst {
     Sub,
     Mul,
     Div,
+    /// Integer remainder (sign of the dividend) or IEEE float remainder.
+    Rem,
     Neg,
     Not,
     CmpEq,

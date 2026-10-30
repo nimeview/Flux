@@ -7,9 +7,11 @@ use cranelift_module::{FuncId, Module};
 
 use flux_ir::Inst;
 
+use flux_value::NumOp;
+
 use super::emit::{
-    emit_add, emit_cmp_ordered, emit_const, emit_div, emit_icmp_eq, emit_icmp_ne, emit_mul,
-    emit_neg, emit_sub, slot_data_addr, slot_tag_addr, store_tagged,
+    abort_on_error, emit_add, emit_arith, emit_cmp_ordered, emit_const, emit_icmp_eq, emit_icmp_ne,
+    emit_neg, slot_data_addr, slot_tag_addr, store_tagged,
 };
 use super::engine::HostFuncs;
 use super::tables::JitTables;
@@ -64,23 +66,31 @@ pub(crate) fn lower_insts(
 
             Inst::Add => {
                 let (lhs, rhs) = pop2!();
-                stack.push(emit_add(lhs, rhs, host_funcs.string_concat, module, b));
+                let pair = emit_add(
+                    lhs,
+                    rhs,
+                    host_funcs.string_concat,
+                    host_funcs.arith,
+                    module,
+                    b,
+                );
+                stack.push(abort_on_error(pair, b));
             }
-            Inst::Sub => {
+            Inst::Sub | Inst::Mul | Inst::Div | Inst::Rem => {
+                let op = match inst {
+                    Inst::Sub => NumOp::Sub,
+                    Inst::Mul => NumOp::Mul,
+                    Inst::Div => NumOp::Div,
+                    _ => NumOp::Rem,
+                };
                 let (lhs, rhs) = pop2!();
-                stack.push(emit_sub(lhs, rhs, b));
-            }
-            Inst::Mul => {
-                let (lhs, rhs) = pop2!();
-                stack.push(emit_mul(lhs, rhs, b));
-            }
-            Inst::Div => {
-                let (lhs, rhs) = pop2!();
-                stack.push(emit_div(lhs, rhs, b));
+                let pair = emit_arith(op, lhs, rhs, host_funcs.arith, module, b);
+                stack.push(abort_on_error(pair, b));
             }
             Inst::Neg => {
                 let pair = stack.pop()?;
-                stack.push(emit_neg(pair, b));
+                let pair = emit_neg(pair, host_funcs.neg, module, b);
+                stack.push(abort_on_error(pair, b));
             }
             Inst::Not => {
                 let (_, ai) = stack.pop()?;
@@ -104,46 +114,22 @@ pub(crate) fn lower_insts(
             Inst::CmpLt => {
                 let rhs = stack.pop()?;
                 let lhs = stack.pop()?;
-                stack.push(emit_cmp_ordered(
-                    IntCC::SignedLessThan,
-                    FloatCC::LessThan,
-                    lhs,
-                    rhs,
-                    b,
-                )?);
+                stack.push(emit_cmp_ordered(0, lhs, rhs, host_funcs.cmp, module, b)?);
             }
             Inst::CmpLe => {
                 let rhs = stack.pop()?;
                 let lhs = stack.pop()?;
-                stack.push(emit_cmp_ordered(
-                    IntCC::SignedLessThanOrEqual,
-                    FloatCC::LessThanOrEqual,
-                    lhs,
-                    rhs,
-                    b,
-                )?);
+                stack.push(emit_cmp_ordered(1, lhs, rhs, host_funcs.cmp, module, b)?);
             }
             Inst::CmpGt => {
                 let rhs = stack.pop()?;
                 let lhs = stack.pop()?;
-                stack.push(emit_cmp_ordered(
-                    IntCC::SignedGreaterThan,
-                    FloatCC::GreaterThan,
-                    lhs,
-                    rhs,
-                    b,
-                )?);
+                stack.push(emit_cmp_ordered(2, lhs, rhs, host_funcs.cmp, module, b)?);
             }
             Inst::CmpGe => {
                 let rhs = stack.pop()?;
                 let lhs = stack.pop()?;
-                stack.push(emit_cmp_ordered(
-                    IntCC::SignedGreaterThanOrEqual,
-                    FloatCC::GreaterThanOrEqual,
-                    lhs,
-                    rhs,
-                    b,
-                )?);
+                stack.push(emit_cmp_ordered(3, lhs, rhs, host_funcs.cmp, module, b)?);
             }
 
             Inst::ShortAnd(right_code) => {
@@ -363,7 +349,8 @@ pub(crate) fn lower_insts(
                 let cast_ref = module.declare_func_in_func(host_funcs.cast, b.func);
                 let call = b.ins().call(cast_ref, &[tag, data, ty_v]);
                 let results = b.inst_results(call);
-                stack.push((results[0], results[1]));
+                let pair = (results[0], results[1]);
+                stack.push(abort_on_error(pair, b));
             }
 
             Inst::Call { name, argc } => {
@@ -379,7 +366,9 @@ pub(crate) fn lower_insts(
                 let func_ref = module.declare_func_in_func(*callee, b.func);
                 let call = b.ins().call(func_ref, &[slots_ptr]);
                 let results = b.inst_results(call);
-                stack.push((results[0], results[1]));
+                // A callee that aborted returns its error value: propagate it.
+                let pair = (results[0], results[1]);
+                stack.push(abort_on_error(pair, b));
             }
 
             Inst::MakeArray(count) => {

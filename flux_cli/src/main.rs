@@ -3,7 +3,7 @@ use std::process;
 
 use clap::{Parser, Subcommand};
 use flux_cli::manifest::{init_project, PackageManifest};
-use flux_cli::output::{print_jit_stats, print_runtime_with, report_errors, report_warnings};
+use flux_cli::output::{print_jit_stats, print_runtime_with, report_failure, report_warnings};
 use flux_cli::pipeline::{
     check_file as typecheck_file, compile_file_with_options, compile_with_mode, source_from,
     CompileOptions,
@@ -28,9 +28,12 @@ enum Commands {
     Run {
         /// Path to the source file (defaults to the entry point declared in ./flux.toml)
         file: Option<String>,
-        /// Use Cranelift JIT for numeric hot paths (falls back to VM for strings/arrays)
-        #[arg(long)]
+        /// Force the Cranelift JIT (the default unless `flux.toml` sets `[run] jit = false`)
+        #[arg(long, conflicts_with = "vm")]
         jit: bool,
+        /// Run on the VM interpreter instead of the JIT
+        #[arg(long)]
+        vm: bool,
         /// Skip the project `.flux/cache` compile cache
         #[arg(long)]
         no_cache: bool,
@@ -48,9 +51,12 @@ enum Commands {
     },
     /// Interactive read-eval-print loop
     Repl {
-        /// Use Cranelift JIT for numeric hot paths
-        #[arg(long)]
+        /// Force the Cranelift JIT (the default)
+        #[arg(long, conflicts_with = "vm")]
         jit: bool,
+        /// Run on the VM interpreter instead of the JIT
+        #[arg(long)]
+        vm: bool,
     },
     /// Format a .fl file (prints to stdout by default)
     Fmt {
@@ -100,10 +106,11 @@ fn main() {
         Commands::Run {
             file,
             jit,
+            vm,
             no_cache,
             quiet,
             verbose,
-        } => match run_file(file.as_deref(), jit, no_cache, quiet, verbose) {
+        } => match run_file(file.as_deref(), use_jit(jit, vm), no_cache, quiet, verbose) {
             Ok(()) => 0,
             Err(()) => 1,
         },
@@ -111,7 +118,7 @@ fn main() {
             Ok(()) => 0,
             Err(()) => 1,
         },
-        Commands::Repl { jit } => repl::run(jit).map_or(1, |_| 0),
+        Commands::Repl { jit, vm } => repl::run(use_jit(jit, vm)).map_or(1, |_| 0),
         Commands::Fmt { file, write, check } => match fmt_file(&file, write, check) {
             Ok(()) => 0,
             Err(()) => 1,
@@ -169,12 +176,18 @@ fn resolve_run_target(file: Option<&str>) -> Result<String, ()> {
         .into_owned())
 }
 
-fn resolve_jit(cli_jit: bool) -> bool {
+/// Engine choice: `--vm` > `--jit` > `FLUX_JIT=0|1` > `flux.toml` `[run] jit` > JIT.
+fn use_jit(cli_jit: bool, cli_vm: bool) -> bool {
+    if cli_vm {
+        return false;
+    }
     if cli_jit {
         return true;
     }
-    if std::env::var("FLUX_JIT").ok().as_deref() == Some("1") {
-        return true;
+    match std::env::var("FLUX_JIT").ok().as_deref() {
+        Some("0") => return false,
+        Some("1") => return true,
+        _ => {}
     }
     let manifest_path = std::path::Path::new("flux.toml");
     if manifest_path.exists() {
@@ -182,7 +195,7 @@ fn resolve_jit(cli_jit: bool) -> bool {
             return manifest.run.jit;
         }
     }
-    false
+    true
 }
 
 fn run_file(
@@ -193,7 +206,7 @@ fn run_file(
     verbose: bool,
 ) -> Result<(), ()> {
     let path = resolve_run_target(file)?;
-    let mode = if resolve_jit(jit) {
+    let mode = if jit {
         ExecutionMode::Jit
     } else {
         ExecutionMode::Vm
@@ -217,7 +230,7 @@ fn run_file(
             }
             Ok(())
         }
-        Err(failed) => report_errors(&failed.source, &failed.diagnostics),
+        Err(failed) => report_failure(&failed.source, &failed.diagnostics),
     }
 }
 
@@ -229,7 +242,7 @@ fn check_file(file: Option<&str>) -> Result<(), ()> {
             println!("ok");
             Ok(())
         }
-        Err(failed) => report_errors(&failed.source, &failed.diagnostics),
+        Err(failed) => report_failure(&failed.source, &failed.diagnostics),
     }
 }
 
@@ -296,7 +309,7 @@ fn wasm_file(path: &str) -> Result<(), ()> {
             println!("wasm backend: {status:?}, {} bytes", bytes.len());
             Ok(())
         }
-        Err(failed) => report_errors(&failed.source, &failed.diagnostics),
+        Err(failed) => report_failure(&failed.source, &failed.diagnostics),
     }
 }
 
