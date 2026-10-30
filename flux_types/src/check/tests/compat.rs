@@ -10,9 +10,9 @@ fn int_compatible_with_int() {
 }
 
 #[test]
-fn int_compatible_with_float() {
-    assert!(types_compatible(&Type::Int, &Type::Float));
-    assert!(types_compatible(&Type::Float, &Type::Int));
+fn int_requires_explicit_cast_to_float() {
+    assert!(!types_compatible(&Type::Int, &Type::Float));
+    assert!(!types_compatible(&Type::Float, &Type::Int));
 }
 
 #[test]

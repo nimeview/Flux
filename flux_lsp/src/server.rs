@@ -1,12 +1,12 @@
 //! Stdio LSP server: diagnostics + hover + completion, wired up by `flux lsp-server`.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::error::Error;
 
 use lsp_server::{Connection, Message, Request as ServerRequest, RequestId, Response};
 use lsp_types::notification::{
-    DidChangeTextDocument, DidCloseTextDocument, DidOpenTextDocument, Notification,
-    PublishDiagnostics,
+    DidChangeTextDocument, DidCloseTextDocument, DidOpenTextDocument, DidSaveTextDocument,
+    Notification, PublishDiagnostics,
 };
 use lsp_types::request::{
     Completion, DocumentSymbolRequest, Formatting, GotoDefinition, HoverRequest, Rename, Request,
@@ -14,12 +14,12 @@ use lsp_types::request::{
 use lsp_types::{
     CompletionItem, CompletionItemKind, CompletionOptions, CompletionParams, Diagnostic,
     DiagnosticSeverity, DidChangeTextDocumentParams, DidCloseTextDocumentParams,
-    DidOpenTextDocumentParams, DocumentFormattingParams, DocumentSymbol, DocumentSymbolParams,
-    DocumentSymbolResponse, GotoDefinitionParams, GotoDefinitionResponse, Hover, HoverContents,
-    HoverParams, HoverProviderCapability, Location, MarkupContent, MarkupKind, NumberOrString,
-    OneOf, Position, PublishDiagnosticsParams, Range, RenameParams, ServerCapabilities, SymbolKind,
-    TextDocumentSyncCapability, TextDocumentSyncKind, TextDocumentSyncOptions, TextEdit, Url,
-    WorkspaceEdit,
+    DidOpenTextDocumentParams, DidSaveTextDocumentParams, DocumentFormattingParams, DocumentSymbol,
+    DocumentSymbolParams, DocumentSymbolResponse, GotoDefinitionParams, GotoDefinitionResponse,
+    Hover, HoverContents, HoverParams, HoverProviderCapability, Location, MarkupContent,
+    MarkupKind, NumberOrString, OneOf, Position, PublishDiagnosticsParams, Range, RenameParams,
+    ServerCapabilities, SymbolKind, TextDocumentSyncCapability, TextDocumentSyncKind,
+    TextDocumentSyncOptions, TextDocumentSyncSaveOptions, TextEdit, Url, WorkspaceEdit,
 };
 
 use flux_fmt::format_source;
@@ -47,7 +47,7 @@ pub fn server_capabilities() -> ServerCapabilities {
             TextDocumentSyncOptions {
                 open_close: Some(true),
                 change: Some(TextDocumentSyncKind::INCREMENTAL),
-                save: None,
+                save: Some(TextDocumentSyncSaveOptions::Supported(true)),
                 will_save: None,
                 will_save_wait_until: None,
             },
@@ -106,10 +106,22 @@ pub fn main_loop(connection: &Connection) -> Result<(), Box<dyn Error + Sync + S
                     let uri = params.text_document.uri;
                     store.apply_changes(&uri, params.text_document.version, params.content_changes);
                     publish_diagnostics(connection, &mut store, &uri)?;
+                    publish_dependents(connection, &mut store, &uri)?;
+                }
+                DidSaveTextDocument::METHOD => {
+                    // Imports are read from disk, so a save is when dependents change.
+                    let params: DidSaveTextDocumentParams = serde_json::from_value(not.params)?;
+                    let uri = params.text_document.uri;
+                    publish_diagnostics(connection, &mut store, &uri)?;
+                    publish_dependents(connection, &mut store, &uri)?;
                 }
                 DidCloseTextDocument::METHOD => {
                     let params: DidCloseTextDocumentParams = serde_json::from_value(not.params)?;
-                    store.close(&params.text_document.uri);
+                    let uri = params.text_document.uri;
+                    store.close(&uri);
+                    for params in close_diagnostics(&mut store, &uri) {
+                        send_diagnostics(connection, params)?;
+                    }
                 }
                 _ => {}
             },
@@ -195,13 +207,56 @@ fn publish_diagnostics(
     store: &mut DocumentStore,
     uri: &Url,
 ) -> Result<(), Box<dyn Error + Sync + Send>> {
+    for params in document_diagnostics(store, uri) {
+        send_diagnostics(connection, params)?;
+    }
+    Ok(())
+}
+
+/// Re-publishes open documents that import `uri`; each re-analyzes only if a
+/// file it read changed on disk.
+fn publish_dependents(
+    connection: &Connection,
+    store: &mut DocumentStore,
+    uri: &Url,
+) -> Result<(), Box<dyn Error + Sync + Send>> {
+    for dependent in store.dependents(uri) {
+        publish_diagnostics(connection, store, &dependent)?;
+    }
+    Ok(())
+}
+
+fn send_diagnostics(
+    connection: &Connection,
+    params: PublishDiagnosticsParams,
+) -> Result<(), Box<dyn Error + Sync + Send>> {
+    connection
+        .sender
+        .send(Message::Notification(lsp_server::Notification {
+            method: PublishDiagnostics::METHOD.to_string(),
+            params: serde_json::to_value(params)?,
+        }))?;
+    Ok(())
+}
+
+/// Every `publishDiagnostics` that analyzing `uri` produces. Diagnostics in
+/// imported files go to those files' URIs (unless open: their own analysis owns
+/// them), and imported files that no longer have any get an empty list.
+pub fn document_diagnostics(store: &mut DocumentStore, uri: &Url) -> Vec<PublishDiagnosticsParams> {
     let Some(analysis) = store.analyze(uri) else {
-        return Ok(());
+        return Vec::new();
     };
-    let diagnostics = analysis
-        .diagnostics
-        .into_iter()
-        .map(|d| Diagnostic {
+    let mut by_uri: HashMap<Url, Vec<Diagnostic>> = HashMap::new();
+    by_uri.insert(uri.clone(), Vec::new());
+    for d in analysis.diagnostics {
+        let target = match d.path.as_deref() {
+            None => uri.clone(),
+            Some(path) => match Url::from_file_path(path) {
+                Ok(target) if !store.is_open(&target) => target,
+                _ => continue,
+            },
+        };
+        by_uri.entry(target).or_default().push(Diagnostic {
             range: Range::new(
                 Position::new((d.start_line - 1) as u32, (d.start_column - 1) as u32),
                 Position::new((d.end_line - 1) as u32, (d.end_column - 1) as u32),
@@ -214,21 +269,41 @@ fn publish_diagnostics(
             source: Some("flux".to_string()),
             message: d.message,
             ..Default::default()
+        });
+    }
+    let foreign: HashSet<Url> = by_uri.keys().filter(|u| *u != uri).cloned().collect();
+    for stale in store.replace_foreign_targets(uri, foreign) {
+        by_uri.entry(stale).or_default();
+    }
+    let mut out: Vec<PublishDiagnosticsParams> = by_uri
+        .into_iter()
+        .map(|(target, diagnostics)| PublishDiagnosticsParams {
+            version: store.version(&target),
+            uri: target,
+            diagnostics,
         })
         .collect();
+    // Root first, then imported files in a stable order.
+    out.sort_by_key(|p| (p.uri != *uri, p.uri.to_string()));
+    out
+}
 
-    let params = PublishDiagnosticsParams {
-        uri: uri.clone(),
-        diagnostics,
-        version: store.version(uri),
-    };
-    connection
-        .sender
-        .send(Message::Notification(lsp_server::Notification {
-            method: PublishDiagnostics::METHOD.to_string(),
-            params: serde_json::to_value(params)?,
-        }))?;
-    Ok(())
+/// Clears diagnostics for a closed document and the imported files it reported on.
+pub fn close_diagnostics(store: &mut DocumentStore, uri: &Url) -> Vec<PublishDiagnosticsParams> {
+    let mut targets: Vec<Url> = store
+        .replace_foreign_targets(uri, HashSet::new())
+        .into_iter()
+        .filter(|target| !store.is_open(target))
+        .collect();
+    targets.sort_by_key(|u| u.to_string());
+    std::iter::once(uri.clone())
+        .chain(targets)
+        .map(|target| PublishDiagnosticsParams {
+            uri: target,
+            diagnostics: Vec::new(),
+            version: None,
+        })
+        .collect()
 }
 
 fn compute_hover(store: &mut DocumentStore, params: HoverParams) -> Option<Hover> {
@@ -347,17 +422,9 @@ fn compute_formatting(
     if formatted == *text {
         return Some(Vec::new());
     }
-    let end_line = text.lines().count().max(1) as u32;
-    let end_char = text
-        .lines()
-        .last()
-        .map(|l| l.chars().count() as u32)
-        .unwrap_or(0);
+    let (end_line, end_char) = crate::position::offset_to_position(text, text.len());
     Some(vec![TextEdit {
-        range: Range::new(
-            Position::new(0, 0),
-            Position::new(end_line.saturating_sub(1), end_char),
-        ),
+        range: Range::new(Position::new(0, 0), Position::new(end_line, end_char)),
         new_text: formatted,
     }])
 }

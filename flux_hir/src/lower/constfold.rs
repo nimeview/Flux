@@ -23,7 +23,7 @@ pub(super) fn fold_const_hir_expr(expr: &HirExpr) -> Option<HirExpr> {
 
 fn eval_const_hir_expr(expr: &HirExpr) -> Option<Value> {
     match expr {
-        HirExpr::Int { value, .. } => Some(Value::int_i64(*value)),
+        HirExpr::Int { value, .. } => literal_integer_value(*value),
         HirExpr::Float { value, .. } => Some(Value::float_f64(*value)),
         HirExpr::Bool { value, .. } => Some(Value::Bool(*value)),
         HirExpr::String { value, .. } => Some(Value::String(value.clone())),
@@ -114,13 +114,32 @@ fn eval_const_binary(op: BinaryOp, left: Value, right: Value) -> Option<Value> {
     flux_value::binary(num_op, &left, &right).ok()
 }
 
+fn literal_integer_value(value: i128) -> Option<Value> {
+    if let Ok(value) = i64::try_from(value) {
+        Some(Value::int_i64(value))
+    } else {
+        flux_value::int_from_i128(IntWidth::U64, value)
+    }
+}
+
 fn const_value_to_hir(value: Value, span: Span) -> Option<HirExpr> {
     Some(match value {
         Value::Int {
             width: IntWidth::I64,
             ..
         } => HirExpr::Int {
-            value: value.as_int()?,
+            value: value.as_int()? as i128,
+            span,
+        },
+        Value::Int {
+            width: IntWidth::U64,
+            bits,
+        } => HirExpr::Cast {
+            expr: Box::new(HirExpr::Int {
+                value: bits as i128,
+                span,
+            }),
+            ty: "UInt64".into(),
             span,
         },
         Value::Float {

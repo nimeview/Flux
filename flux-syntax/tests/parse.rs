@@ -24,7 +24,7 @@ fn parse_error_has_precise_span() {
     };
     // pest points at the unexpected third `fn` (byte offset 6)
     assert_eq!(span.offset(), 6);
-    assert!(span.len() >= 1);
+    assert!(!span.is_empty());
 }
 
 #[test]

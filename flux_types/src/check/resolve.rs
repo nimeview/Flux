@@ -1,6 +1,6 @@
 //! Lowering of HIR type annotations into checker [`Type`] values.
 
-use flux_diagnostics::{span_to_miette, DiagnosticBag, FluxError, SourceId};
+use flux_diagnostics::{span_to_miette, DiagnosticBag, FluxError};
 use flux_hir::{HirEnumPayload, HirType};
 
 use crate::types::{resolve_type_name, Type};
@@ -10,17 +10,16 @@ use super::state::TypeCheckContext;
 pub(super) fn resolve_hir_enum_payload(
     ctx: &TypeCheckContext,
     payload: &HirEnumPayload,
-    source: SourceId,
     diagnostics: &mut DiagnosticBag,
 ) -> Option<Type> {
     match payload {
-        HirEnumPayload::Tuple(ty) => resolve_hir_type(ctx, ty, source, diagnostics),
+        HirEnumPayload::Tuple(ty) => resolve_hir_type(ctx, ty, diagnostics),
         HirEnumPayload::Struct(fields) => Some(Type::Struct {
             name: String::new(),
             fields: fields
                 .iter()
                 .filter_map(|(n, t)| {
-                    resolve_hir_type(ctx, t, source, diagnostics).map(|ty| (n.clone(), ty))
+                    resolve_hir_type(ctx, t, diagnostics).map(|ty| (n.clone(), ty))
                 })
                 .collect(),
         }),
@@ -30,7 +29,6 @@ pub(super) fn resolve_hir_enum_payload(
 pub(super) fn resolve_hir_type(
     ctx: &TypeCheckContext,
     ty: &HirType,
-    source: SourceId,
     diagnostics: &mut DiagnosticBag,
 ) -> Option<Type> {
     match ty {
@@ -39,7 +37,7 @@ pub(super) fn resolve_hir_type(
                 return Some(ty.clone());
             }
             if let Some(alias) = ctx.type_alias(name) {
-                return resolve_hir_type(ctx, alias, source, diagnostics);
+                return resolve_hir_type(ctx, alias, diagnostics);
             }
             match resolve_type_name(name, *span) {
                 Ok(t) => Some(t),
@@ -47,7 +45,7 @@ pub(super) fn resolve_hir_type(
                     diagnostics.push(FluxError::UnknownType {
                         name,
                         span: span_to_miette(span),
-                        source_id: source,
+                        source_id: span.source,
                     });
                     Some(Type::Error)
                 }
@@ -56,31 +54,28 @@ pub(super) fn resolve_hir_type(
         HirType::Array { inner, .. } => Some(Type::Array(Box::new(resolve_hir_type(
             ctx,
             inner,
-            source,
             diagnostics,
         )?))),
         HirType::Option { inner, .. } => Some(Type::Option(Box::new(resolve_hir_type(
             ctx,
             inner,
-            source,
             diagnostics,
         )?))),
         HirType::Result { ok, err, .. } => Some(Type::Result {
-            ok: Box::new(resolve_hir_type(ctx, ok, source, diagnostics)?),
-            err: Box::new(resolve_hir_type(ctx, err, source, diagnostics)?),
+            ok: Box::new(resolve_hir_type(ctx, ok, diagnostics)?),
+            err: Box::new(resolve_hir_type(ctx, err, diagnostics)?),
         }),
         HirType::Generic { name, args, span } => {
             if name == "Option" && args.len() == 1 {
                 Some(Type::Option(Box::new(resolve_hir_type(
                     ctx,
                     &args[0],
-                    source,
                     diagnostics,
                 )?)))
             } else if name == "Result" && args.len() == 2 {
                 Some(Type::Result {
-                    ok: Box::new(resolve_hir_type(ctx, &args[0], source, diagnostics)?),
-                    err: Box::new(resolve_hir_type(ctx, &args[1], source, diagnostics)?),
+                    ok: Box::new(resolve_hir_type(ctx, &args[0], diagnostics)?),
+                    err: Box::new(resolve_hir_type(ctx, &args[1], diagnostics)?),
                 })
             } else {
                 resolve_type_name(name, *span).ok()

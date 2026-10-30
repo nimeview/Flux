@@ -77,7 +77,7 @@ pub(crate) fn infer_expr(
             diagnostics.push(FluxError::UndefinedName {
                 name: format!("symbol #{symbol:?}"),
                 span: span_to_miette(*span),
-                source_id: source,
+                source_id: span.source,
             });
             Some(Type::Error)
         }),
@@ -97,7 +97,7 @@ pub(crate) fn infer_expr(
                                 expected: format!("{} arguments", params.len()),
                                 found: format!("{} arguments", call_args.len()),
                                 span: span_to_miette(*span),
-                                source_id: source,
+                                source_id: span.source,
                             });
                         }
                         for (p, a) in params.iter().zip(call_args.iter()) {
@@ -108,7 +108,7 @@ pub(crate) fn infer_expr(
                                     expected: p.display(),
                                     found: got.display(),
                                     span: span_to_miette(a.span()),
-                                    source_id: source,
+                                    source_id: a.span().source,
                                 });
                             }
                         }
@@ -117,7 +117,9 @@ pub(crate) fn infer_expr(
                 }
             }
             if let HirExpr::Ident { symbol, .. } = callee.as_ref() {
-                if let Some(name) = lookup_name(names, *symbol) {
+                if let Some(name) =
+                    lookup_name(names, *symbol).filter(|_| ctx.is_builtin_symbol(*symbol))
+                {
                     if flux_std::is_builtin_fn(name) {
                         return infer_builtin_call(
                             ctx,
@@ -140,7 +142,7 @@ pub(crate) fn infer_expr(
                             expected: format!("{} arguments", params.len()),
                             found: format!("{} arguments", args.len()),
                             span: span_to_miette(*span),
-                            source_id: source,
+                            source_id: span.source,
                         });
                     }
                     for (p, a) in params.iter().zip(args.iter()) {
@@ -151,7 +153,7 @@ pub(crate) fn infer_expr(
                                 expected: p.display(),
                                 found: got.display(),
                                 span: span_to_miette(a.span()),
-                                source_id: source,
+                                source_id: a.span().source,
                             });
                         }
                     }
@@ -163,8 +165,49 @@ pub(crate) fn infer_expr(
         HirExpr::Unary { op, expr, .. } => {
             let inner = infer_expr(ctx, expr, types, names, source, diagnostics)?;
             match op {
-                UnaryOp::Neg => numeric_type(&inner),
-                UnaryOp::Not => Some(Type::Bool),
+                UnaryOp::Neg => {
+                    let found = unwrap_value_type(&inner);
+                    let unsigned = matches!(
+                        found,
+                        Type::UInt8 | Type::UInt16 | Type::UInt32 | Type::UInt64
+                    );
+                    if unsigned {
+                        diagnostics.push(FluxError::TypeMismatch {
+                            expected: "signed numeric type or Float".into(),
+                            found: found.display(),
+                            span: span_to_miette(expr.span()),
+                            source_id: expr.span().source,
+                        });
+                        Some(Type::Error)
+                    } else {
+                        numeric_type(&inner).or_else(|| {
+                            if found.is_error() {
+                                return Some(Type::Error);
+                            }
+                            diagnostics.push(FluxError::TypeMismatch {
+                                expected: "numeric type".into(),
+                                found: found.display(),
+                                span: span_to_miette(expr.span()),
+                                source_id: expr.span().source,
+                            });
+                            Some(Type::Error)
+                        })
+                    }
+                }
+                UnaryOp::Not => {
+                    let found = unwrap_value_type(&inner);
+                    if found != Type::Bool && !found.is_error() {
+                        diagnostics.push(FluxError::TypeMismatch {
+                            expected: "Bool".into(),
+                            found: found.display(),
+                            span: span_to_miette(expr.span()),
+                            source_id: expr.span().source,
+                        });
+                        Some(Type::Error)
+                    } else {
+                        Some(Type::Bool)
+                    }
+                }
             }
         }
         HirExpr::Binary {
@@ -175,21 +218,40 @@ pub(crate) fn infer_expr(
         } => {
             let l = infer_expr(ctx, left, types, names, source, diagnostics)?;
             let r = infer_expr(ctx, right, types, names, source, diagnostics)?;
-            infer_binary(*op, &l, &r, *span, source, diagnostics)
+            infer_binary(*op, &l, &r, *span, diagnostics)
         }
         HirExpr::If {
             cond,
             then_expr,
             else_expr,
-            ..
+            span,
         } => {
-            let _ = infer_expr(ctx, cond, types, names, source, diagnostics);
+            let cond_ty = infer_expr(ctx, cond, types, names, source, diagnostics)?;
+            let cond_ty = unwrap_value_type(&cond_ty);
+            if cond_ty != Type::Bool && !cond_ty.is_error() {
+                diagnostics.push(FluxError::TypeMismatch {
+                    expected: "Bool".into(),
+                    found: cond_ty.display(),
+                    span: span_to_miette(cond.span()),
+                    source_id: cond.span().source,
+                });
+            }
             let t = infer_expr(ctx, then_expr, types, names, source, diagnostics)?;
             let e = infer_expr(ctx, else_expr, types, names, source, diagnostics)?;
-            if types_compatible(&t, &e) {
-                Some(t)
+            let tv = unwrap_value_type(&t);
+            let ev = unwrap_value_type(&e);
+            if super::super::util::numeric_compatible(&tv, &ev) {
+                Some(super::super::util::widen_numeric(&tv, &ev))
+            } else if types_compatible(&tv, &ev) {
+                Some(tv)
             } else {
-                Some(e)
+                diagnostics.push(FluxError::TypeMismatch {
+                    expected: tv.display(),
+                    found: ev.display(),
+                    span: span_to_miette(*span),
+                    source_id: span.source,
+                });
+                Some(Type::Error)
             }
         }
         HirExpr::Array { elems, .. } => {
@@ -206,20 +268,56 @@ pub(crate) fn infer_expr(
                         expected: elem.display(),
                         found: got.display(),
                         span: span_to_miette(item.span()),
-                        source_id: source,
+                        source_id: item.span().source,
                     });
                 }
             }
             Some(Type::Array(Box::new(elem)))
         }
         HirExpr::Match {
-            scrutinee, arms, ..
+            scrutinee,
+            arms,
+            span,
         } => {
             let scrut_ty = infer_expr(ctx, scrutinee, types, names, source, diagnostics)?;
+            let scrut_value_ty = unwrap_value_type(&scrut_ty);
+            let variants: Option<Vec<String>> = match &scrut_value_ty {
+                Type::Enum { variants, .. } => {
+                    Some(variants.iter().map(|(name, _)| name.clone()).collect())
+                }
+                Type::Option(_) => Some(vec!["Some".into(), "None".into()]),
+                Type::Result { .. } => Some(vec!["Ok".into(), "Err".into()]),
+                _ => None,
+            };
             let mut arm_types = Vec::new();
+            let mut covered_variants = std::collections::HashSet::new();
+            let mut has_catch_all = false;
             for arm in arms {
                 let mut arm_scope = types.clone();
                 bind_match_arm_locals(ctx, &scrut_ty, arm, &mut arm_scope, source, diagnostics);
+                if arm.variant.is_empty() {
+                    if arm.guard.is_none() {
+                        has_catch_all = true;
+                    }
+                } else if let Some(variants) = &variants {
+                    if !variants.iter().any(|variant| variant == &arm.variant) {
+                        diagnostics.push(FluxError::TypeMismatch {
+                            expected: format!("one of {}", variants.join(", ")),
+                            found: arm.variant.clone(),
+                            span: span_to_miette(*span),
+                            source_id: span.source,
+                        });
+                    } else if arm.guard.is_none() {
+                        covered_variants.insert(arm.variant.clone());
+                    }
+                } else {
+                    diagnostics.push(FluxError::TypeMismatch {
+                        expected: "enum, Option, Result, or catch-all pattern".into(),
+                        found: scrut_value_ty.display(),
+                        span: span_to_miette(*span),
+                        source_id: span.source,
+                    });
+                }
                 if let Some(guard) = &arm.guard {
                     let guard_ty = infer_expr(ctx, guard, &arm_scope, names, source, diagnostics)
                         .unwrap_or(Type::Error);
@@ -228,7 +326,7 @@ pub(crate) fn infer_expr(
                             expected: "Bool".into(),
                             found: guard_ty.display(),
                             span: span_to_miette(guard.span()),
-                            source_id: source,
+                            source_id: guard.span().source,
                         });
                     }
                 }
@@ -241,24 +339,185 @@ pub(crate) fn infer_expr(
                     diagnostics,
                 )?);
             }
-            arm_types.into_iter().next()
-        }
-        HirExpr::EnumVariant { enum_name, .. } => ctx.user_type(enum_name).cloned().or_else(|| {
-            Some(Type::Enum {
-                name: enum_name.clone(),
-                variants: vec![],
-            })
-        }),
-        HirExpr::StructLit { name, fields, .. } => {
-            for (_, expr) in fields {
-                let _ = infer_expr(ctx, expr, types, names, source, diagnostics)?;
+            if !has_catch_all {
+                if let Some(variants) = &variants {
+                    let missing: Vec<_> = variants
+                        .iter()
+                        .filter(|variant| !covered_variants.contains(*variant))
+                        .cloned()
+                        .collect();
+                    if !missing.is_empty() {
+                        diagnostics.push(FluxError::TypeMismatch {
+                            expected: format!("exhaustive match ({})", variants.join(", ")),
+                            found: format!("missing {}", missing.join(", ")),
+                            span: span_to_miette(*span),
+                            source_id: span.source,
+                        });
+                    }
+                } else {
+                    diagnostics.push(FluxError::TypeMismatch {
+                        expected: "catch-all pattern".into(),
+                        found: scrut_value_ty.display(),
+                        span: span_to_miette(*span),
+                        source_id: span.source,
+                    });
+                }
             }
-            ctx.user_type(name).cloned().or_else(|| {
-                Some(Type::Struct {
+            let Some(first) = arm_types.first().cloned() else {
+                return Some(Type::Error);
+            };
+            let mut unified = unwrap_value_type(&first);
+            for arm_ty in arm_types.iter().skip(1) {
+                let arm_ty = unwrap_value_type(arm_ty);
+                if super::super::util::numeric_compatible(&unified, &arm_ty) {
+                    unified = super::super::util::widen_numeric(&unified, &arm_ty);
+                } else if !types_compatible(&unified, &arm_ty) {
+                    diagnostics.push(FluxError::TypeMismatch {
+                        expected: unified.display(),
+                        found: arm_ty.display(),
+                        span: span_to_miette(*span),
+                        source_id: span.source,
+                    });
+                    unified = Type::Error;
+                }
+            }
+            Some(unified)
+        }
+        HirExpr::EnumVariant {
+            enum_name,
+            variant,
+            payload,
+            span,
+        } => {
+            let Some(enum_ty @ Type::Enum { .. }) = ctx.user_type(enum_name).cloned() else {
+                diagnostics.push(FluxError::UnknownType {
+                    name: enum_name.clone(),
+                    span: span_to_miette(*span),
+                    source_id: span.source,
+                });
+                return Some(Type::Error);
+            };
+            let Type::Enum { variants, .. } = &enum_ty else {
+                unreachable!()
+            };
+            match variants.iter().find(|(name, _)| name == variant) {
+                Some((_, Some(expected))) => match payload {
+                    Some(payload) => {
+                        let got = infer_expr(ctx, payload, types, names, source, diagnostics)
+                            .unwrap_or(Type::Error);
+                        let got = unwrap_value_type(&got);
+                        if !expected.is_error()
+                            && !got.is_error()
+                            && !types_compatible(expected, &got)
+                        {
+                            diagnostics.push(FluxError::TypeMismatch {
+                                expected: expected.display(),
+                                found: got.display(),
+                                span: span_to_miette(payload.span()),
+                                source_id: payload.span().source,
+                            });
+                        }
+                    }
+                    None => diagnostics.push(FluxError::TypeMismatch {
+                        expected: format!("payload for {variant}"),
+                        found: "no payload".into(),
+                        span: span_to_miette(*span),
+                        source_id: span.source,
+                    }),
+                },
+                Some((_, None)) if payload.is_some() => {
+                    diagnostics.push(FluxError::TypeMismatch {
+                        expected: format!("payload-free variant {variant}"),
+                        found: "payload provided".into(),
+                        span: span_to_miette(*span),
+                        source_id: span.source,
+                    });
+                }
+                Some((_, None)) => {}
+                None => diagnostics.push(FluxError::TypeMismatch {
+                    expected: format!(
+                        "one of {}",
+                        variants
+                            .iter()
+                            .map(|(name, _)| name.as_str())
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    ),
+                    found: variant.clone(),
+                    span: span_to_miette(*span),
+                    source_id: span.source,
+                }),
+            }
+            Some(enum_ty)
+        }
+        HirExpr::StructLit { name, fields, span } => {
+            let Some(struct_ty @ Type::Struct { .. }) = ctx.user_type(name).cloned() else {
+                diagnostics.push(FluxError::UnknownType {
                     name: name.clone(),
-                    fields: vec![],
-                })
-            })
+                    span: span_to_miette(*span),
+                    source_id: span.source,
+                });
+                return Some(Type::Error);
+            };
+            let Type::Struct {
+                fields: declared_fields,
+                ..
+            } = &struct_ty
+            else {
+                unreachable!()
+            };
+            let mut seen = std::collections::HashSet::new();
+            for (field_name, expr) in fields {
+                let got =
+                    infer_expr(ctx, expr, types, names, source, diagnostics).unwrap_or(Type::Error);
+                let Some((_, expected)) = declared_fields
+                    .iter()
+                    .find(|(declared, _)| declared == field_name)
+                else {
+                    diagnostics.push(FluxError::TypeMismatch {
+                        expected: format!(
+                            "field from {}",
+                            declared_fields
+                                .iter()
+                                .map(|(field, _)| field.as_str())
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        ),
+                        found: field_name.clone(),
+                        span: span_to_miette(expr.span()),
+                        source_id: expr.span().source,
+                    });
+                    continue;
+                };
+                if !seen.insert(field_name.clone()) {
+                    diagnostics.push(FluxError::TypeMismatch {
+                        expected: "each struct field exactly once".into(),
+                        found: format!("duplicate field `{field_name}`"),
+                        span: span_to_miette(expr.span()),
+                        source_id: expr.span().source,
+                    });
+                }
+                let got = unwrap_value_type(&got);
+                if !expected.is_error() && !got.is_error() && !types_compatible(expected, &got) {
+                    diagnostics.push(FluxError::TypeMismatch {
+                        expected: expected.display(),
+                        found: got.display(),
+                        span: span_to_miette(expr.span()),
+                        source_id: expr.span().source,
+                    });
+                }
+            }
+            for (expected_name, _) in declared_fields {
+                if !seen.contains(expected_name) {
+                    diagnostics.push(FluxError::TypeMismatch {
+                        expected: format!("field `{expected_name}`"),
+                        found: "missing field".into(),
+                        span: span_to_miette(*span),
+                        source_id: span.source,
+                    });
+                }
+            }
+            Some(struct_ty)
         }
         HirExpr::Field { base, field, span } => {
             let base_ty = infer_expr(ctx, base, types, names, source, diagnostics)?;
@@ -272,22 +531,41 @@ pub(crate) fn infer_expr(
                 expected: format!("field `{field}`"),
                 found: inner.display(),
                 span: span_to_miette(*span),
-                source_id: source,
+                source_id: span.source,
             });
             Some(Type::Error)
         }
         HirExpr::Closure { fn_symbol, .. } => types.get(fn_symbol).cloned(),
         HirExpr::Cast { expr, ty, span } => {
-            let _ = infer_expr(ctx, expr, types, names, source, diagnostics)?;
-            resolve_type_name(ty, *span)
+            let source_ty = infer_expr(ctx, expr, types, names, source, diagnostics)?;
+            let target_ty = resolve_type_name(ty, *span)
                 .map_err(|(name, s)| {
                     diagnostics.push(FluxError::UnknownType {
                         name,
                         span: span_to_miette(s),
-                        source_id: source,
+                        source_id: s.source,
                     });
                 })
-                .ok()
+                .ok()?;
+            let source_ty = unwrap_value_type(&source_ty);
+            let allowed = source_ty.is_error()
+                || source_ty == target_ty
+                || (source_ty.is_integer() || source_ty.is_float())
+                    && (target_ty.is_integer() || target_ty.is_float())
+                || matches!(source_ty, Type::Bool | Type::Char)
+                    && (target_ty.is_integer() || target_ty.is_float())
+                || source_ty.is_integer() && matches!(target_ty, Type::Bool | Type::Char);
+            if !allowed {
+                diagnostics.push(FluxError::TypeMismatch {
+                    expected: format!("value convertible to {}", target_ty.display()),
+                    found: source_ty.display(),
+                    span: span_to_miette(*span),
+                    source_id: span.source,
+                });
+                Some(Type::Error)
+            } else {
+                Some(target_ty)
+            }
         }
     }
 }

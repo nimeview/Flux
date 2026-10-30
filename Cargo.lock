@@ -651,6 +651,7 @@ version = "0.1.0"
 dependencies = [
  "flux_diagnostics",
  "flux_hir",
+ "flux_std",
  "flux_syntax",
  "serde",
 ]
@@ -691,6 +692,7 @@ dependencies = [
  "miette",
  "serde",
  "serde_json",
+ "tempfile",
 ]
 
 [[package]]

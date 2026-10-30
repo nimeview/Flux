@@ -165,7 +165,8 @@ impl Display for Int {
         "int"
     }
 }
-let msg = (42).to_string()
+let mut trigger = 42
+let msg = trigger.to_string()
 "#;
     let mut diags = DiagnosticBag::new();
     let ast = parse_program(SourceId(0), src, &mut diags).unwrap();

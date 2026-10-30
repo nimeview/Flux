@@ -267,7 +267,9 @@ pub struct ForStmt {
 #[derive(Debug, Clone)]
 pub enum Expr {
     Int {
-        value: i64,
+        /// Integer magnitude/value before any explicit width cast. `i128` is
+        /// wide enough to represent every Flux `UInt64` literal.
+        value: i128,
         span: Span,
     },
     Float {

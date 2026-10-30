@@ -20,7 +20,7 @@ mod stmts;
 
 use std::collections::{HashMap, HashSet};
 
-use flux_diagnostics::{span_to_miette, DiagnosticBag, FluxError, SourceId};
+use flux_diagnostics::{span_to_miette, DiagnosticBag, FluxError};
 use flux_resolve::{link_modules, root_program, LinkedProgram, ResolvedProgram};
 use flux_syntax::{
     AssignStmt, Block, ConstBinding, EnumDecl, EventDecl, FnDecl, ImportDecl, Item, OnStmt,
@@ -128,7 +128,7 @@ fn lower_program_inner(
             .collect()
     };
     for import in stdlib_imports {
-        register_stdlib_import(import, &mut symbols, program.source, diagnostics);
+        register_stdlib_import(import, &mut symbols, diagnostics);
     }
 
     if let Some(linked) = linked {
@@ -142,7 +142,7 @@ fn lower_program_inner(
     // Pass 1: declare all top-level names (events, functions, bindings).
     for item in &program.items {
         if let Some(err) = declare_item(item, &mut symbols) {
-            push_duplicate(diagnostics, program.source, item, err);
+            push_duplicate(diagnostics, item, err);
         }
         if let Item::Enum(e) = item {
             for v in &e.variants {
@@ -286,18 +286,13 @@ pub(super) fn declare_item(item: &Item, symbols: &mut SymbolTable) -> Option<Sym
     }
 }
 
-pub(super) fn push_duplicate(
-    diagnostics: &mut DiagnosticBag,
-    source: SourceId,
-    item: &Item,
-    prev: Symbol,
-) {
+pub(super) fn push_duplicate(diagnostics: &mut DiagnosticBag, item: &Item, prev: Symbol) {
     let (name, span) = item_name_span(item);
     diagnostics.push(FluxError::DuplicateDefinition {
         name,
         prev_span: span_to_miette(prev.span),
         span: span_to_miette(span),
-        source_id: source,
+        source_id: span.source,
     });
 }
 

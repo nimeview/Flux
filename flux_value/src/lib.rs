@@ -7,7 +7,8 @@ mod tagged;
 mod width;
 
 pub use arith::{
-    binary, cast, compare, int_from_i128, negate, promote_int, values_equal, ArithError, NumOp,
+    binary, cast, compare, int_from_i128, int_to_i128, negate, promote_int, values_equal,
+    ArithError, NumOp,
 };
 pub use convert::{tagged_to_value, value_to_tagged};
 pub use display::render;
@@ -71,7 +72,7 @@ impl Value {
     pub fn as_float(&self) -> Option<f64> {
         match self {
             Self::Float { width, bits } => Some(float_to_f64(*width, *bits)),
-            Self::Int { width, bits } => Some(int_to_i64(*width, *bits) as f64),
+            Self::Int { width, bits } => Some(int_to_i128(*width, *bits) as f64),
             _ => None,
         }
     }
@@ -85,7 +86,7 @@ impl Value {
 
     pub fn as_int(&self) -> Option<i64> {
         match self {
-            Self::Int { width, bits } => Some(int_to_i64(*width, *bits)),
+            Self::Int { width, bits } => i64::try_from(int_to_i128(*width, *bits)).ok(),
             Self::Float { width, bits } => Some(float_to_f64(*width, *bits) as i64),
             _ => None,
         }

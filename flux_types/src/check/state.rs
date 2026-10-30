@@ -6,7 +6,7 @@
 
 use std::collections::HashMap;
 
-use flux_hir::{HirItem, HirProgram, SymbolId};
+use flux_hir::{HirItem, HirProgram, SymbolId, SymbolKind};
 
 use crate::types::Type;
 
@@ -19,6 +19,8 @@ pub struct TypeCheckContext {
     user_types: HashMap<String, Type>,
     type_aliases: HashMap<String, flux_hir::HirType>,
     trait_impls: HashMap<(String, String), SymbolId>,
+    builtin_symbols: std::collections::HashSet<SymbolId>,
+    effectful_functions: std::collections::HashSet<SymbolId>,
     pub(crate) const_bindings: std::collections::HashSet<String>,
 }
 
@@ -70,6 +72,16 @@ impl TypeCheckContext {
         }
 
         ctx.trait_impls = program.trait_impls.clone();
+        ctx.builtin_symbols = program
+            .symbols
+            .iter()
+            .filter_map(|(id, symbol)| {
+                (symbol.kind == SymbolKind::Builtin && flux_std::is_builtin_fn(&symbol.name))
+                    .then_some(*id)
+            })
+            .collect();
+        ctx.effectful_functions =
+            super::effects::effectful_functions(program, &ctx.builtin_symbols);
         ctx
     }
 
@@ -90,5 +102,13 @@ impl TypeCheckContext {
         self.trait_impls
             .get(&(type_tag.to_string(), method.to_string()))
             .copied()
+    }
+
+    pub fn is_builtin_symbol(&self, id: SymbolId) -> bool {
+        self.builtin_symbols.contains(&id)
+    }
+
+    pub fn is_effectful_function(&self, id: SymbolId) -> bool {
+        self.effectful_functions.contains(&id)
     }
 }

@@ -83,6 +83,7 @@ impl Executor {
             .collect();
 
         let mut graph = ReactiveGraph::new();
+        let mut pending_derived_deps = Vec::new();
         for node in &program.nodes {
             match node.kind {
                 IrNodeKind::Source => {
@@ -95,7 +96,8 @@ impl Executor {
                         .iter()
                         .map(|d| crate::graph::NodeId(d.0))
                         .collect();
-                    graph.add_derived(&node.name, deps);
+                    let id = graph.add_derived(&node.name, Vec::new());
+                    pending_derived_deps.push((id, deps));
                 }
                 IrNodeKind::Event => {
                     graph.add_event(&node.name);
@@ -113,6 +115,10 @@ impl Executor {
                     graph.add_effect(&node.name, deps, meta);
                 }
             }
+        }
+
+        for (id, deps) in pending_derived_deps {
+            graph.set_derived_deps(id, deps);
         }
 
         if !graph.is_acyclic() {
@@ -306,11 +312,13 @@ impl Executor {
 
     fn recompute_all(&mut self) {
         let derived: Vec<_> = self
-            .program
-            .nodes
+            .graph
+            .topo_order
             .iter()
-            .filter(|n| n.kind == IrNodeKind::Derived)
-            .map(|n| n.name.clone())
+            .filter_map(|id| {
+                let node = &self.graph.nodes[id.0 as usize];
+                matches!(node.kind, NodeKind::Derived { .. }).then(|| node.name.clone())
+            })
             .collect();
         for name in derived {
             let value = self.eval_derived(&name);

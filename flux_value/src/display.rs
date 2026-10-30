@@ -1,10 +1,10 @@
-use crate::ops::{float_to_f64, int_to_i64};
-use crate::Value;
+use crate::ops::float_to_f64;
+use crate::{int_to_i128, Value};
 
 /// Fully renders a value, including nested arrays and struct/enum fields.
 pub fn render(value: &Value) -> String {
     match value {
-        Value::Int { width, bits } => int_to_i64(*width, *bits).to_string(),
+        Value::Int { width, bits } => int_to_i128(*width, *bits).to_string(),
         Value::Float { width, bits } => float_to_f64(*width, *bits).to_string(),
         Value::Char(c) => format!("'{c}'"),
         Value::Bool(v) => v.to_string(),

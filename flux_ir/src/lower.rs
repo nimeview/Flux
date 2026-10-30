@@ -16,7 +16,7 @@ mod reads;
 use std::collections::HashMap;
 
 use flux_diagnostics::{span_to_miette, DiagnosticBag, FluxError, SourceId, Span};
-use flux_hir::{BindingKind, HirFn, HirItem, HirProgram, SymbolId};
+use flux_hir::{BindingKind, HirFn, HirItem, HirProgram, SymbolId, SymbolKind};
 
 use crate::{CompiledProgram, IrNode, IrStmt, NodeId, NodeKind};
 
@@ -24,6 +24,22 @@ use codegen::lower_expr;
 use graph::{find_dependency_cycle, format_cycle, push_on_effect_node, push_watch_effect_node};
 use items::{const_expr, lower_fn, lower_if_stmt, lower_on, lower_watch};
 use reads::collect_reads_expr;
+
+/// Runtime key for a HIR symbol. Locals and parameters have unique slots so
+/// lexical shadowing cannot alias two different symbols with the same spelling.
+/// Module-level names remain stable because the graph and function table use them.
+pub(super) fn runtime_symbol_name(program: &HirProgram, id: &SymbolId) -> Option<String> {
+    let name = program.names.get(id)?;
+    match program.symbols.get(id).map(|symbol| symbol.kind) {
+        Some(SymbolKind::Local { .. } | SymbolKind::Param) => {
+            Some(format!("\0flux_local_{}", id.0))
+        }
+        Some(SymbolKind::Function { .. }) if flux_std::is_builtin_fn(name) => {
+            Some(format!("\0flux_user_fn_{}", id.0))
+        }
+        _ => Some(name.clone()),
+    }
+}
 
 pub fn lower_to_ir(
     program: &HirProgram,
@@ -144,8 +160,8 @@ pub fn lower_to_ir(
                 init_stmts.push(lower_if_stmt(i, program));
             }
             HirItem::Fn(f) => {
-                if let Some(name) = program.names.get(&f.name) {
-                    functions.push(lower_fn(f, name, program));
+                if let Some(name) = runtime_symbol_name(program, &f.name) {
+                    functions.push(lower_fn(f, &name, program));
                 }
             }
             HirItem::Watch(w) => {
@@ -194,7 +210,7 @@ pub fn lower_to_ir(
         diagnostics.push(FluxError::CyclicDependency {
             cycle: cycle_text,
             span: span_to_miette(span),
-            source_id: source,
+            source_id: span.source,
         });
         return None;
     }

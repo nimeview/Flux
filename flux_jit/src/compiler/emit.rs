@@ -5,7 +5,7 @@ use cranelift_module::{FuncId, Module};
 use flux_ir::IrValue;
 
 use super::tables::JitTables;
-use flux_value::{NumOp, TAG_BOOL, TAG_ERROR, TAG_FLOAT, TAG_INT, TAG_STRING};
+use flux_value::{int_tag, IntWidth, NumOp, TAG_BOOL, TAG_ERROR, TAG_FLOAT, TAG_INT, TAG_STRING};
 
 fn float_bits_flags() -> MemFlagsData {
     MemFlagsData::new().with_endianness(Endianness::Little)
@@ -66,8 +66,15 @@ pub(super) fn emit_const(
 ) -> Option<(Value, Value)> {
     match v {
         IrValue::Int(n) => {
-            let tag = b.ins().iconst(types::I64, 1);
-            let data = b.ins().iconst(types::I64, *n);
+            let (tag, data) = if let Ok(signed) = i64::try_from(*n) {
+                (TAG_INT as i64, signed)
+            } else if let Ok(unsigned) = u64::try_from(*n) {
+                (int_tag(IntWidth::U64) as i64, unsigned as i64)
+            } else {
+                return None;
+            };
+            let tag = b.ins().iconst(types::I64, tag);
+            let data = b.ins().iconst(types::I64, data);
             Some((tag, data))
         }
         IrValue::Float(f) => {

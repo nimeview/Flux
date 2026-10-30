@@ -37,7 +37,7 @@ pub(super) fn infer_block_return(
         if let HirStmt::Let(s) = stmt {
             let ty =
                 s.ty.as_ref()
-                    .and_then(|t| resolve_hir_type(ctx, t, source, &mut sink))
+                    .and_then(|t| resolve_hir_type(ctx, t, &mut sink))
                     .unwrap_or_else(|| {
                         infer_expr(ctx, &s.value, &scope, names, source, &mut sink)
                             .unwrap_or(Type::Error)

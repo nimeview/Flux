@@ -92,3 +92,20 @@ fn instantiates_generic_call_inside_watch() {
     let typed = typecheck_program(&hir, SourceId(0), &mut diags);
     assert!(typed.is_some(), "typecheck failed: {:?}", diags.errors);
 }
+
+#[test]
+fn specializes_generic_calls_inside_multiple_instantiations() {
+    let src = "fn id[T](x: T) -> T { x }\nfn wrap[T](x: T) -> T { id(x) }\nlet a = wrap(42)\nlet b = wrap(\"hi\")\n";
+    let mut diags = DiagnosticBag::new();
+    let ast = parse_program(SourceId(0), src, &mut diags).expect("parse");
+    let mut hir = lower_program(&ast, &mut diags).expect("lower");
+    monomorphize_program(&mut hir, SourceId(0), &mut diags);
+    let typed = typecheck_program(&hir, SourceId(0), &mut diags);
+    assert!(typed.is_some(), "typecheck failed: {:?}", diags.errors);
+    for name in ["wrap_Int", "wrap_String", "id_Int", "id_String"] {
+        assert!(
+            hir.names.values().any(|found| found == name),
+            "missing {name}"
+        );
+    }
+}

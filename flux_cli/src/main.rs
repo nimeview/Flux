@@ -28,7 +28,7 @@ enum Commands {
     Run {
         /// Path to the source file (defaults to the entry point declared in ./flux.toml)
         file: Option<String>,
-        /// Force the Cranelift JIT (the default unless `flux.toml` sets `[run] jit = false`)
+        /// Enable the experimental Cranelift JIT backend
         #[arg(long, conflicts_with = "vm")]
         jit: bool,
         /// Run on the VM interpreter instead of the JIT
@@ -51,7 +51,7 @@ enum Commands {
     },
     /// Interactive read-eval-print loop
     Repl {
-        /// Force the Cranelift JIT (the default)
+        /// Enable the experimental Cranelift JIT backend
         #[arg(long, conflicts_with = "vm")]
         jit: bool,
         /// Run on the VM interpreter instead of the JIT
@@ -176,7 +176,7 @@ fn resolve_run_target(file: Option<&str>) -> Result<String, ()> {
         .into_owned())
 }
 
-/// Engine choice: `--vm` > `--jit` > `FLUX_JIT=0|1` > `flux.toml` `[run] jit` > JIT.
+/// Engine choice: `--vm` > `--jit` > `FLUX_JIT=0|1` > `flux.toml` `[run] jit` > VM.
 fn use_jit(cli_jit: bool, cli_vm: bool) -> bool {
     if cli_vm {
         return false;
@@ -195,7 +195,7 @@ fn use_jit(cli_jit: bool, cli_vm: bool) -> bool {
             return manifest.run.jit;
         }
     }
-    true
+    false
 }
 
 fn run_file(
@@ -218,7 +218,7 @@ fn run_file(
 
     match compile_file_with_options(std::path::Path::new(&path), options) {
         Ok(compiled) => {
-            let _ = report_warnings(&compiled.source, &compiled.warnings);
+            let _ = report_warnings(&compiled.source, &compiled.sources, &compiled.warnings);
             if !quiet {
                 println!("--- Flux runtime ---");
             }
@@ -230,7 +230,7 @@ fn run_file(
             }
             Ok(())
         }
-        Err(failed) => report_failure(&failed.source, &failed.diagnostics),
+        Err(failed) => report_failure(failed.source(), &failed.sources, &failed.diagnostics),
     }
 }
 
@@ -238,11 +238,11 @@ fn check_file(file: Option<&str>) -> Result<(), ()> {
     let path = resolve_run_target(file)?;
     match typecheck_file(std::path::Path::new(&path)) {
         Ok(compiled) => {
-            let _ = report_warnings(&compiled.source, &compiled.warnings);
+            let _ = report_warnings(&compiled.source, &compiled.sources, &compiled.warnings);
             println!("ok");
             Ok(())
         }
-        Err(failed) => report_failure(&failed.source, &failed.diagnostics),
+        Err(failed) => report_failure(failed.source(), &failed.sources, &failed.diagnostics),
     }
 }
 
@@ -309,7 +309,7 @@ fn wasm_file(path: &str) -> Result<(), ()> {
             println!("wasm backend: {status:?}, {} bytes", bytes.len());
             Ok(())
         }
-        Err(failed) => report_failure(&failed.source, &failed.diagnostics),
+        Err(failed) => report_failure(failed.source(), &failed.sources, &failed.diagnostics),
     }
 }
 

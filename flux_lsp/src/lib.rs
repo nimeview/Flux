@@ -8,6 +8,7 @@
 
 mod analysis;
 pub mod documents;
+pub mod position;
 pub mod server;
 
 use serde::{Deserialize, Serialize};
@@ -22,6 +23,9 @@ pub struct LspDiagnostic {
     pub end_column: usize,
     pub message: String,
     pub code: String,
+    /// File the range is in when it is not the analyzed file (an imported module).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file: Option<String>,
 }
 
 /// Analyze Flux source and return LSP-style diagnostics (single-shot, JSON-dump mode).
@@ -38,6 +42,7 @@ pub fn analyze_source(path: &str, contents: &str) -> Vec<LspDiagnostic> {
             end_column: d.end_column,
             message: d.message,
             code: d.code,
+            file: d.path,
         })
         .collect()
 }

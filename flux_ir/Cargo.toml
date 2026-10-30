@@ -6,6 +6,7 @@ edition.workspace = true
 [dependencies]
 flux_diagnostics = { path = "../flux_diagnostics" }
 flux_hir = { path = "../flux_hir" }
+flux_std = { path = "../flux_std" }
 flux_syntax = { path = "../flux-syntax" }
 serde = { version = "1.0", features = ["derive"] }
 

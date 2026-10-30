@@ -221,7 +221,7 @@ pub struct HirFor {
 #[derive(Debug, Clone)]
 pub enum HirExpr {
     Int {
-        value: i64,
+        value: i128,
         span: Span,
     },
     Float {

@@ -73,6 +73,14 @@ pub(super) fn lower_expr(
         Expr::Call { callee, args, span } => {
             if let Expr::Ident { name, .. } = callee.as_ref() {
                 if name == "snap" {
+                    if scope.context() != crate::CompileContext::PureFn {
+                        diagnostics.push(FluxError::InvalidControlFlowInDerived {
+                            construct: "snap()".into(),
+                            span: span_to_miette(*span),
+                            source_id: span.source,
+                        });
+                        return None;
+                    }
                     if args.len() != 1 {
                         diagnostics.push(FluxError::Parse {
                             message: "`snap` expects exactly one argument".into(),
@@ -456,7 +464,10 @@ pub(super) fn lower_param_type(ty: &TypeName, type_params: &[String]) -> HirType
 }
 
 fn is_reactive_kind(kind: SymbolKind) -> bool {
-    matches!(kind, SymbolKind::Source | SymbolKind::Derived)
+    matches!(
+        kind,
+        SymbolKind::Source | SymbolKind::Derived | SymbolKind::Function { reactive: true }
+    )
 }
 
 pub(super) fn resolve_name(

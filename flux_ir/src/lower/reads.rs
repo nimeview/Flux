@@ -6,7 +6,9 @@
 
 use std::collections::{HashMap, HashSet};
 
-use flux_hir::{HirBlock, HirElse, HirExpr, HirFn, HirIf, HirProgram, HirStmt, SymbolId};
+use flux_hir::{
+    HirBlock, HirElse, HirExpr, HirFn, HirIf, HirProgram, HirStmt, SymbolId, SymbolKind,
+};
 
 pub(super) fn collect_reads_expr(
     expr: &HirExpr,
@@ -28,6 +30,12 @@ pub(super) fn collect_block_reads(
         collect_stmt_reads(stmt, program, reactive_fns, &mut ids);
     }
     ids.iter()
+        .filter(|id| {
+            matches!(
+                program.symbols.get(id).map(|symbol| symbol.kind),
+                Some(SymbolKind::Source | SymbolKind::Derived)
+            )
+        })
         .filter_map(|id| program.names.get(id).cloned())
         .collect()
 }

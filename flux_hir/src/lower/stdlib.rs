@@ -1,6 +1,6 @@
 //! Register standard-library intrinsics from `import io` / `import math` etc.
 
-use flux_diagnostics::{span_to_miette, DiagnosticBag, FluxError, SourceId};
+use flux_diagnostics::{span_to_miette, DiagnosticBag, FluxError};
 use flux_std::{export_in_std_module, std_module_exports, std_module_name};
 use flux_syntax::ImportDecl;
 
@@ -12,7 +12,6 @@ use super::push_duplicate;
 pub(super) fn register_stdlib_import(
     import: &ImportDecl,
     symbols: &mut SymbolTable,
-    source: SourceId,
     diagnostics: &mut DiagnosticBag,
 ) -> bool {
     let Some(module) = std_module_name(&import.path) else {
@@ -39,7 +38,7 @@ pub(super) fn register_stdlib_import(
                 name: name.to_string(),
                 module: import.path.clone(),
                 span: span_to_miette(import.span),
-                source_id: source,
+                source_id: import.span.source,
             });
             continue;
         }
@@ -56,7 +55,6 @@ pub(super) fn register_stdlib_import(
             Err(prev) => {
                 push_duplicate(
                     diagnostics,
-                    source,
                     &flux_syntax::Item::Import(import.clone()),
                     prev,
                 );

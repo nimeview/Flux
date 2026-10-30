@@ -88,7 +88,7 @@ pub fn try_resolve_file_with_root(
     diagnostics: &mut DiagnosticBag,
 ) -> Result<ResolvedProgram, ResolveFailure> {
     let mut loader = ModuleLoader::new(path);
-    let loaded = loader.load_recursive(path, root_contents, diagnostics);
+    let loaded = loader.load_recursive(path, root_contents, None, diagnostics);
     match (loaded, loader.modules.first()) {
         (Some(()), Some(root)) => Ok(ResolvedProgram {
             root: root.source.clone(),
@@ -145,12 +145,16 @@ impl ModuleLoader {
         id
     }
 
+    /// `import_site` is the `import` that requested `path` (none for the root);
+    /// cycle and read errors point there because `path` may have no source.
     fn load_recursive(
         &mut self,
         path: &Path,
         override_contents: Option<&str>,
+        import_site: Option<flux_diagnostics::Span>,
         diagnostics: &mut DiagnosticBag,
     ) -> Option<()> {
+        let site = import_site.unwrap_or(flux_diagnostics::Span::DUMMY);
         let canonical = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
         if self.loading_stack.contains(&canonical) {
             let cycle = self
@@ -162,12 +166,8 @@ impl ModuleLoader {
                 .join(" -> ");
             diagnostics.push(FluxError::CyclicImport {
                 cycle,
-                span: span_to_miette(flux_diagnostics::Span {
-                    source: SourceId(0),
-                    start: 0,
-                    end: 0,
-                }),
-                source_id: SourceId(0),
+                span: span_to_miette(site),
+                source_id: site.source,
             });
             return None;
         }
@@ -184,12 +184,8 @@ impl ModuleLoader {
                 Err(e) => {
                     diagnostics.push(FluxError::Parse {
                         message: format!("failed to read {}: {e}", canonical.display()),
-                        span: span_to_miette(flux_diagnostics::Span {
-                            source: SourceId(0),
-                            start: 0,
-                            end: 0,
-                        }),
-                        source_id: SourceId(0),
+                        span: span_to_miette(site),
+                        source_id: site.source,
                     });
                     return None;
                 }
@@ -249,7 +245,7 @@ impl ModuleLoader {
                 self.loading_stack.pop();
                 return None;
             }
-            self.load_recursive(&import_path, None, diagnostics)?;
+            self.load_recursive(&import_path, None, Some(import.span), diagnostics)?;
         }
         self.loading_stack.pop();
         Some(())
@@ -350,7 +346,14 @@ fn resolve_import_path(
         candidate
     };
 
-    let canonical = resolved.canonicalize().ok()?;
+    let Ok(canonical) = resolved.canonicalize() else {
+        diagnostics.push(FluxError::Parse {
+            message: format!("module not found: {import_path}"),
+            span: span_to_miette(import.span),
+            source_id: import.span.source,
+        });
+        return None;
+    };
     let root = project_root
         .canonicalize()
         .unwrap_or_else(|_| project_root.to_path_buf());

@@ -13,8 +13,7 @@ use flux_diagnostics::{
 use flux_hir::{lower_linked_program, lower_program, HirProgram};
 use flux_ir::{Codegen, CompiledProgram, IrCodegen};
 use flux_resolve::{
-    find_project_root, resolve_file_with_root, try_resolve_file_with_root, ResolveFailure,
-    ResolvedProgram,
+    find_project_root, try_resolve_file_with_root, ResolveFailure, ResolvedProgram,
 };
 use flux_runtime::{ExecutionMode, Executor, ExecutorError};
 use flux_syntax::{parse_program, Program};
@@ -59,6 +58,8 @@ fn with_project_cache<R>(project_root: &Path, f: impl FnOnce(&mut CompileCache) 
 /// Type-check result — no IR or executor.
 pub struct Checked {
     pub source: SourceFile,
+    /// Every loaded module's source (root first); diagnostics render against these by id.
+    pub sources: Vec<SourceFile>,
     pub hir: HirProgram,
     pub typed: TypedProgram,
     pub types: HashMap<String, String>,
@@ -68,6 +69,8 @@ pub struct Checked {
 /// Successful compilation result.
 pub struct Compiled {
     pub source: SourceFile,
+    /// Every loaded module's source (root first); diagnostics render against these by id.
+    pub sources: Vec<SourceFile>,
     pub hir: HirProgram,
     pub typed: TypedProgram,
     pub executor: Executor,
@@ -84,17 +87,39 @@ pub struct Analyzed {
     pub typed: Option<TypedProgram>,
     /// Maps each loaded module's [`SourceId`] to its on-disk path.
     pub source_paths: HashMap<SourceId, String>,
+    /// Every source read during analysis (root first), including the file a
+    /// resolution failure points into, so diagnostics map to their own text.
+    pub sources: Vec<SourceFile>,
 }
 
 /// Compilation failed — diagnostics are ready to render.
 #[derive(Debug)]
 pub struct CompileFailed {
-    pub source: SourceFile,
+    /// Every source read before the failure; the primary file is first.
+    pub sources: Vec<SourceFile>,
     pub diagnostics: DiagnosticBag,
+}
+
+impl CompileFailed {
+    fn new(primary: SourceFile, mut sources: Vec<SourceFile>, diagnostics: DiagnosticBag) -> Self {
+        sources.retain(|s| s.id != primary.id);
+        sources.insert(0, primary);
+        Self {
+            sources,
+            diagnostics,
+        }
+    }
+
+    /// The file the failure is reported for (the root, or the file the first
+    /// resolution error points into).
+    pub fn source(&self) -> &SourceFile {
+        &self.sources[0]
+    }
 }
 
 struct Artifacts {
     source: SourceFile,
+    sources: Vec<SourceFile>,
     hir: HirProgram,
     typed: TypedProgram,
     types: HashMap<String, String>,
@@ -122,26 +147,26 @@ pub fn compile_with_options(
     let mut diagnostics = DiagnosticBag::new();
 
     let Some(ast) = parse_program(source.id, &source.contents, &mut diagnostics) else {
-        return Err(CompileFailed {
-            source,
-            diagnostics,
-        });
+        let sources = vec![source.clone()];
+        return Err(CompileFailed::new(source, sources, diagnostics));
     };
 
     let artifacts = lower_to_ir(source, ast, &options, None, None, &mut diagnostics)?;
     if diagnostics.has_errors() {
-        return Err(CompileFailed {
-            source: artifacts.source,
+        return Err(CompileFailed::new(
+            artifacts.source,
+            artifacts.sources,
             diagnostics,
-        });
+        ));
     }
 
     let warnings = std::mem::take(&mut diagnostics.warnings);
     let Some(ir) = artifacts.ir else {
-        return Err(CompileFailed {
-            source: artifacts.source,
+        return Err(CompileFailed::new(
+            artifacts.source,
+            artifacts.sources,
             diagnostics,
-        });
+        ));
     };
     let executor = Executor::with_mode(ir, options.mode).map_err(|err| {
         diagnostics.push(executor_error_diagnostic(
@@ -149,13 +174,15 @@ pub fn compile_with_options(
             &artifacts.hir,
             &artifacts.source,
         ));
-        CompileFailed {
-            source: artifacts.source.clone(),
+        CompileFailed::new(
+            artifacts.source.clone(),
+            artifacts.sources.clone(),
             diagnostics,
-        }
+        )
     })?;
     Ok(Compiled {
         source: artifacts.source,
+        sources: artifacts.sources,
         hir: artifacts.hir,
         typed: artifacts.typed,
         executor,
@@ -187,12 +214,11 @@ fn executor_error_diagnostic(
                 .binding
                 .as_deref()
                 .and_then(|name| binding_span(hir, name))
-                .filter(|span| span.source == source.id)
                 .unwrap_or(file_start);
             FluxError::Runtime {
                 message: err.to_string(),
                 span: span_to_miette(span),
-                source_id: source.id,
+                source_id: span.source,
             }
         }
     }
@@ -226,10 +252,7 @@ fn resolve_failed(
             path: path.display().to_string(),
             contents: String::new(),
         });
-    CompileFailed {
-        source,
-        diagnostics,
-    }
+    CompileFailed::new(source, failure.sources, diagnostics)
 }
 
 /// Type-check a `.fl` file from disk (parse → resolve → HIR → types; no IR or VM).
@@ -251,13 +274,15 @@ pub fn check_file(path: &Path) -> Result<Checked, CompileFailed> {
         &mut diagnostics,
     )?;
     if diagnostics.has_errors() {
-        return Err(CompileFailed {
-            source: artifacts.source,
+        return Err(CompileFailed::new(
+            artifacts.source,
+            artifacts.sources,
             diagnostics,
-        });
+        ));
     }
     Ok(Checked {
         source: artifacts.source,
+        sources: artifacts.sources,
         hir: artifacts.hir,
         typed: artifacts.typed,
         types: artifacts.types,
@@ -279,14 +304,12 @@ pub fn compile_file(path: &Path, options: CompileOptions) -> Result<Compiled, Co
             }),
             source_id: SourceId(0),
         });
-        return Err(CompileFailed {
-            source: SourceFile {
-                id: SourceId(0),
-                path: path.display().to_string(),
-                contents: String::new(),
-            },
-            diagnostics,
-        });
+        let source = SourceFile {
+            id: SourceId(0),
+            path: path.display().to_string(),
+            contents: String::new(),
+        };
+        return Err(CompileFailed::new(source, Vec::new(), diagnostics));
     }
     let mut diagnostics = DiagnosticBag::new();
     let resolved = match try_resolve_file_with_root(path, None, &mut diagnostics) {
@@ -305,17 +328,19 @@ pub fn compile_file(path: &Path, options: CompileOptions) -> Result<Compiled, Co
         &mut diagnostics,
     )?;
     if diagnostics.has_errors() {
-        return Err(CompileFailed {
-            source: artifacts.source,
+        return Err(CompileFailed::new(
+            artifacts.source,
+            artifacts.sources,
             diagnostics,
-        });
+        ));
     }
     let warnings = std::mem::take(&mut diagnostics.warnings);
     let Some(ir) = artifacts.ir else {
-        return Err(CompileFailed {
-            source: artifacts.source,
+        return Err(CompileFailed::new(
+            artifacts.source,
+            artifacts.sources,
             diagnostics,
-        });
+        ));
     };
     let executor = Executor::with_mode(ir, options.mode).map_err(|err| {
         diagnostics.push(executor_error_diagnostic(
@@ -323,13 +348,15 @@ pub fn compile_file(path: &Path, options: CompileOptions) -> Result<Compiled, Co
             &artifacts.hir,
             &artifacts.source,
         ));
-        CompileFailed {
-            source: artifacts.source.clone(),
+        CompileFailed::new(
+            artifacts.source.clone(),
+            artifacts.sources.clone(),
             diagnostics,
-        }
+        )
     })?;
     Ok(Compiled {
         source: artifacts.source,
+        sources: artifacts.sources,
         hir: artifacts.hir,
         typed: artifacts.typed,
         executor,
@@ -343,12 +370,34 @@ pub fn analyze_document(path: Option<&Path>, contents: &str) -> Analyzed {
     let mut diagnostics = DiagnosticBag::new();
     let source_id = SourceId(0);
 
-    let resolved_opt =
-        path.and_then(|p| resolve_file_with_root(p, Some(contents), &mut diagnostics));
+    let mut failed_sources = Vec::new();
+    let resolved_opt = path.and_then(|p| {
+        try_resolve_file_with_root(p, Some(contents), &mut diagnostics)
+            .map_err(|failure| failed_sources = failure.sources)
+            .ok()
+    });
+    // A resolution failure still has diagnostics; don't re-run single-file
+    // analysis over them, which would duplicate or misattribute errors.
+    if path.is_some() && resolved_opt.is_none() {
+        return Analyzed {
+            diagnostics,
+            hir: None,
+            typed: None,
+            source_paths: failed_sources
+                .iter()
+                .map(|s| (s.id, s.path.clone()))
+                .collect(),
+            sources: failed_sources,
+        };
+    }
 
     let source_paths = resolved_opt
         .as_ref()
         .map(source_paths_from_resolved)
+        .unwrap_or_default();
+    let resolved_sources: Vec<SourceFile> = resolved_opt
+        .as_ref()
+        .map(|r| r.modules.iter().map(|m| m.source.clone()).collect())
         .unwrap_or_default();
 
     let source = source_from(
@@ -377,6 +426,7 @@ pub fn analyze_document(path: Option<&Path>, contents: &str) -> Analyzed {
                     hir: None,
                     typed: None,
                     source_paths,
+                    sources: vec![source],
                 };
             };
             let cache_key = Some(CompileCache::hash_source(contents));
@@ -397,6 +447,7 @@ pub fn analyze_document(path: Option<&Path>, contents: &str) -> Analyzed {
             hir: Some(artifacts.hir),
             typed: Some(artifacts.typed),
             source_paths,
+            sources: artifacts.sources,
         },
         Err(failed) => {
             for err in failed.diagnostics.errors {
@@ -405,11 +456,17 @@ pub fn analyze_document(path: Option<&Path>, contents: &str) -> Analyzed {
             for warn in failed.diagnostics.warnings {
                 diagnostics.push_warning(warn);
             }
+            let sources = if failed.sources.is_empty() {
+                resolved_sources
+            } else {
+                failed.sources
+            };
             Analyzed {
                 diagnostics,
                 hir: None,
                 typed: None,
                 source_paths,
+                sources,
             }
         }
     }
@@ -431,14 +488,24 @@ fn lower_to_ir_resolved(
     project_root: Option<&Path>,
     diagnostics: &mut DiagnosticBag,
 ) -> Result<Artifacts, CompileFailed> {
+    let sources: Vec<SourceFile> = resolved.modules.iter().map(|m| m.source.clone()).collect();
     let Some(hir) = lower_linked_program(resolved, diagnostics) else {
-        return Err(CompileFailed {
+        return Err(CompileFailed::new(
             source,
-            diagnostics: std::mem::take(diagnostics),
-        });
+            sources,
+            std::mem::take(diagnostics),
+        ));
     };
 
-    finish_lower(source, hir, options, cache_key, project_root, diagnostics)
+    finish_lower(
+        source,
+        sources,
+        hir,
+        options,
+        cache_key,
+        project_root,
+        diagnostics,
+    )
 }
 
 fn lower_to_ir(
@@ -449,18 +516,29 @@ fn lower_to_ir(
     project_root: Option<&Path>,
     diagnostics: &mut DiagnosticBag,
 ) -> Result<Artifacts, CompileFailed> {
+    let sources = vec![source.clone()];
     let Some(hir) = lower_program(&ast, diagnostics) else {
-        return Err(CompileFailed {
+        return Err(CompileFailed::new(
             source,
-            diagnostics: std::mem::take(diagnostics),
-        });
+            sources,
+            std::mem::take(diagnostics),
+        ));
     };
 
-    finish_lower(source, hir, options, cache_key, project_root, diagnostics)
+    finish_lower(
+        source,
+        sources,
+        hir,
+        options,
+        cache_key,
+        project_root,
+        diagnostics,
+    )
 }
 
 fn finish_lower(
     source: SourceFile,
+    sources: Vec<SourceFile>,
     mut hir: HirProgram,
     options: &CompileOptions,
     cache_key: Option<String>,
@@ -477,16 +555,18 @@ fn finish_lower(
     } else {
         flux_types::monomorphize_program(&mut hir, source.id, diagnostics);
         let Some(typed) = typecheck_program(&hir, source.id, diagnostics) else {
-            return Err(CompileFailed {
+            return Err(CompileFailed::new(
                 source,
-                diagnostics: std::mem::take(diagnostics),
-            });
+                sources,
+                std::mem::take(diagnostics),
+            ));
         };
         if diagnostics.has_errors() {
-            return Err(CompileFailed {
+            return Err(CompileFailed::new(
                 source,
-                diagnostics: std::mem::take(diagnostics),
-            });
+                sources,
+                std::mem::take(diagnostics),
+            ));
         }
         let types = build_type_map(&hir, &typed);
 
@@ -508,6 +588,7 @@ fn finish_lower(
     if options.phase == CompilePhase::Check {
         return Ok(Artifacts {
             source,
+            sources,
             hir,
             typed,
             types,
@@ -523,13 +604,13 @@ fn finish_lower(
         project_root,
         diagnostics,
     )?
-    .ok_or_else(|| CompileFailed {
-        source: source.clone(),
-        diagnostics: std::mem::take(diagnostics),
+    .ok_or_else(|| {
+        CompileFailed::new(source.clone(), sources.clone(), std::mem::take(diagnostics))
     })?;
 
     Ok(Artifacts {
         source,
+        sources,
         hir,
         typed,
         types,

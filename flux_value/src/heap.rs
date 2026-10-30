@@ -17,6 +17,7 @@ struct EnumValue {
 #[derive(Default)]
 struct HeapStores {
     strings: HashMap<u64, String>,
+    string_ids: HashMap<String, u64>,
     enums: HashMap<u64, EnumValue>,
     arrays: HashMap<u64, Vec<TaggedVal>>,
 }
@@ -39,13 +40,12 @@ thread_local! {
 
 pub fn intern_string(s: &str) -> u64 {
     let mut guard = stores().lock().expect("flux_value heap mutex poisoned");
-    for (&id, existing) in guard.strings.iter() {
-        if existing == s {
-            return id;
-        }
+    if let Some(&id) = guard.string_ids.get(s) {
+        return id;
     }
     let id = alloc_id();
     guard.strings.insert(id, s.to_string());
+    guard.string_ids.insert(s.to_string(), id);
     id
 }
 
@@ -132,13 +132,25 @@ pub fn make_int_range_array(start: i64, end: i64, step: i64) -> u64 {
         let mut i = start;
         while i < end {
             items.push(TaggedVal::from_int(i));
-            i += step;
+            let Some(next) = i.checked_add(step) else {
+                break;
+            };
+            if next <= i {
+                break;
+            }
+            i = next;
         }
     } else {
         let mut i = start;
         while i > end {
             items.push(TaggedVal::from_int(i));
-            i += step;
+            let Some(next) = i.checked_add(step) else {
+                break;
+            };
+            if next >= i {
+                break;
+            }
+            i = next;
         }
     }
     store_array(items)
@@ -164,6 +176,7 @@ pub fn array_finish(count: u64) -> TaggedVal {
 pub fn clear_for_tests() {
     let mut guard = stores().lock().expect("flux_value heap mutex poisoned");
     guard.strings.clear();
+    guard.string_ids.clear();
     guard.enums.clear();
     guard.arrays.clear();
     ARRAY_BUILDER.with(|b| b.borrow_mut().clear());

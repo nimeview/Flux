@@ -13,6 +13,8 @@
 #[cfg(test)]
 mod tests;
 
+mod cycles;
+mod effects;
 mod infer;
 mod resolve;
 pub(crate) mod state;
@@ -30,7 +32,7 @@ use crate::types::Type;
 use infer::{infer_block_return, infer_expr};
 use resolve::{resolve_hir_enum_payload, resolve_hir_type};
 use state::TypeCheckContext;
-use stmt::{check_binding, check_block, check_if};
+use stmt::{check_binding, check_block, check_if, check_return_types};
 use util::types_compatible;
 
 #[derive(Debug, Clone)]
@@ -47,8 +49,33 @@ pub fn typecheck_program(
 
     let ctx = TypeCheckContext::from_program(program);
 
+    if let Some(cycle) = cycles::find_derived_cycle(program) {
+        let first = cycle[0];
+        let span = program
+            .items
+            .iter()
+            .find_map(|item| match item {
+                HirItem::Binding(binding) if binding.name == first => Some(binding.span),
+                _ => None,
+            })
+            .unwrap_or_else(|| program.symbols[&first].span);
+        diagnostics.push(FluxError::CyclicDependency {
+            cycle: cycle
+                .iter()
+                .map(|id| program.names.get(id).map(String::as_str).unwrap_or("?"))
+                .collect::<Vec<_>>()
+                .join(" -> "),
+            span: span_to_miette(span),
+            source_id: span.source,
+        });
+        return None;
+    }
+
     // Builtin function types.
     for (id, name) in &program.names {
+        if !ctx.is_builtin_symbol(*id) {
+            continue;
+        }
         if let Some(ty) = builtin_fn_type(name) {
             types.insert(*id, ty);
         } else if flux_std::is_builtin_fn(name) {
@@ -67,8 +94,8 @@ pub fn typecheck_program(
         let HirItem::Binding(b) = item else { continue };
         let inner =
             b.ty.as_ref()
-                .and_then(|t| resolve_hir_type(&ctx, t, source, diagnostics))
-                .unwrap_or(Type::Int);
+                .and_then(|t| resolve_hir_type(&ctx, t, diagnostics))
+                .unwrap_or(Type::Error);
         types.insert(
             b.name,
             match b.kind {
@@ -88,7 +115,7 @@ pub fn typecheck_program(
                 let payload = ev
                     .payload
                     .as_ref()
-                    .and_then(|f| resolve_hir_type(&ctx, &f.ty, source, diagnostics))
+                    .and_then(|f| resolve_hir_type(&ctx, &f.ty, diagnostics))
                     .unwrap_or(Type::Unit);
                 types.insert(ev.name, Type::Event(Box::new(payload)));
             }
@@ -97,25 +124,30 @@ pub fn typecheck_program(
                 for p in &f.params {
                     fn_scope.insert(
                         p.name,
-                        resolve_hir_type(&ctx, &p.ty, source, diagnostics).unwrap_or(Type::Error),
+                        resolve_hir_type(&ctx, &p.ty, diagnostics).unwrap_or(Type::Error),
                     );
                 }
-                let inferred = infer_block_return(
-                    &ctx,
-                    &f.body,
-                    &fn_scope,
-                    &program.names,
-                    source,
-                    diagnostics,
-                );
+                let inferred = if f.ret.is_none() {
+                    let mut speculative_diagnostics = DiagnosticBag::new();
+                    infer_block_return(
+                        &ctx,
+                        &f.body,
+                        &fn_scope,
+                        &program.names,
+                        source,
+                        &mut speculative_diagnostics,
+                    )
+                } else {
+                    None
+                };
                 let ret = match &f.ret {
-                    Some(t) => resolve_hir_type(&ctx, t, source, diagnostics)?,
+                    Some(t) => resolve_hir_type(&ctx, t, diagnostics)?,
                     None => inferred.unwrap_or(Type::Unit),
                 };
                 let params = f
                     .params
                     .iter()
-                    .map(|p| resolve_hir_type(&ctx, &p.ty, source, diagnostics))
+                    .map(|p| resolve_hir_type(&ctx, &p.ty, diagnostics))
                     .collect::<Option<Vec<_>>>()?;
                 types.insert(
                     f.name,
@@ -133,7 +165,7 @@ pub fn typecheck_program(
                     .map(|(n, t)| {
                         (
                             n.clone(),
-                            resolve_hir_type(&ctx, t, source, diagnostics).unwrap_or(Type::Error),
+                            resolve_hir_type(&ctx, t, diagnostics).unwrap_or(Type::Error),
                         )
                     })
                     .collect();
@@ -147,9 +179,8 @@ pub fn typecheck_program(
                     .map(|(n, t)| {
                         (
                             n.clone(),
-                            t.as_ref().and_then(|p| {
-                                resolve_hir_enum_payload(&ctx, p, source, diagnostics)
-                            }),
+                            t.as_ref()
+                                .and_then(|p| resolve_hir_enum_payload(&ctx, p, diagnostics)),
                         )
                     })
                     .collect();
@@ -166,13 +197,90 @@ pub fn typecheck_program(
         }
     }
 
+    // Resolve inferred module types to a fixed point. An `Error` placeholder
+    // carries no false assumption about a forward reference's eventual type.
+    // Function return inference participates because bindings may call functions
+    // that themselves read later bindings.
+    for _ in 0..=program.items.len() {
+        let mut changed = false;
+        let mut speculative_diagnostics = DiagnosticBag::new();
+        for item in &program.items {
+            match item {
+                HirItem::Binding(b) if b.ty.is_none() => {
+                    let Some(inner) = infer_expr(
+                        &ctx,
+                        &b.value,
+                        &types,
+                        &program.names,
+                        source,
+                        &mut speculative_diagnostics,
+                    ) else {
+                        continue;
+                    };
+                    if inner.is_error() {
+                        continue;
+                    }
+                    let binding_ty = match b.kind {
+                        BindingKind::Source => Type::Cell(Box::new(inner)),
+                        BindingKind::Derived => Type::Read(Box::new(inner)),
+                    };
+                    if types.get(&b.name) != Some(&binding_ty) {
+                        types.insert(b.name, binding_ty);
+                        changed = true;
+                    }
+                }
+                HirItem::Fn(f) if f.type_params.is_empty() && f.ret.is_none() => {
+                    let mut fn_scope = types.clone();
+                    for p in &f.params {
+                        fn_scope.insert(
+                            p.name,
+                            resolve_hir_type(&ctx, &p.ty, &mut speculative_diagnostics)
+                                .unwrap_or(Type::Error),
+                        );
+                    }
+                    let Some(ret) = infer_block_return(
+                        &ctx,
+                        &f.body,
+                        &fn_scope,
+                        &program.names,
+                        source,
+                        &mut speculative_diagnostics,
+                    ) else {
+                        continue;
+                    };
+                    if ret.is_error() {
+                        continue;
+                    }
+                    if let Some(Type::Func { ret: current, .. }) = types.get_mut(&f.name) {
+                        if **current != ret {
+                            **current = ret;
+                            changed = true;
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+
     for item in &program.items {
         let HirItem::Binding(b) = item else { continue };
         let inner = if let Some(ty) = &b.ty {
-            resolve_hir_type(&ctx, ty, source, diagnostics)?
+            resolve_hir_type(&ctx, ty, diagnostics)?
         } else {
             infer_expr(&ctx, &b.value, &types, &program.names, source, diagnostics)?
         };
+        if inner.is_error() && !diagnostics.has_errors() {
+            diagnostics.push(FluxError::TypeMismatch {
+                expected: "inferable binding type".into(),
+                found: "unresolved type".into(),
+                span: span_to_miette(b.span),
+                source_id: b.span.source,
+            });
+        }
         let binding_ty = match b.kind {
             BindingKind::Source => Type::Cell(Box::new(inner)),
             BindingKind::Derived => Type::Read(Box::new(inner)),
@@ -193,10 +301,7 @@ pub fn typecheck_program(
                 let mut local = types.clone();
                 let mut immutable_locals = HashSet::new();
                 for p in &f.params {
-                    local.insert(
-                        p.name,
-                        resolve_hir_type(&ctx, &p.ty, source, diagnostics).unwrap(),
-                    );
+                    local.insert(p.name, resolve_hir_type(&ctx, &p.ty, diagnostics).unwrap());
                     immutable_locals.insert(p.name);
                 }
                 check_block(
@@ -211,8 +316,17 @@ pub fn typecheck_program(
                     &mut immutable_locals,
                 );
                 if let Some(explicit) = &f.ret {
-                    let expected = resolve_hir_type(&ctx, explicit, source, diagnostics)
-                        .unwrap_or(Type::Error);
+                    let expected =
+                        resolve_hir_type(&ctx, explicit, diagnostics).unwrap_or(Type::Error);
+                    check_return_types(
+                        &ctx,
+                        &f.body,
+                        &local,
+                        &expected,
+                        &program.names,
+                        source,
+                        diagnostics,
+                    );
                     let got = infer_block_return(
                         &ctx,
                         &f.body,
@@ -228,7 +342,7 @@ pub fn typecheck_program(
                             expected: expected.display(),
                             found: got.display(),
                             span: span_to_miette(f.span),
-                            source_id: source,
+                            source_id: f.span.source,
                         });
                     }
                 }
@@ -241,7 +355,7 @@ pub fn typecheck_program(
                                 expected: "reactive binding".into(),
                                 found: ty.display(),
                                 span: span_to_miette(w.span),
-                                source_id: source,
+                                source_id: w.span.source,
                             });
                         }
                     }
@@ -271,7 +385,7 @@ pub fn typecheck_program(
                         diagnostics.push(FluxError::UnknownEvent {
                             name,
                             span: span_to_miette(o.span),
-                            source_id: source,
+                            source_id: o.span.source,
                         });
                         let _ = sym_ty;
                     }
@@ -279,7 +393,7 @@ pub fn typecheck_program(
                         diagnostics.push(FluxError::UnknownEvent {
                             name: format!("#{}", o.event.0),
                             span: span_to_miette(o.span),
-                            source_id: source,
+                            source_id: o.span.source,
                         });
                     }
                 }
@@ -311,7 +425,7 @@ pub fn typecheck_program(
                             expected: inner.display(),
                             found: got.display(),
                             span: span_to_miette(a.span),
-                            source_id: source,
+                            source_id: a.span.source,
                         });
                     }
                 }

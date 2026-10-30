@@ -76,7 +76,7 @@ pub fn run(jit: bool) -> io::Result<()> {
             }
             Err(failed) => {
                 session.source.truncate(prev_len);
-                let _ = report_errors(&failed.source, &failed.diagnostics);
+                let _ = report_errors(failed.source(), &failed.sources, &failed.diagnostics);
             }
         }
     }

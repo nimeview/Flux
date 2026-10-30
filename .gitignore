@@ -10,3 +10,6 @@
 .idea/
 .DS_Store
 **/.DS_Store
+
+# Per-session Claude Code continuation counters
+.claude/.continuation_state/

@@ -8,6 +8,7 @@ use crate::{CompiledFunction, CompiledOnHandler, CompiledWatch, IrStmt, IrValue}
 
 use super::codegen::lower_expr;
 use super::reads::collect_block_reads;
+use super::runtime_symbol_name;
 
 pub(super) fn lower_fn(f: &HirFn, name: &str, program: &HirProgram) -> CompiledFunction {
     CompiledFunction {
@@ -16,7 +17,7 @@ pub(super) fn lower_fn(f: &HirFn, name: &str, program: &HirProgram) -> CompiledF
         params: f
             .params
             .iter()
-            .filter_map(|p| program.names.get(&p.name).cloned())
+            .filter_map(|p| runtime_symbol_name(program, &p.name))
             .collect(),
         body: lower_block(&f.body, program),
     }
@@ -42,7 +43,7 @@ pub(super) fn lower_on(o: &HirOn, program: &HirProgram) -> CompiledOnHandler {
             .get(&o.event)
             .cloned()
             .unwrap_or_else(|| "?".into()),
-        param: o.param.and_then(|p| program.names.get(&p).cloned()),
+        param: o.param.and_then(|p| runtime_symbol_name(program, &p)),
         body: lower_block(&o.body, program),
     }
 }
@@ -58,7 +59,7 @@ fn lower_block(block: &HirBlock, program: &HirProgram) -> Vec<IrStmt> {
 fn lower_stmt(stmt: &HirStmt, program: &HirProgram) -> Option<IrStmt> {
     match stmt {
         HirStmt::Assign(a) => Some(IrStmt::Assign {
-            target: program.names.get(&a.name)?.clone(),
+            target: runtime_symbol_name(program, &a.name)?,
             expr: lower_expr(&a.value, program),
         }),
         HirStmt::Emit(e) => Some(IrStmt::Emit {
@@ -69,7 +70,7 @@ fn lower_stmt(stmt: &HirStmt, program: &HirProgram) -> Option<IrStmt> {
             code: lower_expr(e, program),
         }),
         HirStmt::Let(l) => Some(IrStmt::Let {
-            name: program.names.get(&l.name)?.clone(),
+            name: runtime_symbol_name(program, &l.name)?,
             expr: lower_expr(&l.value, program),
         }),
         HirStmt::If(i) => Some(lower_if_stmt(i, program)),
@@ -78,7 +79,7 @@ fn lower_stmt(stmt: &HirStmt, program: &HirProgram) -> Option<IrStmt> {
             body: lower_block(&w.body, program),
         }),
         HirStmt::For(f) => Some(IrStmt::For {
-            var: program.names.get(&f.name)?.clone(),
+            var: runtime_symbol_name(program, &f.name)?,
             iter: lower_expr(&f.iter, program),
             body: lower_block(&f.body, program),
         }),

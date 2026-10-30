@@ -111,7 +111,12 @@ pub(super) fn watch_should_run(watch: &CompiledWatch, changed: &HashSet<String>)
 
 pub(super) fn to_runtime(v: &IrValue) -> RuntimeValue {
     match v {
-        IrValue::Int(n) => RuntimeValue::int_i64(*n),
+        IrValue::Int(n) => i64::try_from(*n)
+            .map(RuntimeValue::int_i64)
+            .unwrap_or_else(|_| {
+                flux_value::int_from_i128(flux_value::IntWidth::U64, *n)
+                    .unwrap_or(RuntimeValue::Unit)
+            }),
         IrValue::Float(n) => RuntimeValue::float_f64(*n),
         IrValue::Bool(b) => RuntimeValue::Bool(*b),
         IrValue::String(s) => RuntimeValue::String(s.clone()),

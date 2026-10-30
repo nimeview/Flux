@@ -28,7 +28,25 @@ Generics: `fn id[T](x: T) -> T` — monomorphized at compile time per call site.
 
 ### Casts
 
-`expr as Type` converts between numeric types when the conversion is defined (e.g. `x as Int32`, `n as Float64`). The checker uses a promotion lattice for mixed arithmetic; use explicit casts when you need a specific width.
+`expr as Type` converts between numeric types when the conversion is defined (e.g. `x as Int32`, `n as Float64`). Numeric values can also be cast to `Bool` or `Char` where valid; `Bool` and `Char` can be cast to numeric types. Unrelated casts such as `true as String` are compile errors. The checker uses a promotion lattice for mixed arithmetic; use explicit casts when you need a specific width.
+
+Unsuffixed integer literals must fit `Int64`; a `u64` suffix permits values through `18446744073709551615u64`. The signed minimum `-9223372036854775808` is accepted as a single negative literal.
+
+### Numeric semantics
+
+The VM is the reference; the JIT must produce the same value or error, or fall back to the VM. `flux_cli/tests/numeric_contract.rs` checks every rule below on both engines.
+
+| Operation | Integers (`Int8`…`Int64`, `UInt8`…`UInt64`) | Floats (`Float32`, `Float64`) |
+|---|---|---|
+| `+ - *` | Checked at the operand width; leaving the range is the runtime error `integer overflow` | IEEE 754 |
+| `/` | Truncates toward zero; divisor `0` → `integer division by zero`; `MIN / -1` → `integer overflow` | IEEE 754 (`1.0 / 0.0` is `inf`, `0.0 / 0.0` is `NaN`) |
+| `%` | Sign follows the dividend; divisor `0` → `integer division by zero`; `MIN % -1` is `0` | IEEE 754 remainder |
+| unary `-` | `-MIN` → `integer overflow` | IEEE 754 |
+| `== < …` | Exact (no conversion through `Float`) | IEEE 754 (`NaN != NaN`) |
+
+- Mixed `Int`/`Float` arithmetic and comparison promote the integer to `Float64`. Operators on two integers keep the integer type, so `Int / Int` is `Int`: division by zero is a runtime error rather than a value of another type.
+- Casts are checked: an integer out of the target range, a negative value cast to an unsigned type, or a `NaN`/infinite/out-of-range float cast to an integer is the runtime error `numeric cast out of range`. Float → integer casts truncate toward zero.
+- A runtime error stops the current evaluation and is reported as `runtime error: <message> in <context>`, where the context names the binding, `watch`, or `on` handler. Statements after the failing one do not run. If the error happens during module initialization, `flux run` exits non-zero. Out-of-range integer *literals* are rejected at parse time.
 
 ```flux
 import collections
@@ -83,11 +101,11 @@ Inside `fn` / `rfn`:
 
 `let` / `let mut`, assignment, `if`/`else`, `while`, `for x in expr`, `return expr?`, `break`, `continue`, `emit Event(args?)`, expression statements.
 
-**Derived expressions** (right-hand side of derived bindings) must be pure: no `snap()`, loops, control flow (**E008**), or side-effect builtins such as `print` / I/O (**E017**).
+**Derived expressions** (right-hand side of derived bindings) must be pure: no `snap()`, loops, control flow (**E008**), or side-effect builtins such as `print` / I/O (**E017**), including effects reached through user function calls. `snap()` is available in ordinary `fn` bodies for explicit snapshot reads.
 
 ## 5. Expressions
 
-Arithmetic (`+ - * /`), comparisons, boolean ops (`&&`, `||`, `!`), `if e { a } else { b }`, `match e { Var => expr, ... }`, calls, field access (`x.f`), closures `|x| x + 1`, `snap(expr)` in reactive contexts.
+Arithmetic (`+ - * / %`), comparisons, boolean ops (`&&`, `||`, `!`), `if e { a } else { b }`, `match e { Var => expr, ... }`, calls, field access (`x.f`), closures `|x| x + 1`, `snap(expr)` in reactive contexts.
 
 ### Closures
 
@@ -101,7 +119,7 @@ Arithmetic (`+ - * /`), comparisons, boolean ops (`&&`, `||`, `!`), `if e { a } 
 
 | Construct | Context | Reactive reads |
 |-----------|---------|----------------|
-| `fn` | Pure | Forbidden (use `snap`) |
+| `fn` | Ordinary function | Forbidden (use `snap`) |
 | `rfn` | Reactive function | Tracked |
 | `watch` / `on` | Side-effect blocks | Tracked |
 | Module derived | `let y = f(x)` or `derived y = f(x)` | Tracked |
@@ -167,7 +185,7 @@ Selective imports: `import io { println, read_line }`. Stdlib modules live under
 | `filter` | `fn([T], fn(T) -> Bool) -> [T]` | Keep elements matching predicate |
 | `reduce` | `fn([T], U, fn(U, T) -> U) -> U` | Fold to a single accumulator |
 | `abs`, `min`, `max`, `clamp`, `sqrt`, `floor`, `ceil`, `pow` | math | Numeric intrinsics (`Int`/`Float` overloads where applicable) |
-| `str_len` | `fn(String) -> Int` | Length in characters |
+| `str_len` | `fn(String) -> Int` | Length in Unicode scalar values |
 | `str_split` | `fn(String, String) -> [String]` | Split on separator |
 | `str_join` | `fn([String], String) -> String` | Join with separator |
 | `str_contains` | `fn(String, String) -> Bool` | Substring check |
@@ -225,7 +243,7 @@ version = "0.1.0"
 entry = "main.fl"
 
 [run]
-jit = false   # optional; enable JIT by default for this project
+jit = false   # optional; set true to use the experimental JIT for this project
 ```
 
 ## 10. Execution
@@ -234,6 +252,6 @@ Pipeline: **parse → resolve imports → HIR → monomorphize → typecheck →
 
 - Default: stack VM with reactive graph
 - JIT opt-in: `--jit`, environment `FLUX_JIT=1`, or `[run] jit = true` in `flux.toml`
-- Cranelift JIT compiles numeric derived nodes, pure functions, and eligible `watch`/`on` bodies with tag-aware int/float arithmetic; `LazyIf` branch deps collected statically; VM fallback for strings, enums, and ineligible IR
+- Cranelift JIT compiles numeric derived nodes, pure functions, and eligible `watch`/`on` bodies with tag-aware int/float arithmetic; `LazyIf` branch deps collected statically; VM fallback for strings, pattern matching, and ineligible IR
 - `flux run --jit --verbose` prints JIT compile/fallback statistics
 - WASM backend: stub module header (future: full codegen)

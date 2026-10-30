@@ -1,5 +1,5 @@
 #[cfg(test)]
-mod tests {
+mod cases {
     use flux_diagnostics::{DiagnosticBag, SourceId};
     use flux_syntax::parse_program;
 

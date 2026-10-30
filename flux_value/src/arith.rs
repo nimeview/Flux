@@ -107,7 +107,7 @@ pub fn promote_int(a: IntWidth, b: IntWidth) -> IntWidth {
     }
 }
 
-fn int_to_i128(width: IntWidth, bits: u64) -> i128 {
+pub fn int_to_i128(width: IntWidth, bits: u64) -> i128 {
     if width.is_signed() {
         int_to_i64(width, bits) as i128
     } else {
@@ -270,6 +270,8 @@ pub fn cast(v: &Value, ty: &str) -> Result<Value, ArithError> {
             Value::Int { width, bits } => Ok(Value::Bool(int_to_i128(*width, *bits) != 0)),
             _ => Err(ArithError::InvalidCast),
         },
-        _ => Ok(v.clone()),
+        "String" if matches!(v, Value::String(_)) => Ok(v.clone()),
+        "Unit" if matches!(v, Value::Unit) => Ok(v.clone()),
+        _ => Err(ArithError::InvalidCast),
     }
 }

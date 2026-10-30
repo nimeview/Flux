@@ -4,7 +4,10 @@
 use std::collections::HashMap;
 use std::path::Path;
 
-use flux_diagnostics::{offset_to_line_col, SourceId, Span};
+use flux_diagnostics::{SourceFile, SourceId, Span};
+
+use crate::position::byte_range_to_lsp;
+pub use crate::position::position_to_offset;
 use flux_driver::analyze_document as driver_analyze;
 use flux_hir::{
     build_reference_index, rename_spans, symbol_at_offset, HirItem, HirProgram, ReferenceIndex,
@@ -20,6 +23,7 @@ pub enum DiagnosticLevel {
 }
 
 /// A diagnostic with a precise start/end range, ready to convert to LSP types.
+/// Lines and columns are 1-based; columns count UTF-16 code units.
 #[derive(Debug, Clone)]
 pub struct RangedDiagnostic {
     pub start_line: usize,
@@ -29,6 +33,8 @@ pub struct RangedDiagnostic {
     pub message: String,
     pub code: String,
     pub level: DiagnosticLevel,
+    /// File the range is in; `None` means the analyzed document itself.
+    pub path: Option<String>,
 }
 
 /// Definition site for a symbol, keyed by file path and source span.
@@ -74,7 +80,7 @@ pub fn analyze_document(path: Option<&Path>, contents: &str) -> DocAnalysis {
         .unwrap_or_default();
     let references = hir.map(build_reference_index);
     DocAnalysis {
-        diagnostics: to_ranged(&analyzed.diagnostics, contents),
+        diagnostics: to_ranged(&analyzed.diagnostics, contents, &analyzed.sources),
         hir: analyzed.hir,
         typed: analyzed.typed,
         source_paths: analyzed.source_paths,
@@ -400,16 +406,15 @@ pub fn span_to_lsp_range(
     span: &Span,
     source_paths: &HashMap<SourceId, String>,
 ) -> Option<(u32, u32, u32, u32)> {
-    let path = source_paths.get(&span.source)?;
-    let file_contents = if path == "<buffer>" {
+    // The analyzed document is SourceId 0; use its (possibly unsaved) buffer.
+    let file_contents = if span.source == SourceId(0) {
         None
     } else {
+        let path = source_paths.get(&span.source)?;
         std::fs::read_to_string(path).ok()
     };
     let text = file_contents.as_deref().unwrap_or(contents);
-    let (sl, sc) = offset_to_line_col(span.start, text);
-    let (el, ec) = offset_to_line_col(span.end.max(span.start + 1), text);
-    Some((sl as u32 - 1, sc as u32 - 1, el as u32 - 1, ec as u32 - 1))
+    Some(byte_range_to_lsp(text, span.start, span.end))
 }
 
 /// A friendly, one-line description of `symbol`'s type for hover text.
@@ -464,24 +469,44 @@ pub fn hover_for_name(
     Some(format!("{word}: {}", describe_type(ty)))
 }
 
-fn to_ranged(bag: &flux_diagnostics::DiagnosticBag, contents: &str) -> Vec<RangedDiagnostic> {
+/// The analyzed document is always [`SourceId`] 0 (the resolver's root, or the
+/// lone buffer); other ids are imported modules whose own text maps the range.
+fn to_ranged(
+    bag: &flux_diagnostics::DiagnosticBag,
+    contents: &str,
+    sources: &[SourceFile],
+) -> Vec<RangedDiagnostic> {
+    let locate = |span: Span| -> (&str, Option<String>) {
+        if span.source == SourceId(0) {
+            return (contents, None);
+        }
+        sources
+            .iter()
+            .find(|s| s.id == span.source)
+            .map(|s| (s.contents.as_str(), Some(s.path.clone())))
+            .unwrap_or((contents, None))
+    };
     let mut out = Vec::with_capacity(bag.errors.len() + bag.warnings.len());
     for e in &bag.errors {
+        let (text, path) = locate(e.label_span());
         out.push(span_to_ranged(
             e.label_span(),
             e.to_string(),
             e.code().to_string(),
             DiagnosticLevel::Error,
-            contents,
+            text,
+            path,
         ));
     }
     for w in &bag.warnings {
+        let (text, path) = locate(w.label_span());
         out.push(span_to_ranged(
             w.label_span(),
             w.to_string(),
             w.code().to_string(),
             DiagnosticLevel::Warning,
-            contents,
+            text,
+            path,
         ));
     }
     out
@@ -493,17 +518,18 @@ fn span_to_ranged(
     code: String,
     level: DiagnosticLevel,
     contents: &str,
+    path: Option<String>,
 ) -> RangedDiagnostic {
-    let (start_line, start_column) = offset_to_line_col(span.start, contents);
-    let (end_line, end_column) = offset_to_line_col(span.end.max(span.start + 1), contents);
+    let (sl, sc, el, ec) = byte_range_to_lsp(contents, span.start, span.end);
     RangedDiagnostic {
-        start_line,
-        start_column,
-        end_line,
-        end_column,
+        start_line: sl as usize + 1,
+        start_column: sc as usize + 1,
+        end_line: el as usize + 1,
+        end_column: ec as usize + 1,
         message,
         code,
         level,
+        path,
     }
 }
 
@@ -624,12 +650,10 @@ pub fn rename_edits_for_symbol(
             .get(&span.source)
             .map(String::as_str)
             .unwrap_or(buffer_contents);
-        let (sl, sc) = offset_to_line_col(span.start, text);
-        let (el, ec) = offset_to_line_col(span.end.max(span.start + 1), text);
         by_path
             .entry(normalize_path(&path, buffer_path))
             .or_default()
-            .push((sl as u32 - 1, sc as u32 - 1, el as u32 - 1, ec as u32 - 1));
+            .push(byte_range_to_lsp(text, span.start, span.end));
     }
 
     by_path
@@ -745,21 +769,6 @@ pub fn word_at_offset(contents: &str, offset: usize) -> Option<&str> {
     } else {
         Some(&contents[start..end])
     }
-}
-
-/// Converts a 0-based LSP `(line, character)` position into a byte offset into `contents`.
-pub fn position_to_offset(contents: &str, line: u32, character: u32) -> usize {
-    let mut offset = 0;
-    for (i, l) in contents.split('\n').enumerate() {
-        if i as u32 == line {
-            let chars: Vec<char> = l.chars().collect();
-            let take = (character as usize).min(chars.len());
-            offset += chars[..take].iter().map(|c| c.len_utf8()).sum::<usize>();
-            return offset;
-        }
-        offset += l.len() + 1;
-    }
-    contents.len()
 }
 
 #[cfg(test)]

@@ -24,7 +24,7 @@ fn numeric_code_accepts_strings() {
 }
 
 #[test]
-fn numeric_code_accepts_enum_match() {
+fn numeric_code_falls_back_for_enum_match() {
     let code = vec![
         Inst::MakeUserEnum {
             type_name: "Color".into(),
@@ -35,7 +35,7 @@ fn numeric_code_accepts_enum_match() {
         Inst::Const(IrValue::Int(20)),
         Inst::Select,
     ];
-    assert!(code_is_jit_numeric(&code, &HashSet::new()));
+    assert!(!code_is_jit_numeric(&code, &HashSet::new()));
 }
 
 #[test]

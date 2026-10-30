@@ -5,6 +5,8 @@ use flux_syntax::BinaryOp;
 
 use crate::{Inst, IrValue};
 
+use super::runtime_symbol_name;
+
 pub(super) fn lower_expr(expr: &HirExpr, program: &HirProgram) -> Vec<Inst> {
     let mut code = Vec::new();
     emit_expr(expr, program, &mut code);
@@ -12,7 +14,7 @@ pub(super) fn lower_expr(expr: &HirExpr, program: &HirProgram) -> Vec<Inst> {
 }
 
 fn emit_match_bindings(
-    scrutinee: &HirExpr,
+    scrutinee_name: &str,
     arm: &HirMatchArm,
     program: &HirProgram,
     code: &mut Vec<Inst>,
@@ -21,51 +23,51 @@ fn emit_match_bindings(
         return;
     }
     if !arm.variant.is_empty() && arm.binding_fields.is_empty() {
-        emit_expr(scrutinee, program, code);
+        code.push(Inst::Load(scrutinee_name.to_string()));
         code.push(Inst::VariantPayloadGet { field: None });
         if let Some(sym) = arm.bindings.first() {
-            if let Some(name) = program.names.get(sym) {
-                code.push(Inst::BindLocal(name.clone()));
+            if let Some(name) = runtime_symbol_name(program, sym) {
+                code.push(Inst::BindLocal(name));
             }
         }
     } else if arm.variant.is_empty() && arm.bindings.len() == 1 {
-        emit_expr(scrutinee, program, code);
-        if let Some(name) = program.names.get(&arm.bindings[0]) {
-            code.push(Inst::BindLocal(name.clone()));
+        code.push(Inst::Load(scrutinee_name.to_string()));
+        if let Some(name) = runtime_symbol_name(program, &arm.bindings[0]) {
+            code.push(Inst::BindLocal(name));
         }
     } else if !arm.binding_fields.is_empty() {
         for (sym, field) in arm.bindings.iter().zip(arm.binding_fields.iter()) {
-            emit_expr(scrutinee, program, code);
+            code.push(Inst::Load(scrutinee_name.to_string()));
             code.push(Inst::VariantPayloadGet {
                 field: Some(field.clone()),
             });
-            if let Some(name) = program.names.get(sym) {
-                code.push(Inst::BindLocal(name.clone()));
+            if let Some(name) = runtime_symbol_name(program, sym) {
+                code.push(Inst::BindLocal(name));
             }
         }
     }
 }
 
 fn emit_match_arm_cond(
-    scrutinee: &HirExpr,
+    scrutinee_name: &str,
     arm: &HirMatchArm,
     program: &HirProgram,
     code: &mut Vec<Inst>,
 ) {
     if arm.variant.is_empty() {
         if let Some(guard) = &arm.guard {
-            emit_match_bindings(scrutinee, arm, program, code);
+            emit_match_bindings(scrutinee_name, arm, program, code);
             emit_expr(guard, program, code);
         } else {
             code.push(Inst::Const(IrValue::Bool(true)));
         }
         return;
     }
-    emit_expr(scrutinee, program, code);
+    code.push(Inst::Load(scrutinee_name.to_string()));
     code.push(Inst::VariantTagEq(arm.variant.clone()));
     if arm.guard.is_some() {
         let mut guard_code = Vec::new();
-        emit_match_bindings(scrutinee, arm, program, &mut guard_code);
+        emit_match_bindings(scrutinee_name, arm, program, &mut guard_code);
         if let Some(guard) = &arm.guard {
             emit_expr(guard, program, &mut guard_code);
         }
@@ -97,8 +99,8 @@ fn emit_expr(expr: &HirExpr, program: &HirProgram, code: &mut Vec<Inst>) {
         HirExpr::Bool { value, .. } => code.push(Inst::Const(IrValue::Bool(*value))),
         HirExpr::String { value, .. } => code.push(Inst::Const(IrValue::String(value.clone()))),
         HirExpr::Ident { symbol, .. } => {
-            if let Some(name) = program.names.get(symbol) {
-                code.push(Inst::Load(name.clone()));
+            if let Some(name) = runtime_symbol_name(program, symbol) {
+                code.push(Inst::Load(name));
             }
         }
         HirExpr::Snap { expr, .. } => emit_expr(expr, program, code),
@@ -183,7 +185,7 @@ fn emit_expr(expr: &HirExpr, program: &HirProgram, code: &mut Vec<Inst>) {
                         .find(|((_, method), _)| method == field)
                         .map(|(_, id)| *id)
                 };
-                if let Some(name) = fn_id.and_then(|id| program.names.get(&id)).cloned() {
+                if let Some(name) = fn_id.and_then(|id| runtime_symbol_name(program, &id)) {
                     code.push(Inst::Call {
                         name,
                         argc: 1 + args.len(),
@@ -192,24 +194,24 @@ fn emit_expr(expr: &HirExpr, program: &HirProgram, code: &mut Vec<Inst>) {
                 return;
             }
             if let HirExpr::Closure { fn_symbol, .. } = callee.as_ref() {
-                if let Some(name) = program.names.get(fn_symbol) {
+                if let Some(name) = runtime_symbol_name(program, fn_symbol) {
                     for arg in args {
                         emit_expr(arg, program, code);
                     }
                     code.push(Inst::Call {
-                        name: name.clone(),
+                        name,
                         argc: args.len(),
                     });
                 }
                 return;
             }
             if let HirExpr::Ident { symbol, .. } = callee.as_ref() {
-                if let Some(name) = program.names.get(symbol) {
+                if let Some(name) = runtime_symbol_name(program, symbol) {
                     for arg in args {
                         emit_expr(arg, program, code);
                     }
                     code.push(Inst::Call {
-                        name: name.clone(),
+                        name,
                         argc: args.len(),
                     });
                 }
@@ -247,27 +249,36 @@ fn emit_expr(expr: &HirExpr, program: &HirProgram, code: &mut Vec<Inst>) {
             });
         }
         HirExpr::Match {
-            scrutinee, arms, ..
+            scrutinee,
+            arms,
+            span,
         } => {
             if arms.is_empty() {
                 code.push(Inst::Const(IrValue::Unit));
                 return;
             }
-            let mut result = Vec::new();
-            let last = arms.last().unwrap();
-            emit_match_bindings(scrutinee, last, program, &mut result);
-            emit_expr(&last.expr, program, &mut result);
-            for arm in arms.iter().rev().skip(1) {
+            // NUL cannot occur in a source identifier, so this cannot collide
+            // with a user local or module binding.
+            let temp = format!("\0flux_match_{}_{}", span.source.0, span.start);
+            emit_expr(scrutinee, program, code);
+            code.push(Inst::BindLocal(temp.clone()));
+
+            // `LazyIf` ensures that only the selected arm executes. The initial
+            // Unit is an unreachable fallback after the type check verifies
+            // that every enum variant (or a catch-all) is covered.
+            let mut result = vec![Inst::Const(IrValue::Unit)];
+            for arm in arms.iter().rev() {
                 let mut then_code = Vec::new();
-                emit_match_bindings(scrutinee, arm, program, &mut then_code);
+                emit_match_bindings(&temp, arm, program, &mut then_code);
                 emit_expr(&arm.expr, program, &mut then_code);
                 let mut cond_code = Vec::new();
-                emit_match_arm_cond(scrutinee, arm, program, &mut cond_code);
-                let else_code = std::mem::take(&mut result);
+                emit_match_arm_cond(&temp, arm, program, &mut cond_code);
+                let else_branch = std::mem::take(&mut result);
                 result = cond_code;
-                result.extend(then_code);
-                result.extend(else_code);
-                result.push(Inst::Select);
+                result.push(Inst::LazyIf {
+                    then_branch: then_code,
+                    else_branch,
+                });
             }
             code.extend(result);
         }
@@ -280,8 +291,8 @@ fn emit_expr(expr: &HirExpr, program: &HirProgram, code: &mut Vec<Inst>) {
             code.push(Inst::FieldGet(field.clone()));
         }
         HirExpr::Closure { fn_symbol, .. } => {
-            if let Some(name) = program.names.get(fn_symbol) {
-                code.push(Inst::Const(IrValue::String(name.clone())));
+            if let Some(name) = runtime_symbol_name(program, fn_symbol) {
+                code.push(Inst::Const(IrValue::String(name)));
             }
         }
     }

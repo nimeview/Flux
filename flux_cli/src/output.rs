@@ -1,4 +1,4 @@
-use flux_diagnostics::{DiagnosticBag, FluxWarning, SourceFile};
+use flux_diagnostics::{DiagnosticBag, FluxWarning, SourceFile, SourceId};
 use flux_runtime::{EffectTrigger, Executor, HandlerKind, NodeKind, RuntimeValue};
 use miette::{GraphicalReportHandler, IntoDiagnostic, Report};
 
@@ -72,7 +72,11 @@ pub fn print_jit_stats(stats: &flux_runtime::JitStats) {
 pub fn print_jit_stats(_stats: &()) {}
 
 #[allow(clippy::result_unit_err)]
-pub fn report_warnings(source: &SourceFile, warnings: &[FluxWarning]) -> Result<(), ()> {
+pub fn report_warnings(
+    primary: &SourceFile,
+    sources: &[SourceFile],
+    warnings: &[FluxWarning],
+) -> Result<(), ()> {
     if warnings.is_empty() {
         return Ok(());
     }
@@ -80,19 +84,27 @@ pub fn report_warnings(source: &SourceFile, warnings: &[FluxWarning]) -> Result<
         errors: Vec::new(),
         warnings: warnings.to_vec(),
     };
-    report_errors(source, &bag)
+    report_errors(primary, sources, &bag)
 }
 
+/// Renders every diagnostic against the source its `SourceId` names, falling
+/// back to `primary` when that file was never read (e.g. a missing import).
 #[allow(clippy::result_unit_err)]
-pub fn report_errors(source: &SourceFile, bag: &DiagnosticBag) -> Result<(), ()> {
+pub fn report_errors(
+    primary: &SourceFile,
+    sources: &[SourceFile],
+    bag: &DiagnosticBag,
+) -> Result<(), ()> {
     let handler = GraphicalReportHandler::new();
     for warning in &bag.warnings {
+        let source = source_for(primary, sources, warning.source_id());
         render_diagnostic(&handler, source, warning.clone())?;
     }
     if bag.errors.is_empty() {
         return Ok(());
     }
     for error in &bag.errors {
+        let source = source_for(primary, sources, error.source_id());
         render_diagnostic(&handler, source, error.clone())?;
     }
     Err(())
@@ -101,11 +113,23 @@ pub fn report_errors(source: &SourceFile, bag: &DiagnosticBag) -> Result<(), ()>
 /// Reports a failed compilation. Always returns `Err`, even if the bag is
 /// unexpectedly empty, so a failure can never exit as success.
 #[allow(clippy::result_unit_err)]
-pub fn report_failure(source: &SourceFile, bag: &DiagnosticBag) -> Result<(), ()> {
-    if report_errors(source, bag).is_ok() {
-        eprintln!("error: {}: compilation failed", source.path);
+pub fn report_failure(
+    primary: &SourceFile,
+    sources: &[SourceFile],
+    bag: &DiagnosticBag,
+) -> Result<(), ()> {
+    if report_errors(primary, sources, bag).is_ok() {
+        eprintln!("error: {}: compilation failed", primary.path);
     }
     Err(())
+}
+
+fn source_for<'a>(
+    primary: &'a SourceFile,
+    sources: &'a [SourceFile],
+    id: SourceId,
+) -> &'a SourceFile {
+    sources.iter().find(|s| s.id == id).unwrap_or(primary)
 }
 
 fn render_diagnostic<D: miette::Diagnostic + Send + Sync + 'static>(
@@ -113,6 +137,15 @@ fn render_diagnostic<D: miette::Diagnostic + Send + Sync + 'static>(
     source: &SourceFile,
     diagnostic: D,
 ) -> Result<(), ()> {
+    eprint!("{}", render_with(handler, source, diagnostic)?);
+    Ok(())
+}
+
+fn render_with<D: miette::Diagnostic + Send + Sync + 'static>(
+    handler: &GraphicalReportHandler,
+    source: &SourceFile,
+    diagnostic: D,
+) -> Result<String, ()> {
     let report = Report::new(diagnostic).with_source_code(source.clone());
     let mut output = String::new();
     handler
@@ -120,6 +153,5 @@ fn render_diagnostic<D: miette::Diagnostic + Send + Sync + 'static>(
         .into_diagnostic()
         .map_err(|e| eprintln!("{e:?}"))
         .map_err(|_| ())?;
-    eprint!("{output}");
-    Ok(())
+    Ok(output)
 }

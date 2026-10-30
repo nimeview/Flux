@@ -44,6 +44,26 @@ fn cases() -> Vec<(&'static str, String, Want)> {
         ),
         c("int_rem", "let mut a = 7\nlet r = a % 3", Value("1")),
         c(
+            "signed_min_literal",
+            "let mut a = -9223372036854775808\nlet r = a",
+            Value("-9223372036854775808"),
+        ),
+        c(
+            "uint64_max_literal",
+            "let mut a = 18446744073709551615u64\nlet r = a",
+            Value("18446744073709551615"),
+        ),
+        c(
+            "uint64_max_equal",
+            "let mut a = 18446744073709551615u64\nlet r = a == 18446744073709551615u64",
+            Value("true"),
+        ),
+        c(
+            "uint64_max_overflow",
+            "let mut a = 18446744073709551615u64\nlet r = a + 1u64",
+            Error("integer overflow"),
+        ),
+        c(
             "int_rem_neg_dividend",
             "let mut a = -7\nlet r = a % 3",
             Value("-1"),

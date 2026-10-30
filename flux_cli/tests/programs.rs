@@ -201,8 +201,8 @@ fn ok_types_in_pipeline() {
     let (path, contents) = read_program("ok/basics/basics.fl");
     let source = source_from(path, contents);
     let compiled = compile(source).unwrap();
-    assert!(compiled.types.get("a").is_some());
-    assert!(compiled.types.get("c").is_some());
+    assert!(compiled.types.contains_key("a"));
+    assert!(compiled.types.contains_key("c"));
 }
 
 #[test]

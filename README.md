@@ -72,7 +72,7 @@ watch count {
 | Mutable source | `let mut x = 5` |
 | Derived binding | `let y = x * 2` or `derived y = x * 2` |
 | Immutable source | `let version = 1` or `const VERSION = 1` |
-| Pure function | `fn add(a: Int, b: Int) -> Int { a + b }` |
+| Function | `fn add(a: Int, b: Int) -> Int { a + b }` |
 | Reactive function | `rfn scale(x: Int) { x * base }` |
 | Events | `event Click` / `on Click { ... }` / `emit Click` |
 | Watch | `watch x { ... }` |

@@ -19,7 +19,7 @@ pub struct PackageManifest {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct RunSection {
-    /// Run with the Cranelift JIT (default: true). `false` selects the VM.
+    /// Run with the experimental Cranelift JIT (default: false).
     #[serde(default = "default_jit")]
     pub jit: bool,
 }
@@ -31,7 +31,7 @@ impl Default for RunSection {
 }
 
 fn default_jit() -> bool {
-    true
+    false
 }
 
 #[derive(Debug, Clone, Deserialize)]

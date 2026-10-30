@@ -74,8 +74,10 @@ pub(crate) fn numeric_compatible(a: &Type, b: &Type) -> bool {
 pub(crate) fn widen_numeric(a: &Type, b: &Type) -> Type {
     let a = unwrap_value_type(a);
     let b = unwrap_value_type(b);
-    if a.is_float() || b.is_float() {
+    if matches!(a, Type::Float | Type::Float64) || matches!(b, Type::Float | Type::Float64) {
         Type::Float64
+    } else if matches!(a, Type::Float32) || matches!(b, Type::Float32) {
+        Type::Float32
     } else {
         type_from_int_rank(int_rank(&a).max(int_rank(&b)))
     }
@@ -96,10 +98,11 @@ pub(crate) fn types_compatible(expected: &Type, found: &Type) -> bool {
     match (&expected, &found) {
         (Type::Int, Type::Int64) | (Type::Int64, Type::Int) => true,
         (Type::Float, Type::Float64) | (Type::Float64, Type::Float) => true,
-        (a, b) if a.is_integer() && b.is_integer() => int_rank(a) >= int_rank(b),
-        (a, b) if a.is_float() && b.is_float() => true,
-        (a, b) if a.is_integer() && b.is_float() => true,
-        (a, b) if a.is_float() && b.is_integer() => true,
+        // Compatibility is used for assignments, arguments, and returns. The
+        // runtime does not insert implicit casts, so accepting a numeric type
+        // conversion here would make the checked type differ from the value.
+        // Mixed numeric *operations* use `numeric_compatible` and widen their
+        // result explicitly; value boundaries require an explicit `as` cast.
         (Type::Cell(e), Type::Cell(f)) | (Type::Read(e), Type::Read(f)) => types_compatible(e, f),
         (Type::Option(e), Type::Option(f)) => types_compatible(e, f),
         (

@@ -112,7 +112,7 @@ pub fn call_builtin(name: &str, args: &[Value]) -> Option<Value> {
         }
         "len" => {
             let n = match args.first()? {
-                Value::String(s) => s.len() as i64,
+                Value::String(s) => s.chars().count() as i64,
                 Value::Array(a) => a.len() as i64,
                 _ => return Some(Value::int_i64(0)),
             };
@@ -166,7 +166,7 @@ pub fn call_builtin(name: &str, args: &[Value]) -> Option<Value> {
         // ever reaching `call_builtin`, so they're intentionally unhandled here.
         "str_len" => {
             let n = match args.first()? {
-                Value::String(s) => s.len() as i64,
+                Value::String(s) => s.chars().count() as i64,
                 _ => 0,
             };
             Some(Value::int_i64(n))

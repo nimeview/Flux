@@ -49,12 +49,63 @@ pub fn parse_program(
         }
     };
 
-    let items = pairs.filter_map(|p| parse_item(source_id, p)).collect();
+    let mut items = Vec::new();
+    for pair in pairs {
+        if let Some((span, literal)) = invalid_integer_literal(source_id, pair.clone(), false) {
+            diagnostics.push(FluxError::Parse {
+                message: format!(
+                    "integer literal `{literal}` is outside the supported range for its type"
+                ),
+                span: span_to_miette(span),
+                source_id,
+            });
+            return None;
+        }
+        if let Some(item) = parse_item(source_id, pair) {
+            items.push(item);
+        }
+    }
 
     Some(Program {
         source: source_id,
         items,
     })
+}
+
+fn invalid_integer_literal(
+    source_id: SourceId,
+    pair: pest::iterators::Pair<'_, Rule>,
+    allow_i64_min_magnitude: bool,
+) -> Option<(Span, String)> {
+    if pair.as_rule() == Rule::int_lit {
+        let (digits, suffix) = exprs::split_numeric_suffix(pair.as_str());
+        let magnitude = digits.parse::<u128>().ok();
+        let is_i64_min_magnitude = allow_i64_min_magnitude
+            && digits == "9223372036854775808"
+            && suffix.is_none_or(|suffix| suffix == "i64");
+        let fits = match suffix {
+            Some("u64") => magnitude.is_some_and(|value| value <= u64::MAX as u128),
+            _ => digits.parse::<i64>().is_ok() || is_i64_min_magnitude,
+        };
+        if !fits {
+            return Some((span_of(source_id, &pair), pair.as_str().to_string()));
+        }
+    }
+    let direct_i64_min_operand = if pair.as_rule() == Rule::unary_expr {
+        pair.as_str()
+            .trim()
+            .strip_prefix('-')
+            .map(str::trim)
+            .is_some_and(|operand| {
+                let (digits, suffix) = exprs::split_numeric_suffix(operand);
+                digits == "9223372036854775808" && suffix.is_none_or(|suffix| suffix == "i64")
+            })
+    } else {
+        false
+    };
+    let allow_child_i64_min = allow_i64_min_magnitude || direct_i64_min_operand;
+    pair.into_inner()
+        .find_map(|child| invalid_integer_literal(source_id, child, allow_child_i64_min))
 }
 
 fn parse_item(source_id: SourceId, pair: pest::iterators::Pair<'_, Rule>) -> Option<Item> {

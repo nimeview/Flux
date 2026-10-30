@@ -32,7 +32,7 @@ pub(super) fn infer_array_elem(
                 expected: "Array".into(),
                 found: other.display(),
                 span: span_to_miette(arg.span()),
-                source_id: source,
+                source_id: arg.span().source,
             });
             Type::Error
         }
@@ -58,7 +58,7 @@ pub(super) fn check_callback(
                     expected: format!("at most {} parameter(s)", expected_params.len()),
                     found: format!("{} parameter(s)", params.len()),
                     span: span_to_miette(cb.span()),
-                    source_id: source,
+                    source_id: cb.span().source,
                 });
             }
             for (p, expected) in params.iter().zip(expected_params.iter()) {
@@ -67,7 +67,7 @@ pub(super) fn check_callback(
                         expected: expected.display(),
                         found: p.display(),
                         span: span_to_miette(cb.span()),
-                        source_id: source,
+                        source_id: cb.span().source,
                     });
                 }
             }

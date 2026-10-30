@@ -295,12 +295,10 @@ fn lower_module_binding(
                     span: *pat_span,
                 };
                 let sym_id = symbols.lookup(&field.name)?.id;
-                let kind = if force_derived || reads_reactive {
+                let kind = if force_derived || (!mutable && reads_reactive) {
                     BindingKind::Derived
-                } else if mutable || fold_const_hir_expr(&field_expr).is_some() {
-                    BindingKind::Source
                 } else {
-                    BindingKind::Derived
+                    BindingKind::Source
                 };
                 symbols.update_kind(
                     &field.name,
@@ -369,13 +367,11 @@ pub(super) fn lower_binding(
 
     let kind = if force_derived || (!mutable && reads_reactive) {
         BindingKind::Derived
-    } else if mutable {
-        BindingKind::Source
-    } else if let Some(folded) = fold_const_hir_expr(&lowered) {
-        lowered = folded;
-        BindingKind::Source
     } else {
-        BindingKind::Derived
+        if let Some(folded) = fold_const_hir_expr(&lowered) {
+            lowered = folded;
+        }
+        BindingKind::Source
     };
 
     symbols.update_kind(

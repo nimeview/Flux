@@ -46,7 +46,7 @@ parse → HIR → monomorphize → typecheck → IR → executor, with optional 
 |----------|----------|
 | **Bindings** | `let mut` (source), `let`/`derived` (derived or immutable source), `const`, reassignment in `on`/`watch` |
 | **Reactivity** | `watch`, `on`, `emit`, `rfn`, derived dependency graph, watch dep filtering |
-| **Functions** | `fn` (pure), return inference, generics `fn id[T](x: T) -> T`, closures `\|x\| expr` |
+| **Functions** | `fn` (snapshot reads), return inference, generics `fn id[T](x: T) -> T`, closures `\|x\| expr` |
 | **Types** | `Int`, `Float`, `Bool`, `String`, `Unit`, `[T]`, `Option[T]`, `Result[T,E]` |
 | **ADT** | `struct`, `enum` (with payload variants), `match` (simple + payload arms) |
 | **OOP** | `trait`, `impl Trait for Type` |
@@ -110,21 +110,9 @@ JIT (`flux_jit`) compiles numeric derived nodes, pure `fn` bodies, and numeric `
 
 ---
 
-## Test suite (~113 tests, 0 failures)
+## Test suite
 
-| Location | Count | Focus |
-|----------|-------|-------|
-| `flux_cli/tests/programs.rs` | 41 | All ok/fail `.fl` programs |
-| `flux_cli/tests/snapshots.rs` | 13 | Output vs `.expected` files |
-| `flux_cli/tests/stress.rs` | 13 | Large graphs (100–200 nodes), rapid updates |
-| `flux_cli/tests/jit.rs` | 19 | VM vs JIT parity (strings, enums, numeric) |
-| `flux_cli/tests/demo.rs` | 6 | Demo program behavior |
-| `flux_cli/tests/integration.rs` | 6 | Pipeline integration |
-| `flux-syntax/tests/parse.rs` | 7 | Parser |
-| `flux_hir/src/tests.rs` | 4 | HIR lowering |
-| Other crates | ~17 | fmt, wasm, resolve, repl, exec, cache, regression |
-
-**Programs:** 39+ ok, 8 fail (negative), 6 demo.
+`cargo test --workspace` exercises parser, HIR, type checker, IR, VM, JIT, CLI, LSP, and module resolution. `flux_cli/tests/programs.rs` checks 65 accepted and 20 rejected `.fl` fixtures; `flux_cli/tests/core_contract.rs` checks cross-stage type and symbol behavior. The integration suite also drives reactive sample applications and compares VM/JIT behavior.
 
 ---
 
@@ -139,7 +127,7 @@ VM remains the default executor. `flux run --jit` (or `FLUX_JIT=1` / `[run] jit 
 | Numeric `watch`/`on` | Stmt bodies with `if`/`while`/`for`/`emit` when eligible |
 | `LazyIf` deps | Static branch `Load` deps (no dual VM eval) |
 | String const, `+`, `==` | Tag 5 + intern pool; host `flux_jit_string_concat` / `flux_jit_value_eq` |
-| User enum match | Tag 6 + host store; `MakeUserEnum`, `VariantTagEq`, payload, `BindLocal` |
+| User enum match | VM fallback until branch-local binding parity is implemented |
 | `for` over arrays, structs | VM fallback (`vm_fallback` set) |
 
 `flux run --jit --verbose` prints `JitStats` (compiled count, fallback reasons, node names). JIT engines are cached per-thread keyed by `(IR hash, JIT_CACHE_VERSION)`.

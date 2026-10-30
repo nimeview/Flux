@@ -2,7 +2,7 @@
 
 use std::path::Path;
 
-use flux_diagnostics::{DiagnosticBag, SourceId};
+use flux_diagnostics::DiagnosticBag;
 use flux_resolve::LinkedProgram;
 use flux_syntax::{Item, Program};
 
@@ -16,11 +16,6 @@ pub(super) fn register_imports(
     symbols: &mut SymbolTable,
     diagnostics: &mut DiagnosticBag,
 ) -> bool {
-    let root_source = linked
-        .modules
-        .first()
-        .map(|m| m.ast.source)
-        .unwrap_or(SourceId(0));
     for import in &linked.imports {
         symbols.module_aliases.insert(import.alias.clone(), ());
         let module = &linked.modules[import.module_index];
@@ -45,7 +40,7 @@ pub(super) fn register_imports(
             let export_name = item_export_name(item).expect("pub export");
             let mangled = format!("__mod_{}__{export_name}", import.alias);
             if let Some(err) = declare_item_renamed(item, &mangled, symbols) {
-                push_duplicate(diagnostics, root_source, item, err);
+                push_duplicate(diagnostics, item, err);
             }
             if let Some(sym) = symbols.lookup(&mangled) {
                 let sym_id = sym.id;
@@ -238,7 +233,7 @@ fn lower_item_renamed(
             for v in &decl.variants {
                 symbols
                     .enum_variants
-                    .insert(v.name.name.clone(), decl.name.name.clone());
+                    .insert(v.name.name.clone(), mangled.to_string());
             }
             super::decls::lower_enum(decl, symbols).map(HirItem::Enum)
         }

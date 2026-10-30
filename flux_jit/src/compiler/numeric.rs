@@ -32,11 +32,13 @@ pub(crate) fn is_numeric_code(code: &[Inst], jit_fns: &HashSet<String>) -> bool 
             else_branch,
         } => is_numeric_code(then_branch, jit_fns) && is_numeric_code(else_branch, jit_fns),
         Inst::MakeArray(_) => true,
+        // Pattern matching currently lowers through VM-local bindings. Keep it
+        // on the reference VM until the JIT has equivalent branch-local scope.
         Inst::EnumTagEq(_)
         | Inst::VariantTagEq(_)
         | Inst::VariantPayloadGet { .. }
-        | Inst::BindLocal(_)
-        | Inst::MakeUserEnum { .. } => true,
+        | Inst::BindLocal(_) => false,
+        Inst::MakeUserEnum { .. } => true,
         Inst::MakeUserStruct { .. } | Inst::FieldGet(_) => false,
     })
 }

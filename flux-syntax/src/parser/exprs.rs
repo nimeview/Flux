@@ -113,20 +113,38 @@ pub(super) fn parse_expr(source_id: SourceId, pair: pest::iterators::Pair<'_, Ru
         Rule::float_lit => {
             let span = span_of(source_id, &pair);
             let text = pair.as_str();
-            let (digits, _suffix) = split_numeric_suffix(text);
-            Expr::Float {
+            let (digits, suffix) = split_numeric_suffix(text);
+            let value = Expr::Float {
                 value: digits.parse().expect("float literal"),
                 span,
-            }
+            };
+            suffix
+                .and_then(suffix_type)
+                .map(|ty| Expr::Cast {
+                    expr: Box::new(value.clone()),
+                    ty: ty.into(),
+                    span,
+                })
+                .unwrap_or(value)
         }
         Rule::int_lit => {
             let span = span_of(source_id, &pair);
             let text = pair.as_str();
-            let (digits, _suffix) = split_numeric_suffix(text);
-            Expr::Int {
-                value: digits.parse().expect("int literal"),
+            let (digits, suffix) = split_numeric_suffix(text);
+            let value = Expr::Int {
+                value: digits
+                    .parse()
+                    .expect("integer literal within supported range"),
                 span,
-            }
+            };
+            suffix
+                .and_then(suffix_type)
+                .map(|ty| Expr::Cast {
+                    expr: Box::new(value.clone()),
+                    ty: ty.into(),
+                    span,
+                })
+                .unwrap_or(value)
         }
         Rule::string_lit => parse_string_lit(source_id, pair),
         Rule::bool_lit => {
@@ -283,7 +301,7 @@ fn parse_chained_add(source_id: SourceId, pair: pest::iterators::Pair<'_, Rule>)
     expr
 }
 
-fn split_numeric_suffix(text: &str) -> (&str, Option<&str>) {
+pub(super) fn split_numeric_suffix(text: &str) -> (&str, Option<&str>) {
     const SUFFIXES: &[&str] = &[
         "i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64", "f32", "f64",
     ];
@@ -295,6 +313,22 @@ fn split_numeric_suffix(text: &str) -> (&str, Option<&str>) {
         }
     }
     (text, None)
+}
+
+fn suffix_type(suffix: &str) -> Option<&'static str> {
+    Some(match suffix {
+        "i8" => "Int8",
+        "i16" => "Int16",
+        "i32" => "Int32",
+        "i64" => "Int64",
+        "u8" => "UInt8",
+        "u16" => "UInt16",
+        "u32" => "UInt32",
+        "u64" => "UInt64",
+        "f32" => "Float32",
+        "f64" => "Float64",
+        _ => return None,
+    })
 }
 
 fn parse_cast_expr(source_id: SourceId, pair: pest::iterators::Pair<'_, Rule>) -> Expr {
@@ -337,6 +371,7 @@ fn parse_chained_mul(source_id: SourceId, pair: pest::iterators::Pair<'_, Rule>)
 }
 
 fn parse_unary_expr(source_id: SourceId, pair: pest::iterators::Pair<'_, Rule>) -> Expr {
+    let unary_span = span_of(source_id, &pair);
     let mut inner = pair.into_inner();
     let first = inner.next().expect("unary");
     match first.as_rule() {
@@ -346,7 +381,26 @@ fn parse_unary_expr(source_id: SourceId, pair: pest::iterators::Pair<'_, Rule>) 
                 "!" => UnaryOp::Not,
                 other => panic!("unknown unary op: {other}"),
             };
-            let expr = parse_expr(source_id, inner.next().expect("unary expr"));
+            let expr_pair = inner.next().expect("unary expr");
+            if op == UnaryOp::Neg {
+                let (digits, suffix) = split_numeric_suffix(expr_pair.as_str().trim());
+                if digits == "9223372036854775808" && suffix.is_none_or(|suffix| suffix == "i64") {
+                    let span = unary_span;
+                    let value = Expr::Int {
+                        value: i64::MIN as i128,
+                        span,
+                    };
+                    return suffix
+                        .and_then(suffix_type)
+                        .map(|ty| Expr::Cast {
+                            expr: Box::new(value.clone()),
+                            ty: ty.into(),
+                            span,
+                        })
+                        .unwrap_or(value);
+                }
+            }
+            let expr = parse_expr(source_id, expr_pair);
             let span = merge_span(span_of(source_id, &first), expr.span());
             Expr::Unary {
                 op,

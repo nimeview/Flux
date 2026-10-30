@@ -27,13 +27,11 @@ fn regression_all_fail_programs_rejected() {
             continue;
         }
         let result = if contents.contains("import ") {
-            compile_file(&path, ExecutionMode::Vm)
-                .map(|_| ())
-                .map_err(|e| e)
+            compile_file(&path, ExecutionMode::Vm).map(|_| ())
         } else {
             let display = display_path(&path);
             let source = source_from(display, contents);
-            compile(source).map(|_| ()).map_err(|e| e)
+            compile(source).map(|_| ())
         };
         match result {
             Ok(()) => panic!("regression: {} should fail compilation", path.display()),
@@ -48,7 +46,8 @@ fn regression_all_fail_programs_rejected() {
 
 #[test]
 fn regression_fail_programs_have_expected_errors() {
-    let checks: &[(&str, fn(&[FluxError]) -> bool)] = &[
+    type ErrorPredicate = fn(&[FluxError]) -> bool;
+    let checks: &[(&str, ErrorPredicate)] = &[
         ("fail/reactive/reactive_in_pure.fl", |e| {
             e.iter()
                 .any(|x| matches!(x, FluxError::ReactiveInPureContext { .. }))

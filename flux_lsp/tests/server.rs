@@ -5,16 +5,19 @@ use std::thread;
 
 use lsp_server::{Connection, Message, Notification, Request, RequestId};
 use lsp_types::notification::{
-    DidChangeTextDocument, DidOpenTextDocument, Exit, Initialized, Notification as _,
-    PublishDiagnostics,
+    DidChangeTextDocument, DidCloseTextDocument, DidOpenTextDocument, DidSaveTextDocument, Exit,
+    Initialized, Notification as _, PublishDiagnostics,
 };
-use lsp_types::request::{Completion, GotoDefinition, HoverRequest, Initialize, Request as _};
+use lsp_types::request::{
+    Completion, GotoDefinition, HoverRequest, Initialize, Rename, Request as _,
+};
 use lsp_types::{
-    CompletionParams, DidChangeTextDocumentParams, DidOpenTextDocumentParams, GotoDefinitionParams,
+    CompletionParams, DidChangeTextDocumentParams, DidCloseTextDocumentParams,
+    DidOpenTextDocumentParams, DidSaveTextDocumentParams, GotoDefinitionParams,
     GotoDefinitionResponse, HoverParams, InitializeParams, InitializedParams, PartialResultParams,
-    Position, PublishDiagnosticsParams, Range, TextDocumentContentChangeEvent,
+    Position, PublishDiagnosticsParams, Range, RenameParams, TextDocumentContentChangeEvent,
     TextDocumentIdentifier, TextDocumentItem, TextDocumentPositionParams, Url,
-    VersionedTextDocumentIdentifier, WorkDoneProgressParams,
+    VersionedTextDocumentIdentifier, WorkDoneProgressParams, WorkspaceEdit,
 };
 
 fn test_uri() -> Url {
@@ -325,6 +328,266 @@ fn incremental_edit_updates_diagnostics() {
         fixed.diagnostics
     );
     assert_eq!(fixed.version, Some(2));
+
+    shutdown(&client, handle);
+}
+
+/// A two-file project on disk; paths are canonical because the resolver
+/// reports canonical module paths.
+fn import_project(util: &str) -> (tempfile::TempDir, Url, Url) {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().canonicalize().unwrap();
+    std::fs::write(root.join("util.fl"), util).unwrap();
+    std::fs::write(root.join("main.fl"), "").unwrap();
+    let main = Url::from_file_path(root.join("main.fl")).unwrap();
+    let util = Url::from_file_path(root.join("util.fl")).unwrap();
+    (dir, main, util)
+}
+
+fn change_full(client: &Connection, uri: Url, version: i32, text: &str) {
+    client
+        .sender
+        .send(Message::Notification(Notification::new(
+            DidChangeTextDocument::METHOD.to_string(),
+            DidChangeTextDocumentParams {
+                text_document: VersionedTextDocumentIdentifier { uri, version },
+                content_changes: vec![TextDocumentContentChangeEvent {
+                    range: None,
+                    range_length: None,
+                    text: text.to_string(),
+                }],
+            },
+        )))
+        .unwrap();
+}
+
+#[test]
+fn imported_module_error_is_published_on_its_own_uri() {
+    let (_dir, main, util) = import_project("\npub fn f(a: Int) -> Int {\n  missing + a\n}\n");
+    let (client, handle) = start_server();
+    did_open_uri(
+        &client,
+        main.clone(),
+        "import util { f }\nlet x = f(1)\nlet y = x\n",
+    );
+
+    let root = recv_diagnostics(&client);
+    assert_eq!(root.uri, main);
+    assert!(
+        root.diagnostics
+            .iter()
+            .all(|d| d.message.contains("unused")),
+        "root must not carry the imported error: {:?}",
+        root.diagnostics
+    );
+    let imported = recv_diagnostics(&client);
+    assert_eq!(imported.uri, util);
+    assert_eq!(imported.diagnostics.len(), 1, "{:?}", imported.diagnostics);
+    let range = imported.diagnostics[0].range;
+    // `  missing + a` on line 2 (0-based); `missing` starts at column 2.
+    assert_eq!((range.start.line, range.start.character), (2, 2));
+    assert_eq!((range.end.line, range.end.character), (2, 9));
+
+    // Dropping the import clears the imported file's diagnostics.
+    change_full(&client, main.clone(), 2, "let y = 1\nlet z = y\n");
+    let root = recv_diagnostics(&client);
+    assert_eq!(root.uri, main);
+    let cleared = recv_diagnostics(&client);
+    assert_eq!(cleared.uri, util);
+    assert!(cleared.diagnostics.is_empty(), "{:?}", cleared.diagnostics);
+
+    shutdown(&client, handle);
+}
+
+#[test]
+fn closing_a_document_clears_its_and_imported_diagnostics() {
+    let (_dir, main, util) = import_project("pub fn f() -> Int { nope }\n");
+    let (client, handle) = start_server();
+    did_open_uri(&client, main.clone(), "let y = 1 +\nimport util { f }\n");
+    let _ = recv_diagnostics(&client);
+    change_full(&client, main.clone(), 2, "import util { f }\nlet y = f()\n");
+    let _ = recv_diagnostics(&client);
+    let imported = recv_diagnostics(&client);
+    assert_eq!(imported.uri, util);
+    assert!(!imported.diagnostics.is_empty());
+
+    client
+        .sender
+        .send(Message::Notification(Notification::new(
+            DidCloseTextDocument::METHOD.to_string(),
+            DidCloseTextDocumentParams {
+                text_document: TextDocumentIdentifier { uri: main.clone() },
+            },
+        )))
+        .unwrap();
+    let closed = recv_diagnostics(&client);
+    assert_eq!(closed.uri, main);
+    assert!(closed.diagnostics.is_empty());
+    let closed_import = recv_diagnostics(&client);
+    assert_eq!(closed_import.uri, util);
+    assert!(closed_import.diagnostics.is_empty());
+
+    shutdown(&client, handle);
+}
+
+// Positions below are UTF-16 code units: `é` is 1 unit (2 bytes) and `𝒳`
+// (U+1D4B3) is 2 units (4 bytes, 1 scalar), so byte- or scalar-based columns
+// would land elsewhere.
+
+#[test]
+fn diagnostic_range_counts_utf16_units() {
+    let (client, handle) = start_server();
+    did_open(&client, "let s = \"é𝒳\" + y\n");
+    let diags = recv_diagnostics(&client);
+    assert_eq!(diags.diagnostics.len(), 1, "{:?}", diags.diagnostics);
+    let range = diags.diagnostics[0].range;
+    assert_eq!(
+        range,
+        Range::new(Position::new(0, 16), Position::new(0, 17))
+    );
+    shutdown(&client, handle);
+}
+
+#[test]
+fn rename_edits_use_utf16_columns() {
+    let (client, handle) = start_server();
+    did_open(&client, "let cd = \"é\"\nlet t = \"é𝒳\" + cd\n");
+    let _ = recv_diagnostics(&client);
+    client
+        .sender
+        .send(Message::Request(Request::new(
+            RequestId::from(7),
+            Rename::METHOD.to_string(),
+            serde_json::to_value(RenameParams {
+                text_document_position: TextDocumentPositionParams {
+                    text_document: TextDocumentIdentifier { uri: test_uri() },
+                    position: Position::new(1, 16),
+                },
+                new_name: "ef".to_string(),
+                work_done_progress_params: WorkDoneProgressParams::default(),
+            })
+            .unwrap(),
+        )))
+        .unwrap();
+    let resp = loop {
+        match client.receiver.recv().expect("expected a message") {
+            Message::Response(resp) if resp.id == RequestId::from(7) => break resp,
+            _ => continue,
+        }
+    };
+    let edit: WorkspaceEdit = serde_json::from_value(resp.result.expect("rename result")).unwrap();
+    let mut ranges: Vec<Range> = edit
+        .changes
+        .expect("changes")
+        .values()
+        .flatten()
+        .map(|e| e.range)
+        .collect();
+    ranges.sort_by_key(|r| (r.start.line, r.start.character));
+    assert_eq!(
+        ranges,
+        vec![
+            Range::new(Position::new(0, 4), Position::new(0, 6)),
+            Range::new(Position::new(1, 16), Position::new(1, 18)),
+        ]
+    );
+    shutdown(&client, handle);
+}
+
+#[test]
+fn incremental_edit_after_astral_char_uses_utf16() {
+    let (client, handle) = start_server();
+    did_open(&client, "let s = \"𝒳a\"\nlet t = s\n");
+    let _ = recv_diagnostics(&client);
+    // Insert `b` between `𝒳` (units 9-10) and `a` (unit 11).
+    client
+        .sender
+        .send(Message::Notification(Notification::new(
+            DidChangeTextDocument::METHOD.to_string(),
+            DidChangeTextDocumentParams {
+                text_document: VersionedTextDocumentIdentifier {
+                    uri: test_uri(),
+                    version: 2,
+                },
+                content_changes: vec![TextDocumentContentChangeEvent {
+                    range: Some(Range::new(Position::new(0, 11), Position::new(0, 11))),
+                    range_length: None,
+                    text: "b".to_string(),
+                }],
+            },
+        )))
+        .unwrap();
+    let diags = recv_diagnostics(&client);
+    assert!(
+        diags
+            .diagnostics
+            .iter()
+            .all(|d| d.severity != Some(lsp_types::DiagnosticSeverity::ERROR)),
+        "edit landed in the wrong place: {:?}",
+        diags.diagnostics
+    );
+    shutdown(&client, handle);
+}
+
+#[test]
+fn saving_an_import_refreshes_the_unchanged_root() {
+    let (dir, main, util) = import_project("pub fn f() -> Int { 1 }\n");
+    let (client, handle) = start_server();
+    let root_text = "import util { f }\nlet x = f()\nlet y = x\n";
+    did_open_uri(&client, main.clone(), root_text);
+    let clean = recv_diagnostics(&client);
+    assert_eq!(clean.uri, main);
+    assert!(clean
+        .diagnostics
+        .iter()
+        .all(|d| d.severity != Some(lsp_types::DiagnosticSeverity::ERROR)));
+
+    // The import is opened, edited to break the root's use of `f`, and saved.
+    let broken = "pub fn f(a: Int) -> Int { a }\n";
+    did_open_uri(&client, util.clone(), "pub fn f() -> Int { 1 }\n");
+    let _ = recv_diagnostics(&client);
+    std::fs::write(dir.path().canonicalize().unwrap().join("util.fl"), broken).unwrap();
+    change_full(&client, util.clone(), 2, broken);
+    client
+        .sender
+        .send(Message::Notification(Notification::new(
+            DidSaveTextDocument::METHOD.to_string(),
+            DidSaveTextDocumentParams {
+                text_document: TextDocumentIdentifier { uri: util.clone() },
+                text: None,
+            },
+        )))
+        .unwrap();
+
+    // The root was never edited, yet a fresh publish for it reports the error.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    let refreshed = loop {
+        let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+        let msg = client
+            .receiver
+            .recv_timeout(remaining)
+            .expect("root was not re-published after its import changed");
+        let Message::Notification(n) = msg else {
+            continue;
+        };
+        if n.method != PublishDiagnostics::METHOD {
+            continue;
+        }
+        let diags: PublishDiagnosticsParams = serde_json::from_value(n.params).unwrap();
+        if diags.uri == main
+            && diags
+                .diagnostics
+                .iter()
+                .any(|d| d.severity == Some(lsp_types::DiagnosticSeverity::ERROR))
+        {
+            break diags;
+        }
+    };
+    assert_eq!(
+        refreshed.diagnostics[0].range.start.line, 1,
+        "{:?}",
+        refreshed.diagnostics
+    );
 
     shutdown(&client, handle);
 }

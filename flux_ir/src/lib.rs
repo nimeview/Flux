@@ -55,7 +55,7 @@ pub struct IrNode {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum IrValue {
-    Int(i64),
+    Int(i128),
     Float(f64),
     Bool(bool),
     String(String),
