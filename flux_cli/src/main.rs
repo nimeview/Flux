@@ -5,8 +5,7 @@ use clap::{Parser, Subcommand};
 use flux_cli::manifest::{init_project, PackageManifest};
 use flux_cli::output::{print_jit_stats, print_runtime_with, report_failure, report_warnings};
 use flux_cli::pipeline::{
-    check_file as typecheck_file, compile_file_with_options, compile_with_mode, source_from,
-    CompileOptions,
+    check_file as typecheck_file, compile_file_with_options, source_from, CompileOptions,
 };
 use flux_cli::repl;
 use flux_diagnostics::SourceFile;
@@ -85,7 +84,7 @@ enum Commands {
     },
     /// Run the full stdio Language Server (diagnostics + hover + completion)
     LspServer,
-    /// Compile to WASM (stub backend)
+    /// Experimental stub: type-checks the file, but no WASM code generation exists yet (always fails)
     Wasm {
         /// Path to the source file
         file: String,
@@ -157,23 +156,31 @@ fn read_source(path: &str) -> miette::Result<SourceFile> {
 }
 
 /// Resolves the file to run: the explicit `file` argument if given, otherwise
-/// the entry point declared in `./flux.toml`.
+/// the entry point declared in the nearest `flux.toml` in the current
+/// directory or one of its parents.
 fn resolve_run_target(file: Option<&str>) -> Result<String, ()> {
     if let Some(file) = file {
         return Ok(file.to_string());
     }
-    let manifest_path = std::path::Path::new("flux.toml");
-    if !manifest_path.exists() {
-        eprintln!("no file given and no flux.toml found in the current directory");
+    let Some(manifest_path) = find_manifest() else {
+        eprintln!("no file given and no flux.toml found in this directory or any parent");
         return Err(());
-    }
-    let manifest = PackageManifest::load(manifest_path).map_err(|e| {
+    };
+    let manifest = PackageManifest::load(&manifest_path).map_err(|e| {
         eprintln!("{e:?}");
     })?;
     Ok(manifest
-        .entry_path(manifest_path)
+        .entry_path(&manifest_path)
         .to_string_lossy()
         .into_owned())
+}
+
+/// The nearest `flux.toml` in the current directory or one of its parents.
+fn find_manifest() -> Option<std::path::PathBuf> {
+    let cwd = std::env::current_dir().ok()?;
+    cwd.ancestors()
+        .map(|dir| dir.join("flux.toml"))
+        .find(|path| path.is_file())
 }
 
 /// Engine choice: `--vm` > `--jit` > `FLUX_JIT=0|1` > `flux.toml` `[run] jit` > VM.
@@ -189,13 +196,9 @@ fn use_jit(cli_jit: bool, cli_vm: bool) -> bool {
         Some("1") => return true,
         _ => {}
     }
-    let manifest_path = std::path::Path::new("flux.toml");
-    if manifest_path.exists() {
-        if let Ok(manifest) = PackageManifest::load(manifest_path) {
-            return manifest.run.jit;
-        }
-    }
-    false
+    find_manifest()
+        .and_then(|path| PackageManifest::load(&path).ok())
+        .is_some_and(|manifest| manifest.run.jit)
 }
 
 fn run_file(
@@ -303,13 +306,27 @@ fn wasm_file(path: &str) -> Result<(), ()> {
     let source = read_source(path).map_err(|e| {
         eprintln!("{e:?}");
     })?;
-    match compile_with_mode(source, ExecutionMode::Vm) {
-        Ok(compiled) => {
-            let (status, bytes) = compile_to_wasm(&compiled.executor.program);
-            println!("wasm backend: {status:?}, {} bytes", bytes.len());
-            Ok(())
+    // Type-check and lower only: the program must not run (or touch the
+    // cache) just to discover that no WASM backend exists yet.
+    let checked = match typecheck_file(std::path::Path::new(path)) {
+        Ok(checked) => checked,
+        Err(failed) => {
+            return report_failure(failed.source(), &failed.sources, &failed.diagnostics)
         }
-        Err(failed) => report_failure(failed.source(), &failed.sources, &failed.diagnostics),
+    };
+    let mut diagnostics = flux_diagnostics::DiagnosticBag::new();
+    match flux_ir::lower_to_ir(&checked.hir, source.id, &mut diagnostics) {
+        Some(program) => {
+            let (status, bytes) = compile_to_wasm(&program);
+            // Never report success for output that omits the program.
+            eprintln!(
+                "error: the WASM backend is an experimental stub ({status:?}): it produces only \
+                 an empty {}-byte module and compiles none of `{path}`; nothing was written",
+                bytes.len()
+            );
+            Err(())
+        }
+        None => report_failure(&source, std::slice::from_ref(&source), &diagnostics),
     }
 }
 

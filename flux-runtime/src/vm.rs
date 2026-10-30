@@ -54,7 +54,7 @@ pub(crate) fn resolve_load(
     RuntimeValue::Unit
 }
 
-pub(crate) fn validate_program(program: &CompiledProgram) -> Result<(), String> {
+pub fn validate_program(program: &CompiledProgram) -> Result<(), String> {
     let graph_names: HashSet<String> = program.nodes.iter().map(|n| n.name.clone()).collect();
     let fn_names: HashSet<String> = program.functions.iter().map(|f| f.name.clone()).collect();
 

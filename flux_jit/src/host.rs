@@ -168,7 +168,10 @@ pub extern "C" fn flux_jit_range(a: u64, b: u64, c: u64, argc: u64) -> TaggedVal
         2 => (a as i64, b as i64, 1),
         _ => (a as i64, b as i64, c as i64),
     };
-    TaggedVal::from_array_id(make_int_range_array(start, end, step))
+    match make_int_range_array(start, end, step) {
+        Ok(id) => TaggedVal::from_array_id(id),
+        Err(e) => TaggedVal::error(e),
+    }
 }
 
 /// Call a pure builtin from JIT-compiled code. Args are read from `slots` at indices
@@ -193,9 +196,11 @@ pub extern "C" fn flux_jit_call_builtin(
             args.push(tagged_to_value(TaggedVal { tag, data }));
         }
     }
-    flux_std::call_builtin(&name, &args)
-        .map(|v| value_to_tagged(&v))
-        .unwrap_or(TaggedVal::UNIT)
+    match flux_std::call_builtin_checked(&name, &args) {
+        Some(Ok(v)) => value_to_tagged(&v),
+        Some(Err(e)) => TaggedVal::error(e),
+        None => TaggedVal::UNIT,
+    }
 }
 
 #[no_mangle]

@@ -53,6 +53,8 @@ pub enum ArithError {
     InvalidCast = 4,
     /// Operand kinds the type checker should have rejected.
     InvalidOperands = 5,
+    /// A collection would exceed [`crate::MAX_COLLECTION_LEN`] elements.
+    AllocationLimit = 6,
 }
 
 impl ArithError {
@@ -62,6 +64,7 @@ impl ArithError {
             2 => Self::Overflow,
             3 => Self::CastOutOfRange,
             4 => Self::InvalidCast,
+            6 => Self::AllocationLimit,
             _ => Self::InvalidOperands,
         }
     }
@@ -73,6 +76,7 @@ impl ArithError {
             Self::CastOutOfRange => "numeric cast out of range",
             Self::InvalidCast => "invalid cast",
             Self::InvalidOperands => "invalid operands for arithmetic",
+            Self::AllocationLimit => "allocation limit exceeded",
         }
     }
 }

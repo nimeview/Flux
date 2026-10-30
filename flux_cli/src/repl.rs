@@ -40,7 +40,8 @@ pub fn run(jit: bool) -> io::Result<()> {
     let mut session = ReplSession::new(jit);
 
     eprintln!(
-        "Flux REPL (v0.6){}. Type :help for commands.\n",
+        "Flux REPL (v{}){}. Type :help for commands.\n",
+        env!("CARGO_PKG_VERSION"),
         if jit { " [JIT]" } else { "" }
     );
 

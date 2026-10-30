@@ -79,6 +79,7 @@ impl JitBackend {
         args: &[RuntimeValue],
         graph: &ReactiveGraph,
     ) -> Option<JitResult> {
+        let _heap = flux_value::heap_scope();
         let mut slots = build_slot_buffer(&self.engine, graph);
         for (i, arg) in args.iter().enumerate() {
             let tv = flux_value::value_to_tagged(arg);
@@ -97,6 +98,8 @@ impl JitBackend {
         graph: &ReactiveGraph,
         param: Option<&RuntimeValue>,
     ) -> Option<HandlerResult> {
+        // The returned slots hold tagged handles: the caller keeps a
+        // `flux_value::heap_scope` open until it has read them.
         let mut slots = build_slot_buffer(&self.engine, graph);
         let param_tv = param.map(flux_value::value_to_tagged);
         slots = self.engine.build_stmt_slots(key, &slots, param_tv);
@@ -140,6 +143,7 @@ impl JitBackend {
         if self.engine.vm_fallback.contains(name) {
             return None;
         }
+        let _heap = flux_value::heap_scope();
         let slots = build_slot_buffer(&self.engine, graph);
         self.engine.eval_expr_with(name, &slots).map(from_tagged)
     }

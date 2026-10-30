@@ -20,6 +20,16 @@ All notable changes to Flux are documented here.
 - All bundled programs migrated to v2 syntax
 
 ### Fixed
+- Diagnostics from imported modules render against their own file, line, and snippet (CLI and LSP); missing-module and cyclic-import errors point at the `import`
+- LSP positions use UTF-16 code units; diagnostics for imported files are published on their own URI and cleared on close; saving an import refreshes open dependents
+- JIT no longer leaks tagged arrays/enums/strings per evaluation (scoped heap reclamation)
+- `range` cannot overflow near `Int64` limits; more than 10,000,000 elements is the runtime error `allocation limit exceeded`
+- Compile cache: entries are scoped to a compiler fingerprint and checksummed; corrupt, truncated, foreign, or invalid entries recompile; cache files are never named after source text
+- `flux fmt` no longer drops comments (it refuses to format a file with a comment inside a declaration), and no longer emits unparsable `on` handlers, trailing struct/enum commas, `2.0` as `2`, or imports without their `as` alias
+- `print`/`println` write a string's text instead of its quoted form
+- `""` is a plain empty string (was an empty interpolation that broke `let mut s = ""` inside handlers)
+- `flux run`/`check` find `flux.toml` from subdirectories; the `flux init` template is warning-free and shows events, derived values, and `watch`
+- `flux wasm` fails with an explicit "experimental stub" error instead of reporting success, and no longer runs the program
 - Compile cache stale hits when dependency modules change
 - Full file compilation now regenerates or reuses IR after an analysis-cache hit
 - Standard-library imports no longer hide local modules with the same name

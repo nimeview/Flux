@@ -19,7 +19,9 @@ pub fn init_project(dir: &Path, name: &str) -> miette::Result<()> {
         fs::create_dir_all(parent)
             .map_err(|e| miette::miette!("failed to create {}: {e}", parent.display()))?;
     }
-    let main_fl = format!("// {name}\n\nlet mut x = 0\n");
+    let main_fl = format!(
+        "// {name}\n\nimport io {{ println }}\n\nevent Click\n\nlet mut count = 0\n\nlet doubled = count * 2\n\non Click {{\n    count = count + 1\n}}\n\nwatch doubled {{\n    println(\"doubled changed\")\n}}\n"
+    );
     fs::write(&entry_path, main_fl)
         .map_err(|e| miette::miette!("failed to write {}: {e}", entry_path.display()))?;
     flux_driver::ensure_project_dirs(dir)

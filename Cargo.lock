@@ -596,6 +596,7 @@ dependencies = [
  "flux_runtime",
  "flux_syntax",
  "flux_types",
+ "flux_value",
  "flux_wasm",
  "miette",
  "serde_json",

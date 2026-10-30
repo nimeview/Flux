@@ -1,4 +1,4 @@
-# Flux Language Specification (v1.0 draft)
+# Flux Language Specification (draft)
 
 Flux is a statically typed language with **built-in reactivity**: module-level bindings form a dataflow graph, and `watch` / `on` / `rfn` integrate declarative updates with imperative code.
 
@@ -47,6 +47,7 @@ The VM is the reference; the JIT must produce the same value or error, or fall b
 - Mixed `Int`/`Float` arithmetic and comparison promote the integer to `Float64`. Operators on two integers keep the integer type, so `Int / Int` is `Int`: division by zero is a runtime error rather than a value of another type.
 - Casts are checked: an integer out of the target range, a negative value cast to an unsigned type, or a `NaN`/infinite/out-of-range float cast to an integer is the runtime error `numeric cast out of range`. Float → integer casts truncate toward zero.
 - A runtime error stops the current evaluation and is reported as `runtime error: <message> in <context>`, where the context names the binding, `watch`, or `on` handler. Statements after the failing one do not run. If the error happens during module initialization, `flux run` exits non-zero. Out-of-range integer *literals* are rejected at parse time.
+- `range` never overflows near the `Int64` limits. A range longer than 10,000,000 elements is the runtime error `allocation limit exceeded`, not an out-of-memory abort.
 
 ```flux
 import collections
@@ -147,7 +148,7 @@ Arithmetic (`+ - * / %`), comparisons, boolean ops (`&&`, `||`, `!`), `if e { a 
 
 `let Point { x, y } = pt` binds struct fields from a value.
 
-## 6. Standard library (stable v1.0)
+## 6. Standard library
 
 Standard-library symbols are **not** in the global prelude. Import the module you need:
 

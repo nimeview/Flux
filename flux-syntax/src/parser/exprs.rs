@@ -513,13 +513,21 @@ fn parse_string_lit(source_id: SourceId, pair: pest::iterators::Pair<'_, Rule>) 
             (_, part) => merged.push(part),
         }
     }
-    if merged.len() == 1 {
-        if let StringPart::Text(text) = &merged[0] {
+    // `""` has no parts; it is a plain (empty) literal, not an interpolation.
+    match merged.as_slice() {
+        [] => {
+            return Expr::String {
+                value: String::new(),
+                span,
+            }
+        }
+        [StringPart::Text(text)] => {
             return Expr::String {
                 value: text.clone(),
                 span,
             };
         }
+        _ => {}
     }
     Expr::InterpolatedString {
         parts: merged,

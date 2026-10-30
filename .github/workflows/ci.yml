@@ -1,5 +1,9 @@
 name: CI
 
+# Release gate for Flux Core. Supported MVP platforms: Linux (ubuntu-latest)
+# and macOS (macos-15). Every build uses `--locked` so a clean checkout
+# reproduces the committed Cargo.lock.
+
 on:
   push:
     branches: ["main", "master", "workspace-refresh"]
@@ -32,11 +36,52 @@ jobs:
           key: ${{ matrix.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: ${{ matrix.os }}-cargo-
 
-      - name: Run tests
-        run: cargo test --workspace --no-fail-fast
+      - name: Run tests (all targets)
+        run: cargo test --workspace --all-targets --locked --no-fail-fast
+
+  release:
+    name: Release build + quick-start (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-15]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ matrix.os }}-cargo-release-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ matrix.os }}-cargo-release-
 
       - name: Release build
-        run: cargo build --workspace --release
+        run: cargo build --workspace --release --locked
+
+      # README quick-start against the release binary: init, check (no
+      # warnings), run from the root and a subdirectory, fmt, wasm stub.
+      - name: Quick-start smoke test
+        run: cargo test -p flux_cli --release --locked --test quickstart
+
+      - name: Release binary runs a project
+        shell: bash
+        run: |
+          set -euo pipefail
+          flux="$PWD/target/release/flux"
+          work="$(mktemp -d)"
+          cd "$work"
+          "$flux" init smoke
+          cd smoke
+          "$flux" check
+          "$flux" run --quiet | tee run.out
+          grep -q "count = 0" run.out
 
   jit:
     name: JIT (${{ matrix.os }})
@@ -62,10 +107,10 @@ jobs:
           restore-keys: ${{ matrix.os }}-cargo-jit-
 
       - name: flux_jit unit tests
-        run: cargo test -p flux_jit --no-fail-fast -- --test-threads=1
+        run: cargo test -p flux_jit --locked --no-fail-fast -- --test-threads=1
 
       - name: JIT parity tests
-        run: cargo test -p flux_cli --test jit --no-fail-fast -- --test-threads=1
+        run: cargo test -p flux_cli --locked --test jit --test numeric_contract --no-fail-fast -- --test-threads=1
 
   clippy:
     name: Clippy
@@ -88,8 +133,9 @@ jobs:
           key: ubuntu-cargo-clippy-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: ubuntu-cargo-clippy-
 
-      - name: Clippy
-        run: cargo clippy --workspace -- -D warnings
+      # Tests and benches are linted too; the workspace is clean under this.
+      - name: Clippy (all targets)
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
   fmt:
     name: Format
@@ -106,13 +152,13 @@ jobs:
         run: cargo fmt --all -- --check
 
   coverage:
-    name: Coverage
+    name: Coverage (baseline, no threshold)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Rust nightly + llvm-tools
-        uses: dtolnay/rust-toolchain@nightly
+      - name: Install Rust toolchain + llvm-tools
+        uses: dtolnay/rust-toolchain@stable
         with:
           components: llvm-tools-preview
 
@@ -129,12 +175,25 @@ jobs:
       - name: Install cargo-llvm-cov
         run: cargo install cargo-llvm-cov --locked
 
-      # Threshold enforcement can be enabled once baseline coverage is established.
-      - name: Generate code coverage
-        run: cargo llvm-cov --workspace --lcov --output-path lcov.info
+      # A threshold is added only after this baseline has been reviewed.
+      - name: Generate coverage
+        run: cargo llvm-cov --workspace --locked --lcov --output-path lcov.info
 
-      - name: Coverage summary
-        run: cargo llvm-cov --workspace --summary-only
+      - name: Publish coverage summary
+        shell: bash
+        run: |
+          {
+            echo "## Coverage baseline"
+            echo '```'
+            cargo llvm-cov report --summary-only
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload lcov report
+        uses: actions/upload-artifact@v4
+        with:
+          name: lcov
+          path: lcov.info
 
   audit:
     name: Security audit
@@ -148,6 +207,24 @@ jobs:
       - name: Install cargo-audit
         run: cargo install cargo-audit --locked
 
+      # Policy (RELEASE.md): warn, never block — but never silent either. The
+      # result always goes to the run summary; a failure adds a warning annotation.
       - name: Run cargo audit
-        run: cargo audit
+        id: audit
         continue-on-error: true
+        shell: bash
+        run: cargo audit 2>&1 | tee audit.txt; exit "${PIPESTATUS[0]}"
+
+      - name: Report audit status
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "## Security audit: ${{ steps.audit.outcome }}"
+            echo '```'
+            cat audit.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ "${{ steps.audit.outcome }}" != "success" ]; then
+            echo "::warning title=cargo audit::cargo audit reported problems; see the run summary"
+          fi

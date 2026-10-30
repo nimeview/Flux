@@ -315,7 +315,8 @@ pub(crate) fn lower_insts(
                 let range_ref = module.declare_func_in_func(host_funcs.range, b.func);
                 let call = b.ins().call(range_ref, &[a, bb, c, argc_v]);
                 let results = b.inst_results(call);
-                stack.push((results[0], results[1]));
+                let pair = (results[0], results[1]);
+                stack.push(abort_on_error(pair, b));
             }
 
             Inst::Call { name, argc }
@@ -339,7 +340,8 @@ pub(crate) fn lower_insts(
                     .ins()
                     .call(builtin_ref, &[name_v, slots_ptr, base_v, argc_v]);
                 let results = b.inst_results(call);
-                stack.push((results[0], results[1]));
+                let pair = (results[0], results[1]);
+                stack.push(abort_on_error(pair, b));
             }
 
             Inst::Cast { ty } => {

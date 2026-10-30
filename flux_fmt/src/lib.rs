@@ -1,25 +1,149 @@
 //! Flux source formatter (v0.5).
 
-use flux_diagnostics::{DiagnosticBag, SourceId};
+use flux_diagnostics::{span_to_miette, DiagnosticBag, FluxError, SourceId, Span};
 use flux_syntax::{parse_program, Item, Stmt};
 
 /// Format Flux source. Returns formatted text, or diagnostics on parse failure.
+///
+/// Formatting never drops text: comments between top-level items (leading,
+/// same-line trailing, and end-of-file) are kept in place. A comment inside an
+/// item cannot be placed yet, so such input is rejected and left unchanged.
 pub fn format_source(input: &str) -> Result<String, DiagnosticBag> {
     let mut diagnostics = DiagnosticBag::new();
     let Some(program) = parse_program(SourceId(0), input, &mut diagnostics) else {
         return Err(diagnostics);
     };
+    let all_comments = scan_comments(input);
+    let spans: Vec<Span> = program
+        .items
+        .iter()
+        .map(|item| trim_trivia(input, item_span(item), &all_comments))
+        .collect();
+    let mut comments = all_comments.into_iter().peekable();
     let mut out = String::new();
     for (i, item) in program.items.iter().enumerate() {
+        let span = spans[i];
         if i > 0 {
             out.push('\n');
         }
+        while let Some(c) = comments.next_if(|c| c.start < span.start) {
+            out.push_str(&input[c.start..c.end]);
+            out.push('\n');
+            // Keep one blank line that separated the comment from what follows.
+            let next = comments
+                .peek()
+                .map_or(span.start, |n| n.start.min(span.start));
+            if input[c.end..next].matches('\n').count() > 1 {
+                out.push('\n');
+            }
+        }
+        if let Some(inside) = comments.next_if(|c| c.start < span.end) {
+            let mut diagnostics = DiagnosticBag::new();
+            diagnostics.push(FluxError::Parse {
+                message: "fmt cannot preserve a comment inside a declaration yet; \
+                          the file was left unchanged"
+                    .into(),
+                span: span_to_miette(Span::new(SourceId(0), inside.start, inside.end)),
+                source_id: SourceId(0),
+            });
+            return Err(diagnostics);
+        }
         format_item(item, &mut out, 0);
+        let next_start = spans.get(i + 1).map_or(input.len(), |s| s.start);
+        let line_end = input[span.end..]
+            .find('\n')
+            .map_or(input.len(), |n| span.end + n);
+        if let Some(c) = comments.next_if(|c| c.start < line_end.min(next_start)) {
+            // Same-line trailing comment: re-attach to the item's last line.
+            if out.ends_with('\n') {
+                out.pop();
+            }
+            out.push(' ');
+            out.push_str(&input[c.start..c.end]);
+            out.push('\n');
+        }
+    }
+    let trailing: Vec<_> = comments.collect();
+    if !trailing.is_empty() && !out.is_empty() {
+        out.push('\n');
+    }
+    for c in trailing {
+        out.push_str(&input[c.start..c.end]);
+        out.push('\n');
     }
     if !out.ends_with('\n') {
         out.push('\n');
     }
     Ok(out)
+}
+
+/// Byte range of a `// …` comment (without its newline).
+struct Comment {
+    start: usize,
+    end: usize,
+}
+
+/// Finds `//` comments, skipping string literals (with `\` escapes).
+fn scan_comments(input: &str) -> Vec<Comment> {
+    let bytes = input.as_bytes();
+    let mut out = Vec::new();
+    let mut i = 0;
+    let mut in_string = false;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'\\' if in_string => i += 1,
+            b'"' => in_string = !in_string,
+            b'/' if !in_string && bytes.get(i + 1) == Some(&b'/') => {
+                let end = input[i..].find('\n').map_or(input.len(), |n| i + n);
+                out.push(Comment {
+                    start: i,
+                    end: input[i..end].trim_end().len() + i,
+                });
+                i = end;
+                continue;
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    out
+}
+
+/// Item spans from the parser run through trailing whitespace and comments up
+/// to the next item; shrink `span` to end at its last real token.
+fn trim_trivia(input: &str, mut span: Span, comments: &[Comment]) -> Span {
+    let bytes = input.as_bytes();
+    while span.end > span.start {
+        let last = span.end - 1;
+        if let Some(c) = comments.iter().find(|c| c.start <= last && last < c.end) {
+            span.end = c.start;
+        } else if bytes[last].is_ascii_whitespace() {
+            span.end = last;
+        } else {
+            break;
+        }
+    }
+    span
+}
+
+fn item_span(item: &Item) -> Span {
+    match item {
+        Item::Import(d) => d.span,
+        Item::TypeAlias(d) => d.span,
+        Item::Struct(d) => d.span,
+        Item::Enum(d) => d.span,
+        Item::Trait(d) => d.span,
+        Item::Impl(d) => d.span,
+        Item::Event(d) => d.span,
+        Item::Fn(d) => d.span,
+        Item::RFn(d) => d.span,
+        Item::Derived(d) => d.span,
+        Item::Const(d) => d.span,
+        Item::Let(d) => d.span,
+        Item::Watch(d) => d.span,
+        Item::On(d) => d.span,
+        Item::If(d) => d.span,
+    }
 }
 
 fn pub_prefix(pub_: bool) -> &'static str {
@@ -40,11 +164,16 @@ fn format_item(item: &Item, out: &mut String, level: usize) {
     match item {
         Item::Import(i) => {
             indent(out, level);
+            let alias = i
+                .alias
+                .as_ref()
+                .map(|a| format!(" as {a}"))
+                .unwrap_or_default();
             if i.symbols.is_empty() {
-                out.push_str(&format!("import {}\n", i.path));
+                out.push_str(&format!("import {}{alias}\n", i.path));
             } else {
                 out.push_str(&format!(
-                    "import {} {{ {} }}\n",
+                    "import {}{alias} {{ {} }}\n",
                     i.path,
                     i.symbols.join(", ")
                 ));
@@ -82,9 +211,15 @@ fn format_item(item: &Item, out: &mut String, level: usize) {
                 format!("[{}]", s.type_params.join(", "))
             };
             out.push_str(&format!("{prefix}struct {}{} {{\n", s.name.name, params));
-            for f in &s.fields {
+            // The grammar has no trailing comma after the last field.
+            for (i, f) in s.fields.iter().enumerate() {
                 indent(out, level + 1);
-                out.push_str(&format!("{}: {},\n", f.name.name, type_name_fmt(&f.ty)));
+                let comma = if i + 1 < s.fields.len() { "," } else { "" };
+                out.push_str(&format!(
+                    "{}: {}{comma}\n",
+                    f.name.name,
+                    type_name_fmt(&f.ty)
+                ));
             }
             indent(out, level);
             out.push_str("}\n");
@@ -93,11 +228,12 @@ fn format_item(item: &Item, out: &mut String, level: usize) {
             indent(out, level);
             let prefix = pub_prefix(e.pub_);
             out.push_str(&format!("{prefix}enum {} {{\n", e.name.name));
-            for v in &e.variants {
+            for (i, v) in e.variants.iter().enumerate() {
                 indent(out, level + 1);
+                let comma = if i + 1 < e.variants.len() { "," } else { "" };
                 match &v.payload {
                     Some(flux_syntax::EnumPayload::Tuple(t)) => {
-                        out.push_str(&format!("{}({}),\n", v.name.name, type_name_fmt(t)));
+                        out.push_str(&format!("{}({}){comma}\n", v.name.name, type_name_fmt(t)));
                     }
                     Some(flux_syntax::EnumPayload::Struct(fields)) => {
                         let fs = fields
@@ -105,9 +241,9 @@ fn format_item(item: &Item, out: &mut String, level: usize) {
                             .map(|(n, t)| format!("{}: {}", n.name, type_name_fmt(t)))
                             .collect::<Vec<_>>()
                             .join(", ");
-                        out.push_str(&format!("{} {{ {fs} }},\n", v.name.name));
+                        out.push_str(&format!("{} {{ {fs} }}{comma}\n", v.name.name));
                     }
-                    None => out.push_str(&format!("{},\n", v.name.name)),
+                    None => out.push_str(&format!("{}{comma}\n", v.name.name)),
                 }
             }
             indent(out, level);
@@ -189,7 +325,11 @@ fn format_item(item: &Item, out: &mut String, level: usize) {
                 .map(|p| format!("{}: {}", p.name.name, type_name_fmt(&p.ty)))
                 .collect::<Vec<_>>()
                 .join(", ");
-            out.push_str(&format!("{prefix}event {}({})\n", e.name.name, params));
+            if params.is_empty() {
+                out.push_str(&format!("{prefix}event {}\n", e.name.name));
+            } else {
+                out.push_str(&format!("{prefix}event {}({})\n", e.name.name, params));
+            }
         }
         Item::Derived(d) => {
             indent(out, level);
@@ -235,15 +375,16 @@ fn format_item(item: &Item, out: &mut String, level: usize) {
         }
         Item::On(o) => {
             indent(out, level);
+            // Handler syntax is `on E { stmts }` or `on E { p -> stmts }`.
             let param = o
                 .param
                 .as_ref()
-                .map(|p| format!("{} -> ", p.name))
+                .map(|p| format!(" {} ->", p.name))
                 .unwrap_or_default();
-            out.push_str(&format!("on {} {{ {param}{{\n", o.event.name));
+            out.push_str(&format!("on {} {{{param}\n", o.event.name));
             format_block(&o.body, out, level + 1);
             indent(out, level);
-            out.push_str("} }\n");
+            out.push_str("}\n");
         }
         Item::If(i) => format_if_stmt(i, out, level),
     }
@@ -368,15 +509,16 @@ fn format_stmt(stmt: &Stmt, out: &mut String, level: usize) {
         }
         Stmt::On(o) => {
             indent(out, level);
+            // Handler syntax is `on E { stmts }` or `on E { p -> stmts }`.
             let param = o
                 .param
                 .as_ref()
-                .map(|p| format!("{} -> ", p.name))
+                .map(|p| format!(" {} ->", p.name))
                 .unwrap_or_default();
-            out.push_str(&format!("on {} {{ {param}{{\n", o.event.name));
+            out.push_str(&format!("on {} {{{param}\n", o.event.name));
             format_block(&o.body, out, level + 1);
             indent(out, level);
-            out.push_str("} }\n");
+            out.push_str("}\n");
         }
     }
 }
@@ -433,7 +575,15 @@ fn type_name_fmt(ty: &flux_syntax::TypeName) -> String {
 fn expr_fmt(expr: &flux_syntax::Expr) -> String {
     match expr {
         flux_syntax::Expr::Int { value, .. } => value.to_string(),
-        flux_syntax::Expr::Float { value, .. } => value.to_string(),
+        // Keep the `.`: `2.0` printed as `2` would turn a Float into an Int.
+        flux_syntax::Expr::Float { value, .. } => {
+            let text = value.to_string();
+            if text.contains('.') {
+                text
+            } else {
+                format!("{text}.0")
+            }
+        }
         flux_syntax::Expr::Bool { value, .. } => value.to_string(),
         flux_syntax::Expr::String { value, .. } => format!("\"{value}\""),
         flux_syntax::Expr::InterpolatedString { parts, .. } => {

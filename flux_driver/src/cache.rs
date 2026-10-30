@@ -17,7 +17,12 @@ use sha2::{Digest, Sha256};
 use crate::paths::{cache_dir, ensure_project_dirs};
 
 const CACHE_MAGIC: &[u8; 6] = b"FLXIR\0";
-const CACHE_VERSION: u8 = 2;
+/// Blob layout version: magic, version, fingerprint length + bytes, SHA-256 of
+/// the payload, payload.
+const CACHE_VERSION: u8 = 3;
+
+/// Identity of the compiler that wrote a cache entry; see `build.rs`.
+pub const COMPILER_FINGERPRINT: &str = env!("FLUX_COMPILER_FINGERPRINT");
 
 #[derive(Default)]
 pub struct CompileCache {
@@ -70,8 +75,14 @@ impl CompileCache {
         format!("{:x}", hasher.finalize())
     }
 
+    /// On-disk name for `key`, scoped to this compiler so binaries built from
+    /// different sources never share (or overwrite) each other's entries.
     fn cache_path(&self, key: &str) -> PathBuf {
-        self.cache_dir().join(format!("{key}.ir"))
+        let mut hasher = Sha256::new();
+        hasher.update(COMPILER_FINGERPRINT.as_bytes());
+        hasher.update([0]);
+        hasher.update(key.as_bytes());
+        self.cache_dir().join(format!("{:x}.ir", hasher.finalize()))
     }
 
     pub fn get(&self, key: &str) -> Option<Vec<u8>> {
@@ -105,25 +116,36 @@ impl CompileCache {
 
 /// Serialize a full IR program for on-disk cache storage.
 pub fn serialize_program(program: &CompiledProgram) -> Vec<u8> {
-    let mut out = Vec::with_capacity(64);
+    let payload = bincode::serialize(program).expect("CompiledProgram must be serializable");
+    let fingerprint = COMPILER_FINGERPRINT.as_bytes();
+    let mut out = Vec::with_capacity(payload.len() + fingerprint.len() + 48);
     out.extend_from_slice(CACHE_MAGIC);
     out.push(CACHE_VERSION);
-    out.extend(bincode::serialize(program).expect("CompiledProgram must be serializable"));
+    out.push(u8::try_from(fingerprint.len()).expect("fingerprint fits in a byte"));
+    out.extend_from_slice(fingerprint);
+    out.extend_from_slice(&Sha256::digest(&payload));
+    out.extend(payload);
     out
 }
 
-/// Deserialize a cached IR program. Returns `None` for missing, corrupt, or legacy blobs.
+/// Deserialize a cached IR program. Returns `None` (a cache miss) for blobs that
+/// are truncated, corrupt, from an older layout, or written by another compiler.
 pub fn deserialize_program(bytes: &[u8]) -> Option<CompiledProgram> {
-    if bytes.len() < CACHE_MAGIC.len() + 1 {
+    let rest = bytes.strip_prefix(CACHE_MAGIC.as_slice())?;
+    let (&version, rest) = rest.split_first()?;
+    if version != CACHE_VERSION {
         return None;
     }
-    if &bytes[..CACHE_MAGIC.len()] != CACHE_MAGIC {
+    let (&fp_len, rest) = rest.split_first()?;
+    let (fingerprint, rest) = rest.split_at_checked(fp_len as usize)?;
+    if fingerprint != COMPILER_FINGERPRINT.as_bytes() {
         return None;
     }
-    if bytes[CACHE_MAGIC.len()] != CACHE_VERSION {
+    let (checksum, payload) = rest.split_at_checked(32)?;
+    if Sha256::digest(payload).as_slice() != checksum {
         return None;
     }
-    bincode::deserialize(&bytes[CACHE_MAGIC.len() + 1..]).ok()
+    bincode::deserialize(payload).ok()
 }
 
 pub fn cache_key_for_path(path: &Path) -> Option<String> {

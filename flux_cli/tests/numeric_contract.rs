@@ -214,6 +214,27 @@ fn cases() -> Vec<(&'static str, String, Want)> {
             "fn bad(x: Int) -> Int { x / 0 }\nlet mut a = 9\nlet r = bad(a) + 1",
             Error("integer division by zero"),
         ),
+        // Bulk allocation is bounded and overflow-safe.
+        c(
+            "range_len",
+            "import collections\nlet mut a = 5\nlet r = len(range(a))",
+            Value("5"),
+        ),
+        c(
+            "range_near_i64_max",
+            "import collections\nlet mut a = 9223372036854775806\nlet r = len(range(a, 9223372036854775807, 5))",
+            Value("1"),
+        ),
+        c(
+            "range_negative_step",
+            "import collections\nlet mut a = 10\nlet r = len(range(a, 0, -3))",
+            Value("4"),
+        ),
+        c(
+            "range_over_allocation_limit",
+            "import collections\nlet mut a = 1000000000000\nlet r = len(range(a))",
+            Error("allocation limit exceeded"),
+        ),
         // Mutable bindings accept any initializer, not only literals.
         c(
             "source_negative_init",

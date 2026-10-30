@@ -346,8 +346,13 @@ impl Executor {
         }
 
         if flux_std::is_builtin_fn(name) {
-            if let Some(result) = flux_std::call_builtin(name, args) {
-                return result;
+            match flux_std::call_builtin_checked(name, args) {
+                Some(Ok(result)) => return result,
+                Some(Err(e)) => {
+                    self.raise(e);
+                    return RuntimeValue::Unit;
+                }
+                None => {}
             }
             debug_assert_vm(
                 false,

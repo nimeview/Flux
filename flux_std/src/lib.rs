@@ -94,17 +94,56 @@ pub fn is_builtin_fn(name: &str) -> bool {
 }
 
 /// Call a builtin function. Returns `None` if `name` is not a builtin.
+/// Like [`call_builtin`], but reports runtime errors (e.g. a `range` longer than
+/// [`flux_value::MAX_COLLECTION_LEN`]) instead of returning a placeholder value.
+pub fn call_builtin_checked(
+    name: &str,
+    args: &[Value],
+) -> Option<Result<Value, flux_value::ArithError>> {
+    if name == "range" {
+        let (start, end, step) = range_args(args)?;
+        return Some(
+            flux_value::int_range(start, end, step)
+                .map(|items| Value::Array(items.into_iter().map(Value::int_i64).collect())),
+        );
+    }
+    call_builtin(name, args).map(Ok)
+}
+
+/// `range(end)`, `range(start, end)`, or `range(start, end, step)`.
+fn range_args(args: &[Value]) -> Option<(i64, i64, i64)> {
+    Some(match args.len() {
+        0 => (0, 0, 1),
+        1 => (0, int_arg(args.first())?, 1),
+        2 => (int_arg(args.first())?, int_arg(args.get(1))?, 1),
+        _ => (
+            int_arg(args.first())?,
+            int_arg(args.get(1))?,
+            int_arg(args.get(2))?,
+        ),
+    })
+}
+
+/// What `print`/`println` write: a top-level string as its raw text; any other
+/// value (including strings nested in arrays) in its quoted display form.
+fn print_text(value: &Value) -> String {
+    match value {
+        Value::String(s) => s.clone(),
+        other => other.display_string(),
+    }
+}
+
 pub fn call_builtin(name: &str, args: &[Value]) -> Option<Value> {
     match name {
         "print" => {
             if let Some(v) = args.first() {
-                print!("{}", v.display_string());
+                print!("{}", print_text(v));
             }
             Some(Value::Unit)
         }
         "println" => {
             if let Some(v) = args.first() {
-                println!("{}", v.display_string());
+                println!("{}", print_text(v));
             } else {
                 println!();
             }
@@ -118,30 +157,8 @@ pub fn call_builtin(name: &str, args: &[Value]) -> Option<Value> {
             };
             Some(Value::int_i64(n))
         }
-        "range" => {
-            let (start, end, step) = match args.len() {
-                0 => return Some(Value::Array(vec![])),
-                1 => {
-                    let end = int_arg(args.first())?;
-                    if end < 0 {
-                        return Some(Value::Array(vec![]));
-                    }
-                    (0, end, 1)
-                }
-                2 => {
-                    let start = int_arg(args.first())?;
-                    let end = int_arg(args.get(1))?;
-                    (start, end, 1)
-                }
-                _ => {
-                    let start = int_arg(args.first())?;
-                    let end = int_arg(args.get(1))?;
-                    let step = int_arg(args.get(2))?;
-                    (start, end, step)
-                }
-            };
-            Some(Value::Array(build_int_range(start, end, step)))
-        }
+        // Over-long ranges are an error only through `call_builtin_checked`.
+        "range" => call_builtin_checked(name, args)?.ok(),
         "push" => {
             let arr = match args.first()? {
                 Value::Array(a) => a.clone(),
@@ -289,25 +306,4 @@ pub fn call_builtin(name: &str, args: &[Value]) -> Option<Value> {
 
 fn int_arg(v: Option<&Value>) -> Option<i64> {
     v?.as_int()
-}
-
-fn build_int_range(start: i64, end: i64, step: i64) -> Vec<Value> {
-    if step == 0 {
-        return vec![];
-    }
-    let mut out = Vec::new();
-    if step > 0 {
-        let mut i = start;
-        while i < end {
-            out.push(Value::int_i64(i));
-            i += step;
-        }
-    } else {
-        let mut i = start;
-        while i > end {
-            out.push(Value::int_i64(i));
-            i += step;
-        }
-    }
-    out
 }

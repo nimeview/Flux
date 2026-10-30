@@ -490,6 +490,8 @@ impl Executor {
         locals: &mut HashMap<String, RuntimeValue>,
         param: RuntimeValue,
     ) -> bool {
+        // Handler slots hold tagged handles until `apply_jit_assignments` reads them.
+        let _heap = flux_value::heap_scope();
         let key = format!("__on_{idx}");
         let handler = &self.program.on_handlers[idx];
         let param_ref = handler.param.as_ref().map(|_| &param);
@@ -510,6 +512,7 @@ impl Executor {
     }
 
     fn try_run_jit_watch(&mut self, idx: usize, body: &[flux_ir::IrStmt]) -> bool {
+        let _heap = flux_value::heap_scope();
         let key = format!("__watch_{idx}");
         let Some((result, emits, slots)) = self.backend.try_run_handler(&key, &self.graph, None)
         else {

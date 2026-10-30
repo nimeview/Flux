@@ -89,3 +89,36 @@ fn forward_binding_uses_its_inferred_type() {
     let value = run_value("let a = b + \"x\"\nlet b = \"y\"\n", "a");
     assert_eq!(value, RuntimeValue::String("yx".into()));
 }
+
+#[test]
+fn empty_string_source_is_readable_in_handlers() {
+    // `""` used to parse as an interpolation with no parts, which left the
+    // source untyped inside `watch`/`on` bodies ("undefined name symbol #…").
+    let src = "event Tick\nlet mut s = \"\"\non Tick {\n  s = s + \"x\"\n}\n";
+    let mut compiled = compile(source_from("<empty-string>", src))
+        .unwrap_or_else(|failure| panic!("{:?}", failure.diagnostics.errors));
+    compiled.executor.emit("Tick", RuntimeValue::Unit);
+    compiled.executor.emit("Tick", RuntimeValue::Unit);
+    assert_eq!(
+        compiled.executor.get_value("s"),
+        Some(RuntimeValue::String("xx".into()))
+    );
+}
+
+#[test]
+fn continue_skips_iteration_on_vm_and_jit() {
+    // JIT may fall back to the VM here; either way the value must match.
+    let src = "import collections\nfn f(n: Int) -> Int {\n  let mut acc = 0\n  for i in range(n) {\n    if i % 2 == 0 { continue }\n    acc = acc + i\n  }\n  acc\n}\nlet mut a = 10\nlet r = f(a)\n";
+    for mode in [
+        flux_runtime::ExecutionMode::Vm,
+        flux_runtime::ExecutionMode::Jit,
+    ] {
+        let compiled = flux_cli::pipeline::compile_with_mode(source_from("<continue>", src), mode)
+            .unwrap_or_else(|failure| panic!("{:?}", failure.diagnostics.errors));
+        assert_eq!(
+            compiled.executor.get_value("r"),
+            Some(RuntimeValue::int_i64(25)),
+            "{mode:?}"
+        );
+    }
+}

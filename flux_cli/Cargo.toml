@@ -34,6 +34,7 @@ jit = ["flux_runtime/jit", "flux_driver/jit"]
 [dev-dependencies]
 flux_cli = { path = ".", features = ["jit"] }
 flux_jit = { path = "../flux_jit" }
+flux_value = { path = "../flux_value" }
 criterion = "0.5"
 tempfile = "3"
 

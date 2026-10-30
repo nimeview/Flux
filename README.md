@@ -36,7 +36,7 @@ cargo run -p flux_cli -- lsp-server
 cargo run -p flux_cli -- repl
 ```
 
-See [SPEC.md](SPEC.md) for the language specification.
+See [SPEC.md](SPEC.md) for the language specification and [RELEASE.md](RELEASE.md) for the release gate, supported platforms, and which features are experimental (`--jit`) or stubs (`flux wasm`).
 
 ## Editor setup
 
@@ -65,7 +65,7 @@ watch count {
 }
 ```
 
-## Language features (v0.4+)
+## Language features
 
 | Feature | Syntax |
 |---------|--------|
@@ -114,4 +114,4 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for details.
 
 ## License
 
-MIT
+MIT — see [LICENSE](LICENSE).

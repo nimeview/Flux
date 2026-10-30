@@ -627,7 +627,15 @@ fn emit_ir(
     project_root: Option<&Path>,
     diagnostics: &mut DiagnosticBag,
 ) -> Result<Option<CompiledProgram>, CompileFailed> {
-    let key = cache_key.unwrap_or(&source.contents);
+    // Never key on raw source text: it becomes a file name.
+    let source_key;
+    let key = match cache_key {
+        Some(key) => key,
+        None => {
+            source_key = CompileCache::hash_source(&source.contents);
+            &source_key
+        }
+    };
     let root = resolve_project_root(
         project_root,
         if source.path.is_empty() || source.path == "<buffer>" {
@@ -637,7 +645,16 @@ fn emit_ir(
         },
     );
     if options.use_cache {
-        if let Some(cached) = with_project_cache(&root, |cache| cache.get_program(key)) {
+        // An entry that decodes but fails IR validation is dropped and rebuilt.
+        let cached = with_project_cache(&root, |cache| {
+            let program = cache.get_program(key)?;
+            if flux_runtime::validate_program(&program).is_ok() {
+                return Some(program);
+            }
+            cache.invalidate(key);
+            None
+        });
+        if let Some(cached) = cached {
             return Ok(Some(cached));
         }
     }

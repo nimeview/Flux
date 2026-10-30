@@ -14,7 +14,8 @@ pub use convert::{tagged_to_value, value_to_tagged};
 pub use display::render;
 pub use heap::{
     array_finish, array_get, array_len, array_push, clear_for_tests, get_array, get_enum,
-    get_string, intern_string, make_int_range_array, store_enum,
+    get_string, heap_scope, heap_stats, int_range, intern_string, make_int_range_array, store_enum,
+    HeapScope, HeapStats, MAX_COLLECTION_LEN,
 };
 pub use ops::{float_from_f64, float_to_f64, int_from_i64, int_to_i64};
 pub use tagged::{

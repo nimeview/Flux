@@ -14,6 +14,7 @@ pub use flux_ir::{EffectMeta, EffectTrigger, HandlerKind};
 pub use flux_jit::JitStats;
 pub use flux_value::ArithError;
 pub use graph::{NodeId, NodeKind, ReactiveGraph, RuntimeValue};
+pub use vm::validate_program;
 
 /// Which execution engine the `Executor` uses.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
