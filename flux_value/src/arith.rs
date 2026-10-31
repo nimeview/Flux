@@ -55,6 +55,8 @@ pub enum ArithError {
     InvalidOperands = 5,
     /// A collection would exceed [`crate::MAX_COLLECTION_LEN`] elements.
     AllocationLimit = 6,
+    /// `assert`/`assert_eq` failed (details: `flux_std::take_failure_detail`).
+    AssertionFailed = 7,
 }
 
 impl ArithError {
@@ -65,6 +67,7 @@ impl ArithError {
             3 => Self::CastOutOfRange,
             4 => Self::InvalidCast,
             6 => Self::AllocationLimit,
+            7 => Self::AssertionFailed,
             _ => Self::InvalidOperands,
         }
     }
@@ -77,6 +80,7 @@ impl ArithError {
             Self::InvalidCast => "invalid cast",
             Self::InvalidOperands => "invalid operands for arithmetic",
             Self::AllocationLimit => "allocation limit exceeded",
+            Self::AssertionFailed => "assertion failed",
         }
     }
 }

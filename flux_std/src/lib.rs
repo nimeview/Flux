@@ -110,6 +110,11 @@ pub fn call_builtin_checked(
     name: &str,
     args: &[Value],
 ) -> Option<Result<Value, flux_value::ArithError>> {
+    match name {
+        "assert" => return Some(math::assert(args.first()?)),
+        "assert_eq" => return Some(math::assert_eq(args.first()?, args.get(1)?)),
+        _ => {}
+    }
     if name == "range" {
         let (start, end, step) = range_args(args)?;
         return Some(
@@ -132,6 +137,20 @@ fn range_args(args: &[Value]) -> Option<(i64, i64, i64)> {
             int_arg(args.get(2))?,
         ),
     })
+}
+
+thread_local! {
+    static FAILURE_DETAIL: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Records extra text for the next runtime error on this thread (e.g. the
+/// values an `assert_eq` compared); the runtime takes it when it raises.
+pub fn set_failure_detail(detail: String) {
+    FAILURE_DETAIL.with(|d| *d.borrow_mut() = Some(detail));
+}
+
+pub fn take_failure_detail() -> Option<String> {
+    FAILURE_DETAIL.with(|d| d.borrow_mut().take())
 }
 
 static PROGRAM_ARGS: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
@@ -297,8 +316,9 @@ pub fn call_builtin(name: &str, args: &[Value]) -> Option<Value> {
         "floor" => math::floor(args.first()?),
         "ceil" => math::ceil(args.first()?),
         "pow" => math::pow(args.first()?, args.get(1)?),
-        "assert" => math::assert(args.first()?),
-        "assert_eq" => math::assert_eq(args.first()?, args.get(1)?),
+        // Assertion failures are errors; only `call_builtin_checked` reports them.
+        "assert" => math::assert(args.first()?).ok(),
+        "assert_eq" => math::assert_eq(args.first()?, args.get(1)?).ok(),
         "read_line" => Some(io::read_line()),
         "read_file" => {
             let path = match args.first()? {

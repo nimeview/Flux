@@ -183,10 +183,12 @@ impl Executor {
 
     pub(crate) fn raise(&mut self, kind: flux_value::ArithError) {
         if self.trap.is_none() {
+            let detail = flux_std::take_failure_detail();
             self.trap = Some(RuntimeError {
                 kind,
                 context: None,
                 binding: None,
+                detail,
             });
         }
     }

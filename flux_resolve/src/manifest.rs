@@ -180,3 +180,91 @@ fn default_entry() -> String {
 fn default_src() -> String {
     ".".to_string()
 }
+
+/// [`SourceId`] for `flux.toml` diagnostics. Module ids count up from 0 (the
+/// root file is always 0), so this one cannot collide.
+pub const MANIFEST_SOURCE_ID: flux_diagnostics::SourceId = flux_diagnostics::SourceId(u32::MAX);
+
+/// Checks `project_root/flux.toml`, if there is one. On problems, pushes a
+/// diagnostic for each and returns the manifest's source to render them
+/// against: invalid TOML, a registry (version) dependency, which is not
+/// supported yet, or a path dependency whose directory does not exist.
+pub fn check_manifest(
+    project_root: &Path,
+    diagnostics: &mut flux_diagnostics::DiagnosticBag,
+) -> Option<flux_diagnostics::SourceFile> {
+    let manifest_path = project_root.join("flux.toml");
+    let text = fs::read_to_string(&manifest_path).ok()?;
+    let source = flux_diagnostics::SourceFile {
+        id: MANIFEST_SOURCE_ID,
+        path: manifest_path.display().to_string(),
+        contents: text.clone(),
+    };
+    let mut problems = Vec::new();
+    match toml::from_str::<PackageManifest>(&text) {
+        Err(e) => {
+            let span = e.span().unwrap_or(0..0);
+            problems.push((format!("invalid flux.toml: {}", e.message()), span));
+        }
+        Ok(manifest) => {
+            let mut names: Vec<&String> = manifest.dependencies.keys().collect();
+            names.sort();
+            for name in names {
+                let span = dependency_span(&text, name);
+                match &manifest.dependencies[name] {
+                    DependencySpec::Version(v) => problems.push((
+                        format!(
+                            "dependency `{name} = \"{v}\"`: registry dependencies are not \
+                             supported yet; use a local path, e.g. `{name} = {{ path = \"../{name}\" }}`"
+                        ),
+                        span,
+                    )),
+                    DependencySpec::Path { path } => {
+                        let dir = project_root.join(path);
+                        if !dir.is_dir() {
+                            problems.push((
+                                format!(
+                                    "path dependency `{name}` not found: {} is not a directory",
+                                    dir.display()
+                                ),
+                                span,
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    if problems.is_empty() {
+        return None;
+    }
+    for (message, span) in problems {
+        diagnostics.push(flux_diagnostics::FluxError::Parse {
+            message,
+            span: flux_diagnostics::span_to_miette(flux_diagnostics::Span::new(
+                MANIFEST_SOURCE_ID,
+                span.start,
+                span.end,
+            )),
+            source_id: MANIFEST_SOURCE_ID,
+        });
+    }
+    Some(source)
+}
+
+/// Byte range of the `name = …` line under `[dependencies]` (or 0..0).
+fn dependency_span(text: &str, name: &str) -> std::ops::Range<usize> {
+    let mut offset = 0;
+    for line in text.split_inclusive('\n') {
+        let trimmed = line.trim_start();
+        let lead = line.len() - trimmed.len();
+        if let Some(rest) = trimmed.strip_prefix(name) {
+            if rest.trim_start().starts_with('=') {
+                let start = offset + lead;
+                return start..offset + line.trim_end().len();
+            }
+        }
+        offset += line.len();
+    }
+    0..0
+}

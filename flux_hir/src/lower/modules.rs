@@ -1,92 +1,219 @@
-//! Lowering imported module exports into the root program symbol table.
+//! Lowering imported modules, each in its own namespace.
 
 use std::path::Path;
 
-use flux_diagnostics::DiagnosticBag;
+use flux_diagnostics::{span_to_miette, DiagnosticBag, FluxError};
 use flux_resolve::LinkedProgram;
 use flux_syntax::{Item, Program};
 
+use crate::context::ScopeKind;
 use crate::nodes::HirItem;
 use crate::symbol::{SymbolKind, SymbolTable};
 
 use super::{lower_item, push_duplicate};
 
-pub(super) fn register_imports(
+/// Internal name of item `name` of module `index` (modules other than the
+/// root). Unique per module, so private names never collide.
+fn mangled(index: usize, name: &str) -> String {
+    format!("__mod_{index}__{name}")
+}
+
+fn is_type_item(item: &Item) -> bool {
+    matches!(
+        item,
+        Item::Struct(_) | Item::Enum(_) | Item::Trait(_) | Item::TypeAlias(_) | Item::Impl(_)
+    )
+}
+
+fn item_span(item: &Item) -> flux_diagnostics::Span {
+    match item {
+        Item::Watch(w) => w.span,
+        Item::On(o) => o.span,
+        Item::If(i) => i.span,
+        _ => flux_diagnostics::Span::DUMMY,
+    }
+}
+
+/// Pass 1 for imported modules: declare every item of every non-root module.
+/// Values and functions get module-unique names (private ones too); type
+/// names stay program-global. Runs before any root name exists.
+pub(super) fn declare_module_items(
     linked: &LinkedProgram,
     symbols: &mut SymbolTable,
     diagnostics: &mut DiagnosticBag,
-) -> bool {
-    for import in &linked.imports {
-        symbols.module_aliases.insert(import.alias.clone(), ());
-        let module = &linked.modules[import.module_index];
+) {
+    for (index, module) in linked.modules.iter().enumerate().skip(1) {
         if is_stdlib_module_path(&module.path) {
             continue;
         }
-        let exports = pub_items(&module.ast);
-        let selected: Vec<&Item> = if import.symbols.is_empty() {
-            exports
-        } else {
-            exports
-                .into_iter()
-                .filter(|item| {
-                    item_export_name(item)
-                        .map(|n| import.symbols.contains(&n))
-                        .unwrap_or(false)
-                })
-                .collect()
-        };
-
-        for item in selected {
-            let export_name = item_export_name(item).expect("pub export");
-            let mangled = format!("__mod_{}__{export_name}", import.alias);
-            if let Some(err) = declare_item_renamed(item, &mangled, symbols) {
-                push_duplicate(diagnostics, item, err);
-            }
-            if let Some(sym) = symbols.lookup(&mangled) {
-                let sym_id = sym.id;
-                symbols
-                    .qualified_symbols
-                    .insert((import.alias.clone(), export_name.clone()), sym_id);
-                if import.symbols.is_empty() || import.symbols.contains(&export_name) {
-                    symbols.reexport_alias(&export_name, sym_id, import.span);
+        for item in &module.ast.items {
+            match item {
+                Item::Watch(_) | Item::On(_) | Item::If(_) => {
+                    let span = item_span(item);
+                    diagnostics.push(FluxError::Parse {
+                        message: "`watch`, `on`, and top-level `if` are not supported in an \
+                                  imported module; keep reactive handlers in the root module"
+                            .into(),
+                        span: span_to_miette(span),
+                        source_id: span.source,
+                    });
+                }
+                Item::Import(_) | Item::Impl(_) | Item::TypeAlias(_) => {}
+                Item::Struct(_) | Item::Enum(_) | Item::Trait(_) => {
+                    if let Some(err) = super::declare_item(item, symbols) {
+                        push_duplicate(diagnostics, item, err);
+                    }
+                    if let Item::Enum(e) = item {
+                        for v in &e.variants {
+                            symbols
+                                .enum_variants
+                                .insert(v.name.name.clone(), e.name.name.clone());
+                        }
+                    }
+                }
+                _ => {
+                    let Some(name) = item_export_name(item) else {
+                        continue;
+                    };
+                    if let Some(err) = declare_item_renamed(item, &mangled(index, &name), symbols) {
+                        push_duplicate(diagnostics, item, err);
+                    }
                 }
             }
         }
     }
-    !diagnostics.has_errors()
 }
 
-pub(super) fn lower_imported_items(
+/// Makes the names `import` brings in visible in the current scope (and its
+/// `alias.name` form in the current qualified view).
+fn bind_import(
+    import: &flux_resolve::BoundImport,
+    linked: &LinkedProgram,
+    symbols: &mut SymbolTable,
+) {
+    symbols.module_aliases.insert(import.alias.clone(), ());
+    let module = &linked.modules[import.module_index];
+    if import.module_index == 0 || is_stdlib_module_path(&module.path) {
+        return;
+    }
+    for item in pub_items(&module.ast) {
+        if is_type_item(item) {
+            continue; // type names are program-global
+        }
+        let Some(name) = item_export_name(item) else {
+            continue;
+        };
+        if !import.symbols.is_empty() && !import.symbols.contains(&name) {
+            continue;
+        }
+        let Some(id) = symbols
+            .lookup(&mangled(import.module_index, &name))
+            .map(|s| s.id)
+        else {
+            continue;
+        };
+        symbols
+            .qualified_symbols
+            .insert((import.alias.clone(), name.clone()), id);
+        symbols.reexport_alias(&name, id, import.span);
+    }
+}
+
+/// The root module's imports, bound into the root scope.
+pub(super) fn bind_root_imports(linked: &LinkedProgram, symbols: &mut SymbolTable) {
+    for import in linked.module_imports.first().into_iter().flatten() {
+        bind_import(import, linked, symbols);
+    }
+}
+
+/// Pass 2 for imported modules: lower each module's items inside its own
+/// scope, which sees exactly its items, its stdlib imports, and its user
+/// imports (each module also has its own `alias.name` view).
+pub(super) fn lower_module_items(
     linked: &LinkedProgram,
     symbols: &mut SymbolTable,
     diagnostics: &mut DiagnosticBag,
     reassigned_sources: &std::collections::HashSet<String>,
 ) -> Vec<HirItem> {
     let mut items = Vec::new();
-    for import in &linked.imports {
-        let module = &linked.modules[import.module_index];
+    for (index, module) in linked.modules.iter().enumerate().skip(1) {
         if is_stdlib_module_path(&module.path) {
             continue;
         }
-        for item in pub_items(&module.ast) {
-            let export_name = item_export_name(item).expect("pub export");
-            if !import.symbols.is_empty() && !import.symbols.contains(&export_name) {
+        let saved_aliases = std::mem::take(&mut symbols.module_aliases);
+        let saved_qualified = std::mem::take(&mut symbols.qualified_symbols);
+        let saved_hints = symbols.array_elem_hints.clone();
+        symbols.push(ScopeKind::Module);
+
+        for (import, target) in module.imports.iter().zip(&module.import_targets) {
+            if target.is_none() {
+                super::register_stdlib_import(import, symbols, diagnostics);
+            }
+        }
+        for item in &module.ast.items {
+            if is_type_item(item) {
                 continue;
             }
-            let mangled = format!("__mod_{}__{export_name}", import.alias);
-            if let Some(hir_item) =
-                lower_item_renamed(item, &mangled, symbols, diagnostics, reassigned_sources)
-            {
-                items.push(hir_item);
+            let Some(name) = item_export_name(item) else {
+                continue;
+            };
+            if let Some(id) = symbols.lookup(&mangled(index, &name)).map(|s| s.id) {
+                symbols.reexport_alias(&name, id, flux_diagnostics::Span::DUMMY);
             }
-            if let Item::Impl(impl_decl) = item {
-                if let Some(extra) = super::decls::lower_impl_fns(impl_decl, symbols, diagnostics) {
-                    items.extend(extra);
+        }
+        for import in &linked.module_imports[index] {
+            bind_import(import, linked, symbols);
+        }
+
+        for item in &module.ast.items {
+            match item {
+                Item::Import(_) | Item::Watch(_) | Item::On(_) | Item::If(_) => {}
+                Item::TypeAlias(_) => {}
+                Item::Impl(impl_decl) => {
+                    if let Some(extra) =
+                        super::decls::lower_impl_fns(impl_decl, symbols, diagnostics)
+                    {
+                        items.extend(extra);
+                    }
+                }
+                Item::Struct(_) | Item::Enum(_) | Item::Trait(_) => {
+                    if let Some(hir_item) = lower_type_item(item, symbols) {
+                        items.push(hir_item);
+                    }
+                }
+                _ => {
+                    let Some(name) = item_export_name(item) else {
+                        continue;
+                    };
+                    if let Some(hir_item) = lower_item_renamed(
+                        item,
+                        &mangled(index, &name),
+                        symbols,
+                        diagnostics,
+                        reassigned_sources,
+                    ) {
+                        items.push(hir_item);
+                        items.extend(std::mem::take(&mut symbols.pending_bindings));
+                    }
                 }
             }
         }
+
+        symbols.pop();
+        symbols.array_elem_hints = saved_hints;
+        symbols.module_aliases = saved_aliases;
+        symbols.qualified_symbols = saved_qualified;
     }
     items
+}
+
+fn lower_type_item(item: &Item, symbols: &mut SymbolTable) -> Option<HirItem> {
+    match item {
+        Item::Struct(decl) => super::decls::lower_struct(decl, symbols).map(HirItem::Struct),
+        Item::Enum(decl) => super::decls::lower_enum(decl, symbols).map(HirItem::Enum),
+        Item::Trait(decl) => super::decls::lower_trait(decl, symbols).map(HirItem::Trait),
+        _ => None,
+    }
 }
 
 fn is_stdlib_module_path(path: &Path) -> bool {
@@ -234,18 +361,8 @@ fn lower_item_renamed(
             renamed.name.name = mangled.to_string();
             super::decls::lower_const_binding(&renamed, symbols, diagnostics).map(HirItem::Binding)
         }
-        Item::Struct(decl) => super::decls::lower_struct(decl, symbols).map(HirItem::Struct),
-        Item::Enum(decl) => {
-            for v in &decl.variants {
-                symbols
-                    .enum_variants
-                    .insert(v.name.name.clone(), mangled.to_string());
-            }
-            super::decls::lower_enum(decl, symbols).map(HirItem::Enum)
-        }
-        Item::Trait(decl) => super::decls::lower_trait(decl, symbols).map(HirItem::Trait),
         Item::Event(decl) => super::decls::lower_event(decl, symbols),
         Item::Impl(_) | Item::Watch(_) | Item::On(_) | Item::If(_) | Item::Import(_) => None,
-        Item::TypeAlias(_) => None,
+        Item::TypeAlias(_) | Item::Struct(_) | Item::Enum(_) | Item::Trait(_) => None,
     }
 }

@@ -29,6 +29,14 @@ All notable changes to Flux are documented here.
 - A trailing `if … else` is a function's value; `match` arms may be blocks `p => { stmts…; value }`
 - `None`, `Ok(x)`, `Err(e)` take their missing type from context (return type, argument, annotation, other branches); bare `None` is now the Option value (it evaluated to the string `"None"`)
 
+### Added (tooling)
+- `flux test [filter] [--jit]`: runs `fn test_*()` functions in isolation with per-test results and a non-zero exit on failure
+
+### Changed
+- `assert` / `assert_eq` failures are the runtime error `assertion failed[: a != b]` instead of crashing the `flux` process
+- Modules have their own namespaces: a module's private items, its own imports (including stdlib), and transitive path dependencies now work (previously only the selected `pub` items of directly imported modules were copied into the root's scope). `watch`/`on` in an imported module is now an error instead of being dropped silently. Type names remain program-global.
+- `flux.toml`: a registry/version dependency, a missing path dependency, or invalid TOML is an error instead of being ignored
+
 ### Fixed
 - **`if … else` statements silently dropped every statement in `else` / `else if` bodies** (parser); `fmt` now prints whole `else if` chains
 - Assigning a local inside a fn no longer turns a same-named module binding into a reactive source (E016); `else if` bodies are scanned for source reassignments

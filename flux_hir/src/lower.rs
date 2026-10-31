@@ -36,7 +36,7 @@ use decls::{
 };
 use funcs::{lower_fn, lower_on, lower_rfn, lower_watch};
 
-use modules::{lower_imported_items, register_imports};
+use modules::{bind_root_imports, declare_module_items, lower_module_items};
 
 use stdlib::register_stdlib_import;
 
@@ -136,6 +136,22 @@ fn lower_program_inner(
     let mut symbols = SymbolTable::new();
     let reassigned_sources = collect_reassigned_sources(program);
 
+    // Imported modules are declared and lowered first, each in its own
+    // scope, before any root name exists, so a module can never see them.
+    let mut items = Vec::new();
+    if let Some(linked) = linked {
+        declare_module_items(linked, &mut symbols, diagnostics);
+        if diagnostics.has_errors() {
+            return None;
+        }
+        items.extend(lower_module_items(
+            linked,
+            &mut symbols,
+            diagnostics,
+            &reassigned_sources,
+        ));
+    }
+
     // Standard-library imports (`import io`, `import math`, …) register host intrinsics.
     // Linked programs strip `import` items from the merged root AST — read them from the root module.
     let stdlib_imports: Vec<&ImportDecl> = if let Some(linked) = linked {
@@ -168,12 +184,8 @@ fn lower_program_inner(
     }
 
     if let Some(linked) = linked {
-        if !register_imports(linked, &mut symbols, diagnostics) {
-            return None;
-        }
+        bind_root_imports(linked, &mut symbols);
     }
-
-    let mut items = Vec::new();
 
     // Pass 1: declare all top-level names (events, functions, bindings).
     for item in &program.items {
@@ -193,15 +205,7 @@ fn lower_program_inner(
         return None;
     }
 
-    // Pass 2: lower imported modules, then root bodies.
-    if let Some(linked) = linked {
-        items.extend(lower_imported_items(
-            linked,
-            &mut symbols,
-            diagnostics,
-            &reassigned_sources,
-        ));
-    }
+    // Pass 2: lower root bodies (imported modules are already lowered).
 
     let mut type_aliases: HashMap<String, HirType> = HashMap::new();
     let mut extra_fns: Vec<HirItem> = Vec::new();

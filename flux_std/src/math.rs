@@ -112,22 +112,19 @@ pub fn pow(base: &Value, exp: &Value) -> Option<Value> {
     Some(Value::float_f64(base.as_float()?.powf(exp.as_float()?)))
 }
 
-pub fn assert(cond: &Value) -> Option<Value> {
+pub fn assert(cond: &Value) -> Result<Value, flux_value::ArithError> {
     if cond.as_bool() == Some(true) {
-        Some(Value::Unit)
+        Ok(Value::Unit)
     } else {
-        panic!("assertion failed");
+        Err(flux_value::ArithError::AssertionFailed)
     }
 }
 
-pub fn assert_eq(a: &Value, b: &Value) -> Option<Value> {
+pub fn assert_eq(a: &Value, b: &Value) -> Result<Value, flux_value::ArithError> {
     if flux_value::values_equal(a, b) {
-        Some(Value::Unit)
+        Ok(Value::Unit)
     } else {
-        panic!(
-            "assert_eq failed: {} != {}",
-            a.display_string(),
-            b.display_string()
-        );
+        crate::set_failure_detail(format!("{} != {}", a.display_string(), b.display_string()));
+        Err(flux_value::ArithError::AssertionFailed)
     }
 }

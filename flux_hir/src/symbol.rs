@@ -167,26 +167,42 @@ impl SymbolTable {
         self.all_symbols.get(&id)
     }
 
+    /// Makes `bare_name` refer to `symbol` in the innermost scope (imports and
+    /// a module's own items). The alias carries the target's kind, so reading
+    /// an imported source or calling an imported `rfn` stays reactive.
     pub fn reexport_alias(&mut self, bare_name: &str, symbol: SymbolId, span: Span) {
+        let kind = self
+            .all_symbols
+            .get(&symbol)
+            .map_or(SymbolKind::Builtin, |s| s.kind);
         if let Some(scope) = self.scopes.last_mut() {
             scope.symbols.insert(
                 bare_name.to_string(),
                 Symbol {
                     id: symbol,
                     name: bare_name.to_string(),
-                    kind: SymbolKind::Builtin,
+                    kind,
                     span,
                 },
             );
         }
     }
 
+    /// Updates the kind of the symbol `name` resolves to, including every
+    /// alias of it (so a binding classified later stays consistent).
     pub fn update_kind(&mut self, name: &str, kind: SymbolKind) {
-        for scope in self.scopes.iter_mut().rev() {
-            if let Some(sym) = scope.symbols.get_mut(name) {
-                sym.kind = kind;
-                return;
+        let Some(id) = self.lookup(name).map(|s| s.id) else {
+            return;
+        };
+        for scope in &mut self.scopes {
+            for sym in scope.symbols.values_mut() {
+                if sym.id == id {
+                    sym.kind = kind;
+                }
             }
+        }
+        if let Some(sym) = self.all_symbols.get_mut(&id) {
+            sym.kind = kind;
         }
     }
 }

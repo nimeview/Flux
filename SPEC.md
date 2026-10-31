@@ -99,6 +99,16 @@ Inside `fn` / `rfn`:
 - `let mut x = 1` — mutable local (replaces `set`)
 - `x = expr` — assign to `let mut` local or module source from reactive context
 
+### Modules and visibility
+
+Each `.fl` file is a module with its own namespace. Inside a module, all of its own top-level items are visible, `pub` or not, together with the names its own `import`s bring in (stdlib modules included). It never sees the importing module's names.
+
+- **Exports.** Only `pub` items can be imported. `import m { name }` brings in the listed names; importing a non-`pub` or missing name is an error (**E014**). `import m` (no list) brings in every `pub` name; `import m as a` also makes `a.name` available.
+- **Resolution.** `import a.b` is resolved relative to the importing file's directory, or through the `[dependencies]` of the package that contains the importing file (the nearest `flux.toml` above it). A package can import its own dependencies but not its dependencies' dependencies.
+- **One instance.** A module imported along several paths (a diamond) is loaded and initialized once. Cyclic imports are an error (**E013**).
+- **Reactivity.** Importing a `pub let mut` binding gives the importer the same reactive source: assignments in the root's `on`/`watch` update it, and derived values that read it recompute.
+- **Limits.** `watch`, `on`, and top-level `if` must live in the root module (an error elsewhere). Type names (`struct`, `enum`, `trait`) are program-global for now: two modules that define the same type name are a duplicate-definition error.
+
 ## 4. Statements
 
 `let` / `let mut`, assignment, `if`/`else`, `while`, `for x in expr`, `return expr?`, `break`, `continue`, `emit Event(args?)`, expression statements.
@@ -244,13 +254,16 @@ Selective imports: `import io { println, read_line }`. Stdlib modules live under
 | `flux run [--jit] [--verbose] file.fl` | Compile and execute |
 | `flux repl [--jit]` | Interactive shell |
 | `flux check file.fl` | Type-check only |
+| `flux test [filter] [--jit]` | Run every `fn test_*()` in the project (see below) |
 | `flux fmt file.fl [--write] [--check]` | Format source (`--check` fails if reformat needed) |
 | `flux migrate [--write] path` | Migrate v1 top-level bindings to v2 `let` / `let mut` |
 | `flux init [path]` | Create `flux.toml` + entry file |
 | `flux lsp file.fl` | JSON diagnostics |
 | `flux lsp-server` | Stdio LSP: diagnostics, hover, completion, go-to-def, format, document symbols, rename |
-| `flux wasm file.fl` | WASM stub backend |
+| `flux wasm file.fl` | Experimental stub: always fails, writes nothing |
 | `flux repl` | Interactive shell (v2 syntax help) |
+
+**`flux test`.** Every `.fl` file under the project root (the nearest `flux.toml`, or the current directory) that defines `fn test_*()` is compiled as its own program. Hidden directories and `target/` are skipped. Each test function takes no parameters and runs in a fresh executor after module initialization; the file's `main` is not run. A test passes if it returns `Unit` or `true`. It fails if it returns `false`, raises any runtime error (including a failed `assert(cond)` or `assert_eq(a, b)`, which report `assertion failed[: a != b]`), or if its file does not compile. Each test is reported as `test <file>::<name> ... ok | FAILED: <reason>`, then a `test result` summary line; the exit status is 1 if anything failed. `filter` keeps tests whose `file::name` contains it. With no tests, it prints `no tests found` and exits 0.
 
 ## 9. Package manifest (`flux.toml`)
 
@@ -263,6 +276,15 @@ entry = "main.fl"
 [run]
 jit = false   # optional; set true to use the experimental JIT for this project
 ```
+
+Dependencies are local path packages, each a directory with its own `flux.toml`:
+
+```toml
+[dependencies]
+geometry = { path = "../geometry" }   # then: import geometry { area }
+```
+
+A registry/version dependency (`name = "1.2.0"`) is an error, because no registry exists yet. So are a path that is not a directory and invalid TOML; all three are reported against the offending `flux.toml` line.
 
 ## 10. Execution
 

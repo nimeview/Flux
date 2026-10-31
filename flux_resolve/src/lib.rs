@@ -30,6 +30,9 @@ pub struct LoadedModule {
     pub source: SourceFile,
     pub ast: Program,
     pub imports: Vec<ImportDecl>,
+    /// Canonical file each entry of `imports` resolved to (`None` for a
+    /// stdlib import), using this module's own package dependencies.
+    pub import_targets: Vec<Option<PathBuf>>,
 }
 
 /// Import binding after validation — ready for HIR lowering.
@@ -46,7 +49,10 @@ pub struct BoundImport {
 pub struct LinkedProgram {
     pub root: SourceFile,
     pub modules: Vec<LoadedModule>,
+    /// The root module's imports (same as `module_imports[0]`).
     pub imports: Vec<BoundImport>,
+    /// Validated user-module imports of every module, by module index.
+    pub module_imports: Vec<Vec<BoundImport>>,
 }
 
 /// Load and resolve a `.fl` file and its transitive imports.
@@ -88,6 +94,12 @@ pub fn try_resolve_file_with_root(
     diagnostics: &mut DiagnosticBag,
 ) -> Result<ResolvedProgram, ResolveFailure> {
     let mut loader = ModuleLoader::new(path);
+    if let Some(manifest) = manifest::check_manifest(&loader.project_root, diagnostics) {
+        // A manifest problem would otherwise drop dependencies silently.
+        return Err(ResolveFailure {
+            sources: vec![manifest],
+        });
+    }
     let loaded = loader.load_recursive(path, root_contents, None, diagnostics);
     match (loaded, loader.modules.first()) {
         (Some(()), Some(root)) => Ok(ResolvedProgram {
@@ -116,6 +128,8 @@ struct ModuleLoader {
     loading_stack: Vec<PathBuf>,
     project_root: PathBuf,
     path_deps: HashMap<String, PathBuf>,
+    /// Path dependencies of every package seen so far, by package root.
+    package_deps: HashMap<PathBuf, HashMap<String, PathBuf>>,
     next_id: u32,
     /// Source whose parse failed; it never becomes a [`LoadedModule`].
     failed_source: Option<SourceFile>,
@@ -134,9 +148,42 @@ impl ModuleLoader {
             loading_stack: Vec::new(),
             project_root,
             path_deps,
+            package_deps: HashMap::new(),
             next_id: 0,
             failed_source: None,
         }
+    }
+
+    /// Dependencies of the package containing `module_path`. A dependency
+    /// package's own manifest is checked like the root's; on a problem the
+    /// manifest becomes the failure source and `None` is returned.
+    fn deps_for(
+        &mut self,
+        module_path: &Path,
+        diagnostics: &mut DiagnosticBag,
+    ) -> Option<(PathBuf, HashMap<String, PathBuf>)> {
+        let package_root = find_project_root(module_path);
+        let key = package_root.canonicalize().unwrap_or(package_root.clone());
+        let root_key = self
+            .project_root
+            .canonicalize()
+            .unwrap_or(self.project_root.clone());
+        if key == root_key {
+            return Some((self.project_root.clone(), self.path_deps.clone()));
+        }
+        if let Some(deps) = self.package_deps.get(&key) {
+            return Some((package_root, deps.clone()));
+        }
+        if let Some(manifest) = manifest::check_manifest(&package_root, diagnostics) {
+            self.failed_source = Some(manifest);
+            return None;
+        }
+        let deps: HashMap<String, PathBuf> = load_path_dependencies(&package_root)
+            .into_iter()
+            .map(|d| (d.name, d.module_root))
+            .collect();
+        self.package_deps.insert(key, deps.clone());
+        Some((package_root, deps))
     }
 
     fn alloc_id(&mut self) -> SourceId {
@@ -210,26 +257,34 @@ impl ModuleLoader {
         };
 
         let imports = extract_imports(&ast);
+        let module_index = self.modules.len();
         let module = LoadedModule {
             path: canonical.clone(),
             source,
             ast,
             imports: imports.clone(),
+            import_targets: Vec::new(),
         };
         self.modules.push(module);
 
         let base_dir = canonical.parent()?;
+        let Some((package_root, package_deps)) = self.deps_for(&canonical, diagnostics) else {
+            self.loading_stack.pop();
+            return None;
+        };
+        let mut targets = Vec::with_capacity(imports.len());
         for import in imports {
             if std_module_name(&import.path).is_some()
                 && !local_module_exists(base_dir, &import.path)
             {
+                targets.push(None);
                 continue;
             }
             let Some(import_path) = resolve_import_path(
                 base_dir,
                 &import.path,
-                &self.project_root,
-                &self.path_deps,
+                &package_root,
+                &package_deps,
                 &import,
                 diagnostics,
             ) else {
@@ -246,7 +301,9 @@ impl ModuleLoader {
                 return None;
             }
             self.load_recursive(&import_path, None, Some(import.span), diagnostics)?;
+            targets.push(Some(import_path));
         }
+        self.modules[module_index].import_targets = targets;
         self.loading_stack.pop();
         Some(())
     }
@@ -379,26 +436,40 @@ pub fn link_modules(
     resolved: &ResolvedProgram,
     diagnostics: &mut DiagnosticBag,
 ) -> Option<LinkedProgram> {
-    let root_mod = resolved.modules.first()?;
-    let base_dir = root_mod.path.parent()?;
-    let project_root = find_project_root(&root_mod.path);
-    let path_deps: HashMap<String, PathBuf> = load_path_dependencies(&project_root)
-        .into_iter()
-        .map(|d| (d.name, d.module_root))
-        .collect();
-
-    let path_index: std::collections::HashMap<PathBuf, usize> = resolved
+    let path_index: HashMap<PathBuf, usize> = resolved
         .modules
         .iter()
         .enumerate()
         .map(|(i, m)| (m.path.clone(), i))
         .collect();
+    let mut module_imports = Vec::with_capacity(resolved.modules.len());
+    for module in &resolved.modules {
+        module_imports.push(bind_module_imports(
+            module,
+            resolved,
+            &path_index,
+            diagnostics,
+        )?);
+    }
+    Some(LinkedProgram {
+        root: resolved.root.clone(),
+        modules: resolved.modules.clone(),
+        imports: module_imports.first().cloned().unwrap_or_default(),
+        module_imports,
+    })
+}
 
+/// Validates one module's user-module imports against the exports of the
+/// modules they resolved to (recorded by the loader).
+fn bind_module_imports(
+    module: &LoadedModule,
+    resolved: &ResolvedProgram,
+    path_index: &HashMap<PathBuf, usize>,
+    diagnostics: &mut DiagnosticBag,
+) -> Option<Vec<BoundImport>> {
     let mut imports = Vec::new();
-    for import in extract_imports(&root_mod.ast) {
-        if std_module_name(&import.path).is_some() && !local_module_exists(base_dir, &import.path) {
-            continue;
-        }
+    for (import, target) in module.imports.iter().zip(&module.import_targets) {
+        let Some(target) = target else { continue };
         let alias = import.alias.clone().unwrap_or_else(|| {
             import
                 .path
@@ -407,16 +478,7 @@ pub fn link_modules(
                 .unwrap_or(&import.path)
                 .to_string()
         });
-
-        let import_path = resolve_import_path(
-            base_dir,
-            &import.path,
-            &project_root,
-            &path_deps,
-            &import,
-            diagnostics,
-        )?;
-        let Some(&module_index) = path_index.get(&import_path) else {
+        let Some(&module_index) = path_index.get(target) else {
             diagnostics.push(FluxError::Parse {
                 message: format!("module not found: {}", import.path),
                 span: span_to_miette(import.span),
@@ -424,25 +486,22 @@ pub fn link_modules(
             });
             return None;
         };
-
-        let module = &resolved.modules[module_index];
+        let target_module = &resolved.modules[module_index];
         if let Some(std_name) = std_module_name(&import.path) {
-            if !import.symbols.is_empty() {
-                for sym in &import.symbols {
-                    if !export_in_std_module(std_name, sym) {
-                        diagnostics.push(FluxError::UnknownExport {
-                            module: import.path.clone(),
-                            name: sym.clone(),
-                            span: span_to_miette(import.span),
-                            source_id: import.span.source,
-                        });
-                        return None;
-                    }
+            for sym in &import.symbols {
+                if !export_in_std_module(std_name, sym) {
+                    diagnostics.push(FluxError::UnknownExport {
+                        module: import.path.clone(),
+                        name: sym.clone(),
+                        span: span_to_miette(import.span),
+                        source_id: import.span.source,
+                    });
+                    return None;
                 }
             }
         } else if import.symbols.is_empty() {
-            for export in pub_export_names(&module.ast) {
-                if !export_exists(&module.ast, &export) {
+            for export in pub_export_names(&target_module.ast) {
+                if !export_exists(&target_module.ast, &export) {
                     diagnostics.push(FluxError::UnknownExport {
                         module: import.path.clone(),
                         name: export,
@@ -454,7 +513,7 @@ pub fn link_modules(
             }
         } else {
             for sym in &import.symbols {
-                if !is_pub_export(&module.ast, sym) {
+                if !is_pub_export(&target_module.ast, sym) {
                     diagnostics.push(FluxError::UnknownExport {
                         module: import.path.clone(),
                         name: sym.clone(),
@@ -465,20 +524,14 @@ pub fn link_modules(
                 }
             }
         }
-
         imports.push(BoundImport {
             alias,
             module_index,
-            symbols: import.symbols,
+            symbols: import.symbols.clone(),
             span: import.span,
         });
     }
-
-    Some(LinkedProgram {
-        root: resolved.root.clone(),
-        modules: resolved.modules.clone(),
-        imports,
-    })
+    Some(imports)
 }
 
 fn local_module_exists(base_dir: &Path, import_path: &str) -> bool {

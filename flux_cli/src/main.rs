@@ -46,6 +46,17 @@ enum Commands {
         #[arg(last = true)]
         args: Vec<String>,
     },
+    /// Run every `fn test_*()` in the project's .fl files (filter: substring of `file::name`)
+    Test {
+        /// Only run tests whose `file::name` contains this text
+        filter: Option<String>,
+        /// Run tests with the experimental Cranelift JIT backend
+        #[arg(long, conflicts_with = "vm")]
+        jit: bool,
+        /// Run tests on the VM interpreter
+        #[arg(long)]
+        vm: bool,
+    },
     /// Parse and type-check without running (defaults to the `flux.toml` entry point)
     Check {
         /// Path to the source file (defaults to the entry point declared in ./flux.toml)
@@ -116,6 +127,18 @@ fn main() {
         } => {
             flux_std::set_program_args(args);
             run_file(file.as_deref(), use_jit(jit, vm), no_cache, quiet, verbose).unwrap_or(1)
+        }
+        Commands::Test { filter, jit, vm } => {
+            let root = find_manifest()
+                .and_then(|m| m.parent().map(std::path::Path::to_path_buf))
+                .or_else(|| std::env::current_dir().ok())
+                .unwrap_or_else(|| std::path::PathBuf::from("."));
+            let mode = if use_jit(jit, vm) {
+                ExecutionMode::Jit
+            } else {
+                ExecutionMode::Vm
+            };
+            flux_cli::test_runner::run_tests(&root, filter.as_deref(), mode)
         }
         Commands::Check { file } => match check_file(file.as_deref()) {
             Ok(()) => 0,

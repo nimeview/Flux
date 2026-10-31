@@ -11,11 +11,16 @@ pub struct RuntimeError {
     pub context: Option<String>,
     /// The binding being computed or initialized, when known.
     pub binding: Option<String>,
+    /// Extra text, e.g. the two values of a failed `assert_eq`.
+    pub detail: Option<String>,
 }
 
 impl std::fmt::Display for RuntimeError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "runtime error: {}", self.kind)?;
+        if let Some(detail) = &self.detail {
+            write!(f, ": {detail}")?;
+        }
         if let Some(context) = &self.context {
             write!(f, " in {context}")?;
         }

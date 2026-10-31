@@ -20,6 +20,9 @@ cargo run -p flux_cli -- run
 # With Cranelift JIT (numeric hot paths): add --jit; --quiet drops the banner, --verbose adds events/effects
 cargo run -p flux_cli -- run --verbose programs/demo/counter.fl
 
+# Run every `fn test_*()` in the project (assert / assert_eq from `math`)
+cargo run -p flux_cli -- test
+
 # Type-check only (import-aware)
 cargo run -p flux_cli -- check programs/ok/basics/basics.fl
 
