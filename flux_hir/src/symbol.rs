@@ -49,6 +49,9 @@ pub struct SymbolTable {
     /// Best-effort element type of array-valued module bindings (by name), used to
     /// infer untyped closure parameter types at HOF call sites (e.g. `map(nums, |x| ...)`).
     pub array_elem_hints: HashMap<String, flux_syntax::TypeName>,
+    /// `const` bindings: fixed at compile time, so reading one is not a
+    /// reactive read (pure `fn`s may use them).
+    pub constants: std::collections::HashSet<SymbolId>,
     /// Trait impl methods keyed by `(receiver type tag, method name)`, populated as
     /// `impl Trait for Type` blocks are lowered. Used for exact `x.method(...)` dispatch.
     pub trait_impl_index: HashMap<(String, String), SymbolId>,
@@ -80,6 +83,7 @@ impl SymbolTable {
             pending_bindings: Vec::new(),
             const_bindings: std::collections::HashSet::new(),
             array_elem_hints: HashMap::new(),
+            constants: std::collections::HashSet::new(),
             trait_impl_index: HashMap::new(),
             module_aliases: HashMap::new(),
             qualified_symbols: HashMap::new(),

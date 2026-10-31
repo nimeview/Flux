@@ -1,6 +1,6 @@
 //! Expression → stack-machine bytecode ([`Inst`]) generation.
 
-use flux_hir::{HirExpr, HirMatchArm, HirProgram};
+use flux_hir::{HirExpr, HirMatchArm, HirProgram, HirStmt};
 use flux_syntax::BinaryOp;
 
 use crate::{Inst, IrValue};
@@ -11,6 +11,24 @@ pub(super) fn lower_expr(expr: &HirExpr, program: &HirProgram) -> Vec<Inst> {
     let mut code = Vec::new();
     emit_expr(expr, program, &mut code);
     code
+}
+
+/// A block arm runs inside expression code: `let` and local assignment bind
+/// with `BindLocal`; an expression statement's value is bound to a NUL-named
+/// scratch local (no user name can collide) and dropped.
+fn emit_arm_body(arm: &HirMatchArm, program: &HirProgram, code: &mut Vec<Inst>) {
+    for stmt in &arm.body.stmts {
+        let (value, target) = match stmt {
+            HirStmt::Let(l) => (&l.value, runtime_symbol_name(program, &l.name)),
+            HirStmt::Assign(a) => (&a.value, runtime_symbol_name(program, &a.name)),
+            HirStmt::Expr(e) => (e, Some("\0flux_discard".to_string())),
+            _ => continue,
+        };
+        emit_expr(value, program, code);
+        code.push(Inst::BindLocal(
+            target.unwrap_or_else(|| "\0flux_discard".to_string()),
+        ));
+    }
 }
 
 fn emit_match_bindings(
@@ -270,6 +288,7 @@ fn emit_expr(expr: &HirExpr, program: &HirProgram, code: &mut Vec<Inst>) {
             for arm in arms.iter().rev() {
                 let mut then_code = Vec::new();
                 emit_match_bindings(&temp, arm, program, &mut then_code);
+                emit_arm_body(arm, program, &mut then_code);
                 emit_expr(&arm.expr, program, &mut then_code);
                 let mut cond_code = Vec::new();
                 emit_match_arm_cond(&temp, arm, program, &mut cond_code);

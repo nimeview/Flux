@@ -308,7 +308,31 @@ pub struct HirMatchArm {
     pub bindings: Vec<SymbolId>,
     pub binding_fields: Vec<String>,
     pub guard: Option<HirExpr>,
+    /// Block-arm statements run before `expr`: only `let`, assignment to a
+    /// local, and expression statements (empty for an expression arm).
+    pub body: HirBlock,
     pub expr: HirExpr,
+}
+
+impl HirMatchArm {
+    /// Expressions evaluated by the block-arm statements, in order.
+    pub fn body_exprs(&self) -> impl Iterator<Item = &HirExpr> {
+        self.body.stmts.iter().filter_map(|stmt| match stmt {
+            HirStmt::Let(l) => Some(&l.value),
+            HirStmt::Assign(a) => Some(&a.value),
+            HirStmt::Expr(e) => Some(e),
+            _ => None,
+        })
+    }
+
+    pub fn body_exprs_mut(&mut self) -> impl Iterator<Item = &mut HirExpr> {
+        self.body.stmts.iter_mut().filter_map(|stmt| match stmt {
+            HirStmt::Let(l) => Some(&mut l.value),
+            HirStmt::Assign(a) => Some(&mut a.value),
+            HirStmt::Expr(e) => Some(e),
+            _ => None,
+        })
+    }
 }
 
 #[derive(Debug, Clone)]

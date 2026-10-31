@@ -192,6 +192,7 @@ fn scan_expr(
                 if let Some(guard) = &arm.guard {
                     scan_expr(guard, program, builtin_symbols, calls, has_effect);
                 }
+                scan_block(&arm.body, program, builtin_symbols, calls, has_effect);
                 scan_expr(&arm.expr, program, builtin_symbols, calls, has_effect);
             }
         }

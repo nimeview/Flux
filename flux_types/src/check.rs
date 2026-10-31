@@ -271,7 +271,8 @@ pub fn typecheck_program(
         let inner = if let Some(ty) = &b.ty {
             resolve_hir_type(&ctx, ty, diagnostics)?
         } else {
-            infer_expr(&ctx, &b.value, &types, &program.names, source, diagnostics)?
+            let inferred = infer_expr(&ctx, &b.value, &types, &program.names, source, diagnostics)?;
+            stmt::reject_empty_array_binding(inferred, b.span, diagnostics)
         };
         if inner.is_error() && !diagnostics.has_errors() {
             diagnostics.push(FluxError::TypeMismatch {
@@ -450,9 +451,47 @@ pub fn typecheck_program(
         }
     }
 
+    check_main_signature(program, diagnostics);
+
     if diagnostics.has_errors() {
         None
     } else {
         Some(TypedProgram { types })
+    }
+}
+
+/// `fn main` is the program entry point that `flux run` calls after module
+/// initialization, so it takes no parameters and returns `Int` (the exit
+/// status) or nothing. Imported modules' `main` functions are mangled and
+/// never match.
+fn check_main_signature(program: &HirProgram, diagnostics: &mut DiagnosticBag) {
+    for item in &program.items {
+        let HirItem::Fn(f) = item else { continue };
+        if program.names.get(&f.name).map(String::as_str) != Some("main") {
+            continue;
+        }
+        let ret_ok = match &f.ret {
+            None => true,
+            Some(flux_hir::HirType::Named { name, .. }) => {
+                matches!(name.as_str(), "Int" | "Int64" | "Unit")
+            }
+            Some(_) => false,
+        };
+        if !f.params.is_empty() || !f.type_params.is_empty() || !ret_ok {
+            diagnostics.push(FluxError::TypeMismatch {
+                expected: "`fn main()` or `fn main() -> Int` (no parameters)".into(),
+                found: format!(
+                    "`main` with {} parameter(s){}",
+                    f.params.len(),
+                    if ret_ok {
+                        ""
+                    } else {
+                        " and a non-Int return type"
+                    }
+                ),
+                span: span_to_miette(f.span),
+                source_id: f.span.source,
+            });
+        }
     }
 }

@@ -7,6 +7,9 @@ pub const STD_MODULES: &[(&str, &[&str])] = &[
         &[
             "print",
             "println",
+            "eprint",
+            "eprintln",
+            "args",
             "read_line",
             "read_file",
             "write_file",
@@ -16,7 +19,9 @@ pub const STD_MODULES: &[(&str, &[&str])] = &[
     ),
     (
         "collections",
-        &["len", "range", "push", "pop", "map", "filter", "reduce"],
+        &[
+            "len", "range", "push", "pop", "get", "map", "filter", "reduce",
+        ],
     ),
     (
         "math",
@@ -46,6 +51,9 @@ pub const STD_MODULES: &[(&str, &[&str])] = &[
             "str_replace",
             "str_to_lower",
             "str_to_upper",
+            "to_string",
+            "parse_int",
+            "parse_float",
         ],
     ),
     ("option", &["Some", "None"]),

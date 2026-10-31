@@ -202,6 +202,29 @@ impl Executor {
         }
     }
 
+    /// Parameter count of the user function `name`, if the program defines it.
+    pub fn function_arity(&self, name: &str) -> Option<usize> {
+        self.functions.get(name).map(|f| f.params.len())
+    }
+
+    /// Calls the user function `name` (e.g. a program's `main`). A runtime
+    /// error raised inside it, or already pending, is returned as `Err`.
+    pub fn call(
+        &mut self,
+        name: &str,
+        args: &[RuntimeValue],
+    ) -> Result<RuntimeValue, RuntimeError> {
+        if let Some(err) = &self.trap {
+            return Err(err.clone());
+        }
+        let value = self.call_function(name, args);
+        self.set_trap_context(&format!("`{name}`"), None);
+        match &self.trap {
+            Some(err) => Err(err.clone()),
+            None => Ok(value),
+        }
+    }
+
     pub fn get_number(&self, name: &str) -> Option<f64> {
         self.graph.get_by_name(name).and_then(|v| v.as_float())
     }

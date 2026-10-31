@@ -23,8 +23,8 @@ use std::collections::{HashMap, HashSet};
 use flux_diagnostics::{span_to_miette, DiagnosticBag, FluxError};
 use flux_resolve::{link_modules, root_program, LinkedProgram, ResolvedProgram};
 use flux_syntax::{
-    AssignStmt, Block, ConstBinding, EnumDecl, EventDecl, FnDecl, ImportDecl, Item, OnStmt,
-    Program, RFnDecl, Stmt, StructDecl, TraitDecl, WatchStmt,
+    AssignStmt, Block, ConstBinding, EnumDecl, EventDecl, FnDecl, ImportDecl, Item, LetPattern,
+    LetStmt, OnStmt, Program, RFnDecl, Stmt, StructDecl, TraitDecl, WatchStmt,
 };
 
 use crate::nodes::*;
@@ -56,14 +56,23 @@ pub fn lower_linked_program(
     lower_program_inner(&program, diagnostics, Some(&linked))
 }
 
+/// Module bindings assigned from a `watch`/`on`/fn body, which makes them
+/// sources. An assignment to a name bound locally (param, `for` variable, or a
+/// `let` earlier in an enclosing block) targets that local, not the module.
 fn collect_reassigned_sources(program: &Program) -> HashSet<String> {
     let mut names = HashSet::new();
     for item in &program.items {
         match item {
-            Item::Watch(WatchStmt { body, .. }) => collect_assigns_in_block(body, &mut names),
-            Item::On(OnStmt { body, .. }) => collect_assigns_in_block(body, &mut names),
-            Item::Fn(FnDecl { body, .. }) | Item::RFn(RFnDecl { body, .. }) => {
-                collect_assigns_in_block(body, &mut names);
+            Item::Watch(WatchStmt { body, .. }) => {
+                collect_assigns_in_block(body, &HashSet::new(), &mut names)
+            }
+            Item::On(OnStmt { body, param, .. }) => {
+                let locals = param.iter().map(|p| p.name.clone()).collect();
+                collect_assigns_in_block(body, &locals, &mut names)
+            }
+            Item::Fn(FnDecl { body, params, .. }) | Item::RFn(RFnDecl { body, params, .. }) => {
+                let locals = params.iter().map(|p| p.name.name.clone()).collect();
+                collect_assigns_in_block(body, &locals, &mut names);
             }
             _ => {}
         }
@@ -71,24 +80,51 @@ fn collect_reassigned_sources(program: &Program) -> HashSet<String> {
     names
 }
 
-fn collect_assigns_in_block(block: &Block, names: &mut HashSet<String>) {
+fn collect_assigns_in_block(
+    block: &Block,
+    outer_locals: &HashSet<String>,
+    names: &mut HashSet<String>,
+) {
+    let mut locals = outer_locals.clone();
     for stmt in &block.stmts {
         match stmt {
+            Stmt::Let(LetStmt { pattern, .. }) => match pattern {
+                LetPattern::Ident(id) => {
+                    locals.insert(id.name.clone());
+                }
+                LetPattern::Struct { fields, .. } => {
+                    locals.extend(fields.iter().map(|f| f.name.clone()));
+                }
+            },
             Stmt::Assign(AssignStmt { name, .. }) => {
-                names.insert(name.name.clone());
-            }
-            Stmt::If(s) => {
-                collect_assigns_in_block(&s.then_branch, names);
-                if let Some(flux_syntax::ElseBranch::Block(b)) = &s.else_branch {
-                    collect_assigns_in_block(b, names);
+                if !locals.contains(&name.name) {
+                    names.insert(name.name.clone());
                 }
             }
-            Stmt::While(w) => collect_assigns_in_block(&w.body, names),
-            Stmt::For(f) => collect_assigns_in_block(&f.body, names),
-            Stmt::Watch(w) => collect_assigns_in_block(&w.body, names),
-            Stmt::On(o) => collect_assigns_in_block(&o.body, names),
+            Stmt::If(s) => collect_assigns_in_if(s, &locals, names),
+            Stmt::While(w) => collect_assigns_in_block(&w.body, &locals, names),
+            Stmt::For(f) => {
+                let mut inner = locals.clone();
+                inner.insert(f.name.name.clone());
+                collect_assigns_in_block(&f.body, &inner, names);
+            }
+            Stmt::Watch(w) => collect_assigns_in_block(&w.body, &locals, names),
+            Stmt::On(o) => collect_assigns_in_block(&o.body, &locals, names),
             _ => {}
         }
+    }
+}
+
+fn collect_assigns_in_if(
+    s: &flux_syntax::IfStmt,
+    locals: &HashSet<String>,
+    names: &mut HashSet<String>,
+) {
+    collect_assigns_in_block(&s.then_branch, locals, names);
+    match &s.else_branch {
+        Some(flux_syntax::ElseBranch::Block(b)) => collect_assigns_in_block(b, locals, names),
+        Some(flux_syntax::ElseBranch::If(next)) => collect_assigns_in_if(next, locals, names),
+        None => {}
     }
 }
 
@@ -253,9 +289,15 @@ pub(super) fn declare_item(item: &Item, symbols: &mut SymbolTable) -> Option<Sym
             .declare(&name.name, SymbolKind::Builtin, name.span)
             .err(),
         Item::Impl(_) => None,
-        Item::Const(ConstBinding { name, .. }) => symbols
-            .declare(&name.name, SymbolKind::Source, name.span)
-            .err(),
+        Item::Const(ConstBinding { name, .. }) => {
+            match symbols.declare(&name.name, SymbolKind::Source, name.span) {
+                Ok(id) => {
+                    symbols.constants.insert(id);
+                    None
+                }
+                Err(prev) => Some(prev),
+            }
+        }
         Item::Derived(stmt) => {
             for binding_name in stmt.pattern.binding_names() {
                 if symbols

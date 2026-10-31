@@ -7,6 +7,7 @@ Flux is a statically typed language with **built-in reactivity**: module-level b
 - **Comments**: `//` to end of line
 - **Identifiers**: `[A-Za-z_][A-Za-z0-9_]*`
 - **Literals**: integers, floats, booleans (`true`/`false`), double-quoted strings
+- **String escapes**: `\n` (newline), `\t`, `\r`, `\0`, `\\`, `\"`, and `\{` / `\}` for literal braces (a bare `{name}` interpolates). Any other `\x` is a parse error.
 
 ## 2. Types
 
@@ -102,6 +103,10 @@ Inside `fn` / `rfn`:
 
 `let` / `let mut`, assignment, `if`/`else`, `while`, `for x in expr`, `return expr?`, `break`, `continue`, `emit Event(args?)`, expression statements.
 
+**Block value.** A function body's value is its final expression. When the final statement is an `if … else` (including `else if` chains), the value is the final expression of the branch that runs. Both branches must have compatible types, with no numeric widening. An `if` without `else` has type `Unit`.
+
+**Statement boundaries.** A newline does not end an expression that can continue. A line starting with `-` continues the previous line as a subtraction (`f()` followed by a line `-1` parses as `f() - 1`). Use `0 - 1`, parentheses, or put the value first.
+
 **Derived expressions** (right-hand side of derived bindings) must be pure: no `snap()`, loops, control flow (**E008**), or side-effect builtins such as `print` / I/O (**E017**), including effects reached through user function calls. `snap()` is available in ordinary `fn` bodies for explicit snapshot reads.
 
 ## 5. Expressions
@@ -140,6 +145,10 @@ Arithmetic (`+ - * / %`), comparisons, boolean ops (`&&`, `||`, `!`), `if e { a 
 
 `match x { n if n > 0 => n, _ => 0 }` — patterns may include `if` guards evaluated after the pattern binds.
 
+### Block match arms
+
+An arm may be a block: `Err(e) => { println(e)\n  0 }`. Its statements run in order, after the pattern binds, and the block's **final expression** is the arm's value. A block that does not end in an expression is a parse error. Allowed statements: `let`, assignment to a `let mut` local, and expression statements. `if`/`while`/`for`, `return`/`break`/`continue`, `emit`, and assignments to module bindings or immutable locals are compile errors in an arm block for now; move such logic into a function.
+
 ### String interpolation
 
 `"Hello, {name}!"` desugars to string concatenation.
@@ -165,10 +174,10 @@ Selective imports: `import io { println, read_line }`. Stdlib modules live under
 
 | Module | Symbols |
 |--------|---------|
-| `io` | `print`, `println`, `read_line`, `read_file`, `write_file`, `append_file`, `file_exists` |
-| `collections` | `len`, `range`, `push`, `pop`, `map`, `filter`, `reduce` |
+| `io` | `print`, `println`, `eprint`, `eprintln`, `args`, `read_line`, `read_file`, `write_file`, `append_file`, `file_exists` |
+| `collections` | `len`, `range`, `push`, `pop`, `get`, `map`, `filter`, `reduce` |
 | `math` | `abs`, `min`, `max`, `clamp`, `sqrt`, `floor`, `ceil`, `pow`, `assert`, `assert_eq` |
-| `str` | `str_len`, `str_split`, `str_join`, `str_contains`, `str_trim`, `str_starts_with`, `str_ends_with`, `str_replace`, `str_to_lower`, `str_to_upper` |
+| `str` | `str_len`, `str_split`, `str_join`, `str_contains`, `str_trim`, `str_starts_with`, `str_ends_with`, `str_replace`, `str_to_lower`, `str_to_upper`, `to_string`, `parse_int`, `parse_float` |
 | `option` | `Some`, `None` |
 | `result` | `Ok`, `Err` |
 
@@ -182,6 +191,7 @@ Selective imports: `import io { println, read_line }`. Stdlib modules live under
 | `range` | `fn(Int, Int, Int) -> [Int]` | `start..end-1` with explicit step |
 | `push` | `fn([T], T) -> [T]` | Append element (returns new array) |
 | `pop` | `fn([T]) -> [T]` | Remove last element |
+| `get` | `fn([T], Int) -> Option[T]` | `Some(xs[i])` when `0 <= i < len(xs)`, otherwise `None` (never an error); `i` may be any integer type |
 | `map` | `fn([T], fn(T) -> U) -> [U]` | Transform each element |
 | `filter` | `fn([T], fn(T) -> Bool) -> [T]` | Keep elements matching predicate |
 | `reduce` | `fn([T], U, fn(U, T) -> U) -> U` | Fold to a single accumulator |
@@ -191,6 +201,11 @@ Selective imports: `import io { println, read_line }`. Stdlib modules live under
 | `str_join` | `fn([String], String) -> String` | Join with separator |
 | `str_contains` | `fn(String, String) -> Bool` | Substring check |
 | `str_trim` | `fn(String) -> String` | Trim whitespace |
+| `to_string` | `fn(T) -> String` | Text form of any value; a `String` is returned unchanged (no quotes), others use their display form (`42`, `2.5`, `true`, `[1, 2]`) |
+| `parse_int` | `fn(String) -> Result[Int, String]` | Optional `+`/`-` then ASCII digits, within `Int64`; no whitespace trimming; otherwise `Err` naming the input |
+| `parse_float` | `fn(String) -> Result[Float, String]` | Decimal or exponent notation (`-2.5`, `1e3`); `inf`/`NaN` and non-finite results are `Err`; no trimming |
+| `eprint` / `eprintln` | `fn(String?) -> Unit` | Like `print`/`println`, but to stderr |
+| `args` | `fn() -> [String]` | Program arguments given after `--` (`flux run app.fl -- a b`); empty otherwise |
 | `read_line` | `fn() -> Result[String, String]` | One line from stdin (no trailing newline) |
 | `read_file` | `fn(String) -> Result[String, String]` | Read UTF-8 file contents |
 | `write_file` | `fn(String, String) -> Result[Unit, String]` | Write UTF-8 (create/truncate) |
@@ -198,6 +213,8 @@ Selective imports: `import io { println, read_line }`. Stdlib modules live under
 | `file_exists` | `fn(String) -> Bool` | Whether path exists |
 | `Some` / `None` | Option constructors | |
 | `Ok` / `Err` | Result constructors | |
+
+**Constructor types.** `Some(x)` is `Option[T]` where `T` is the type of `x`; `None` (written bare or as `None()`) is `Option[_]`; `Ok(x)` is `Result[T, _]`; `Err(e)` is `Result[_, E]`. An unknown part `_` takes its type from context: an annotation, a parameter, a return type, or the other branches of an `if`/`match` (`if c { Some(n) } else { None }` is `Option[Int]`). Known parts must still agree (`Some("s")` is not an `Option[Int]`). In an unannotated binding, a part that is still unknown keeps the historical default: `Option[Unit]`, `Unit` for `Ok`'s side, `String` for `Err`'s side. A bare `[]` binding is still an error.
 
 `map`/`filter`/`reduce` are parametric over the array's element type `T` (and accumulator `U` for `reduce`); the typechecker infers `T`/`U` from the argument expressions at each call site rather than from a single fixed signature.
 
@@ -252,6 +269,8 @@ jit = false   # optional; set true to use the experimental JIT for this project
 Pipeline: **parse → resolve imports → HIR → monomorphize → typecheck → IR → VM/JIT**.
 
 - Default: stack VM with reactive graph
+- **Entry point.** If the root module defines `fn main()` or `fn main() -> Int` (no parameters; any other signature is a compile error), `flux run` calls it after module initialization. The program then owns stdout: no banner and no binding dump are printed. The exit status is `main`'s `Int` result (it must be 0..=255; another value is an error with status 1), or 0 for a `Unit` `main`. A runtime error in `main` is reported on stderr with status 1. Without `main`, `flux run` prints the module's reactive bindings as before.
+- `const` bindings are compile-time constants: a pure `fn` (including `main`) may read them. Reading `let` / `let mut` module bindings from a pure `fn` is still a reactive read (E002).
 - JIT opt-in: `--jit`, environment `FLUX_JIT=1`, or `[run] jit = true` in `flux.toml`
 - Cranelift JIT compiles numeric derived nodes, pure functions, and eligible `watch`/`on` bodies with tag-aware int/float arithmetic; `LazyIf` branch deps collected statically; VM fallback for strings, pattern matching, and ineligible IR
 - `flux run --jit --verbose` prints JIT compile/fallback statistics

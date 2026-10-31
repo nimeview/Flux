@@ -115,6 +115,9 @@ fn collect_refs(expr: &HirExpr, out: &mut HashSet<SymbolId>) {
                 if let Some(guard) = &arm.guard {
                     collect_refs(guard, out);
                 }
+                for e in arm.body_exprs() {
+                    collect_refs(e, out);
+                }
                 collect_refs(&arm.expr, out);
             }
         }

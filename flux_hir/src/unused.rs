@@ -191,6 +191,7 @@ fn collect_uses_expr(expr: &HirExpr, used: &mut HashSet<SymbolId>) {
                 if let Some(g) = &arm.guard {
                     collect_uses_expr(g, used);
                 }
+                collect_uses_block(&arm.body, used);
                 collect_uses_expr(&arm.expr, used);
             }
         }

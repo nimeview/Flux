@@ -26,6 +26,7 @@ pub(super) fn parse_expr(source_id: SourceId, pair: pest::iterators::Pair<'_, Ru
                     let pattern = parse_match_pattern(source_id, pattern_pair);
                     let mut guard = None;
                     let mut arm_expr = None;
+                    let mut stmts = Vec::new();
                     for child in ai {
                         match child.as_rule() {
                             Rule::guard => {
@@ -35,12 +36,21 @@ pub(super) fn parse_expr(source_id: SourceId, pair: pest::iterators::Pair<'_, Ru
                                 ));
                             }
                             Rule::expr => arm_expr = Some(parse_expr(source_id, child)),
+                            Rule::arm_block => {
+                                // `parser::invalid_arm_block` guarantees a final expression.
+                                let mut body = super::stmts::parse_block(source_id, child).stmts;
+                                if let Some(Stmt::Expr(tail)) = body.pop() {
+                                    arm_expr = Some(tail);
+                                }
+                                stmts = body;
+                            }
                             _ => {}
                         }
                     }
                     MatchArm {
                         pattern,
                         guard,
+                        stmts,
                         expr: arm_expr.expect("arm expr"),
                         span: asp,
                     }
@@ -315,6 +325,22 @@ pub(super) fn split_numeric_suffix(text: &str) -> (&str, Option<&str>) {
     (text, None)
 }
 
+/// The character a `\x` escape in a string literal stands for, if `x` is one
+/// of `n t r 0 \\ " { }`.
+pub(super) fn unescape(escape: &str) -> Option<char> {
+    Some(match escape.strip_prefix('\\')? {
+        "n" => '\n',
+        "t" => '\t',
+        "r" => '\r',
+        "0" => '\0',
+        "\\" => '\\',
+        "\"" => '"',
+        "{" => '{',
+        "}" => '}',
+        _ => return None,
+    })
+}
+
 fn suffix_type(suffix: &str) -> Option<&'static str> {
     Some(match suffix {
         "i8" => "Int8",
@@ -488,6 +514,10 @@ fn parse_string_lit(source_id: SourceId, pair: pest::iterators::Pair<'_, Rule>) 
                         Rule::string_char => {
                             parts.push(StringPart::Text(piece.as_str().to_string()));
                         }
+                        Rule::string_escape => {
+                            let c = unescape(piece.as_str()).unwrap_or('\u{FFFD}');
+                            parts.push(StringPart::Text(c.to_string()));
+                        }
                         Rule::interp_expr => {
                             let ident = piece.into_inner().next().expect("interp ident");
                             parts.push(StringPart::Ident(ident.as_str().to_string()));
@@ -498,6 +528,11 @@ fn parse_string_lit(source_id: SourceId, pair: pest::iterators::Pair<'_, Rule>) 
             }
             Rule::string_char => {
                 parts.push(StringPart::Text(child.as_str().to_string()));
+            }
+            Rule::string_escape => {
+                // Unknown escapes are rejected earlier (`parser::invalid_escape`).
+                let c = unescape(child.as_str()).unwrap_or('\u{FFFD}');
+                parts.push(StringPart::Text(c.to_string()));
             }
             Rule::interp_expr => {
                 let ident = child.into_inner().next().expect("interp ident");

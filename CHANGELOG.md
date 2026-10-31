@@ -19,7 +19,20 @@ All notable changes to Flux are documented here.
 - Module reassignment only via `let mut` sources in `on`/`watch`
 - All bundled programs migrated to v2 syntax
 
+### Added (general-purpose programs)
+- String escapes `\n \t \r \0 \\ \" \{ \}`; any other `\x` is a parse error
+- `str` module: `to_string`, `parse_int`, `parse_float` (strict; `Result` on bad input)
+- `collections.get(xs, i) -> Option[T]` for bounds-checked element access
+- Program entry point: `fn main()` / `fn main() -> Int` runs after module init; its result is the exit status and no binding dump is printed. `io.eprint`/`eprintln` (stderr) and `io.args()` (arguments after `--`). `const` bindings are readable from pure functions
+- `[]` takes its element type from context (annotation, argument, return, `push`); an unannotated `let xs = []` is a clear error
+- `examples/general/`: text statistics, record aggregation, config validation
+- A trailing `if … else` is a function's value; `match` arms may be blocks `p => { stmts…; value }`
+- `None`, `Ok(x)`, `Err(e)` take their missing type from context (return type, argument, annotation, other branches); bare `None` is now the Option value (it evaluated to the string `"None"`)
+
 ### Fixed
+- **`if … else` statements silently dropped every statement in `else` / `else if` bodies** (parser); `fmt` now prints whole `else if` chains
+- Assigning a local inside a fn no longer turns a same-named module binding into a reactive source (E016); `else if` bodies are scanned for source reassignments
+- Callback params of `map`/`filter`/`reduce` infer from typed fn params and annotated locals (no longer fall back to `Int`)
 - Diagnostics from imported modules render against their own file, line, and snippet (CLI and LSP); missing-module and cyclic-import errors point at the `import`
 - LSP positions use UTF-16 code units; diagnostics for imported files are published on their own URI and cleared on close; saving an import refreshes open dependents
 - JIT no longer leaks tagged arrays/enums/strings per evaluation (scoped heap reclamation)

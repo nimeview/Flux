@@ -10,7 +10,7 @@ use crate::context::ScopeKind;
 use crate::nodes::*;
 use crate::symbol::{SymbolId, SymbolKind, SymbolTable};
 
-use super::exprs::{lower_expr, resolve_name};
+use super::exprs::{lower_expr, record_array_hint, resolve_name};
 
 pub(super) fn lower_block(
     block: &Block,
@@ -56,6 +56,7 @@ fn lower_local_decl(
             };
             let mut reads_reactive = false;
             let scope = tracking_scope(ctx);
+            record_array_hint(symbols, &name.name, ty.as_ref(), Some(value));
             let value = lower_expr(value, symbols, scope, diagnostics, &mut reads_reactive)?;
             Some(vec![HirStmt::Let(HirLet {
                 name: id,
@@ -161,6 +162,21 @@ pub(super) fn lower_match_arm(
         .guard
         .as_ref()
         .and_then(|g| lower_expr(g, symbols, scope, diagnostics, reads_reactive));
+    let mut body = Vec::new();
+    for stmt in &arm.stmts {
+        if let Some(problem) = unsupported_in_arm_block(stmt, symbols) {
+            diagnostics.push(FluxError::Parse {
+                message: format!(
+                    "{problem} is not supported inside a match arm block yet; \
+                     move it into a function"
+                ),
+                span: span_to_miette(arm.span),
+                source_id: arm.span.source,
+            });
+            continue;
+        }
+        body.extend(lower_stmt(stmt, symbols, diagnostics).unwrap_or_default());
+    }
     let expr = lower_expr(&arm.expr, symbols, scope, diagnostics, reads_reactive)?;
     symbols.pop();
     Some(HirMatchArm {
@@ -168,8 +184,36 @@ pub(super) fn lower_match_arm(
         bindings,
         binding_fields,
         guard,
+        body: HirBlock {
+            stmts: body,
+            span: arm.span,
+        },
         expr,
     })
+}
+
+/// Match arms evaluate as expressions, so a block arm may only hold
+/// statements an expression can perform: `let`, assigning a local, and
+/// expression statements. Returns what is not supported, if anything.
+fn unsupported_in_arm_block(stmt: &Stmt, symbols: &SymbolTable) -> Option<&'static str> {
+    match stmt {
+        Stmt::Let(_) | Stmt::Expr(_) => None,
+        Stmt::Assign(a) => match symbols.lookup(&a.name.name).map(|s| s.kind) {
+            Some(SymbolKind::Local { mutable: true }) | None => None,
+            Some(SymbolKind::Local { mutable: false } | SymbolKind::Param) => {
+                Some("assigning an immutable local (declare it with `let mut`)")
+            }
+            Some(_) => Some("assigning a module binding"),
+        },
+        Stmt::Emit(_) => Some("`emit`"),
+        Stmt::Return(_) => Some("`return`"),
+        Stmt::Break(_) => Some("`break`"),
+        Stmt::Continue(_) => Some("`continue`"),
+        Stmt::If(_) => Some("an `if` statement (use an `if` expression)"),
+        Stmt::While(_) => Some("`while`"),
+        Stmt::For(_) => Some("`for`"),
+        Stmt::Watch(_) | Stmt::On(_) => Some("`watch`/`on`"),
+    }
 }
 
 fn lower_stmt(

@@ -164,9 +164,15 @@ fn declare_item_renamed(
         Item::Derived(d) => symbols
             .declare(mangled, SymbolKind::Source, d.pattern.span())
             .err(),
-        Item::Const(ConstBinding { name, .. }) => symbols
-            .declare(mangled, SymbolKind::Source, name.span)
-            .err(),
+        Item::Const(ConstBinding { name, .. }) => {
+            match symbols.declare(mangled, SymbolKind::Source, name.span) {
+                Ok(id) => {
+                    symbols.constants.insert(id);
+                    None
+                }
+                Err(prev) => Some(prev),
+            }
+        }
         _ => None,
     }
 }

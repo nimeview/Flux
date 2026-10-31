@@ -11,7 +11,7 @@ use flux_cli::repl;
 use flux_diagnostics::SourceFile;
 use flux_fmt::format_source;
 use flux_lsp::analyze_source;
-use flux_runtime::ExecutionMode;
+use flux_runtime::{ExecutionMode, RuntimeValue};
 use flux_wasm::compile_to_wasm;
 
 #[derive(Parser)]
@@ -42,6 +42,9 @@ enum Commands {
         /// Also print declared events and watch/on effect handlers
         #[arg(long)]
         verbose: bool,
+        /// Arguments for the program, after `--` (read with `args()` from `io`)
+        #[arg(last = true)]
+        args: Vec<String>,
     },
     /// Parse and type-check without running (defaults to the `flux.toml` entry point)
     Check {
@@ -109,10 +112,11 @@ fn main() {
             no_cache,
             quiet,
             verbose,
-        } => match run_file(file.as_deref(), use_jit(jit, vm), no_cache, quiet, verbose) {
-            Ok(()) => 0,
-            Err(()) => 1,
-        },
+            args,
+        } => {
+            flux_std::set_program_args(args);
+            run_file(file.as_deref(), use_jit(jit, vm), no_cache, quiet, verbose).unwrap_or(1)
+        }
         Commands::Check { file } => match check_file(file.as_deref()) {
             Ok(()) => 0,
             Err(()) => 1,
@@ -201,13 +205,17 @@ fn use_jit(cli_jit: bool, cli_vm: bool) -> bool {
         .is_some_and(|manifest| manifest.run.jit)
 }
 
+/// Runs a program and returns the process exit status. With a `fn main`, the
+/// program owns stdout: `main` runs after module initialization, its `Int`
+/// result is the exit status (Unit = 0), and no banner or binding dump is
+/// printed. Without `main`, the reactive state is printed as before.
 fn run_file(
     file: Option<&str>,
     jit: bool,
     no_cache: bool,
     quiet: bool,
     verbose: bool,
-) -> Result<(), ()> {
+) -> Result<i32, ()> {
     let path = resolve_run_target(file)?;
     let mode = if jit {
         ExecutionMode::Jit
@@ -220,8 +228,17 @@ fn run_file(
     }
 
     match compile_file_with_options(std::path::Path::new(&path), options) {
-        Ok(compiled) => {
+        Ok(mut compiled) => {
             let _ = report_warnings(&compiled.source, &compiled.sources, &compiled.warnings);
+            if compiled.executor.function_arity("main") == Some(0) {
+                let status = run_main(&mut compiled.executor);
+                if verbose {
+                    if let Some(stats) = compiled.executor.jit_stats() {
+                        print_jit_stats(&stats);
+                    }
+                }
+                return Ok(status);
+            }
             if !quiet {
                 println!("--- Flux runtime ---");
             }
@@ -231,9 +248,31 @@ fn run_file(
                     print_jit_stats(&stats);
                 }
             }
-            Ok(())
+            Ok(0)
         }
-        Err(failed) => report_failure(failed.source(), &failed.sources, &failed.diagnostics),
+        Err(failed) => {
+            report_failure(failed.source(), &failed.sources, &failed.diagnostics).map(|()| 1)
+        }
+    }
+}
+
+fn run_main(executor: &mut flux_runtime::Executor) -> i32 {
+    match executor.call("main", &[]) {
+        Ok(RuntimeValue::Unit) => 0,
+        Ok(value) => match value.as_int().and_then(|n| u8::try_from(n).ok()) {
+            Some(code) => i32::from(code),
+            None => {
+                eprintln!(
+                    "error: `main` returned {}; an exit status must be 0..=255",
+                    value.display_string()
+                );
+                1
+            }
+        },
+        Err(err) => {
+            eprintln!("error: {err}");
+            1
+        }
     }
 }
 

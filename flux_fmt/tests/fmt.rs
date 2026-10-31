@@ -66,3 +66,21 @@ fn comment_markers_inside_strings_are_not_comments() {
         "let s = \"a // b\"\n"
     );
 }
+
+#[test]
+fn string_escapes_survive_formatting() {
+    let input = "let s = \"a\\tb\\nc \\\"q\\\" \\\\ \\{x\\}\"\n";
+    assert_eq!(format_source(input).expect("format"), input);
+}
+
+#[test]
+fn keeps_every_branch_of_an_if_chain() {
+    let input = "fn f(c: Int) -> Int {\n    let mut r = 0\n    if c > 10 {\n        r = 1\n    } else if c == 0 {\n        r = 5\n    } else {\n        r = 9\n    }\n    r\n}\n";
+    assert_eq!(format_source(input).expect("format"), input);
+}
+
+#[test]
+fn block_match_arms_format_on_their_own_lines() {
+    let input = "let a = match parse_int(\"4\") {\n    Ok(v) => {\n        let w = v + 1\n        w\n    },\n    Err(_) => 0\n}\n";
+    assert_eq!(format_source(input).expect("format"), input);
+}

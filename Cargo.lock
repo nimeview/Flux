@@ -594,6 +594,7 @@ dependencies = [
  "flux_lsp",
  "flux_resolve",
  "flux_runtime",
+ "flux_std",
  "flux_syntax",
  "flux_types",
  "flux_value",

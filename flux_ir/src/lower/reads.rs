@@ -186,6 +186,9 @@ fn collect_expr_reads(
                 if let Some(guard) = &arm.guard {
                     collect_expr_reads(guard, program, reactive_fns, set);
                 }
+                for stmt in &arm.body.stmts {
+                    collect_stmt_reads(stmt, program, reactive_fns, set);
+                }
                 collect_expr_reads(&arm.expr, program, reactive_fns, set);
             }
         }

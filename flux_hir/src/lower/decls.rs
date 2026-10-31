@@ -12,7 +12,7 @@ use crate::nodes::{lower_type, *};
 use crate::symbol::{BindingKind, SymbolKind, SymbolTable};
 
 use super::constfold::fold_const_hir_expr;
-use super::exprs::{infer_syntax_elem_type, lower_expr};
+use super::exprs::{lower_expr, record_array_hint};
 use super::funcs::lower_fn;
 use super::stmts::lower_if;
 
@@ -352,9 +352,7 @@ pub(super) fn lower_binding(
     symbols: &mut SymbolTable,
     diagnostics: &mut DiagnosticBag,
 ) -> Option<HirBinding> {
-    if let Some(elem_ty) = infer_syntax_elem_type(value, symbols) {
-        symbols.array_elem_hints.insert(name.name.clone(), elem_ty);
-    }
+    record_array_hint(symbols, &name.name, ty, Some(value));
     let sym_id = symbols.lookup(&name.name)?.id;
     let mut reads_reactive = false;
     let mut lowered = lower_expr(

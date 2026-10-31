@@ -14,10 +14,14 @@ pub use flux_value::Value;
 pub const BUILTIN_FNS: &[&str] = &[
     "print",
     "println",
+    "eprint",
+    "eprintln",
+    "args",
     "len",
     "range",
     "push",
     "pop",
+    "get",
     "map",
     "filter",
     "reduce",
@@ -31,6 +35,9 @@ pub const BUILTIN_FNS: &[&str] = &[
     "str_replace",
     "str_to_lower",
     "str_to_upper",
+    "to_string",
+    "parse_int",
+    "parse_float",
     "abs",
     "min",
     "max",
@@ -76,6 +83,9 @@ pub const PURE_INTRINSICS: &[&str] = &[
 pub const SIDE_EFFECT_BUILTINS: &[&str] = &[
     "print",
     "println",
+    "eprint",
+    "eprintln",
+    "args",
     "read_line",
     "read_file",
     "write_file",
@@ -124,6 +134,18 @@ fn range_args(args: &[Value]) -> Option<(i64, i64, i64)> {
     })
 }
 
+static PROGRAM_ARGS: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
+
+/// Sets what `args()` returns: the arguments after `--` in
+/// `flux run file.fl -- a b`. Only the first call takes effect.
+pub fn set_program_args(args: Vec<String>) {
+    let _ = PROGRAM_ARGS.set(args);
+}
+
+fn program_args() -> Vec<String> {
+    PROGRAM_ARGS.get().cloned().unwrap_or_default()
+}
+
 /// What `print`/`println` write: a top-level string as its raw text; any other
 /// value (including strings nested in arrays) in its quoted display form.
 fn print_text(value: &Value) -> String {
@@ -149,6 +171,23 @@ pub fn call_builtin(name: &str, args: &[Value]) -> Option<Value> {
             }
             Some(Value::Unit)
         }
+        "eprint" => {
+            if let Some(v) = args.first() {
+                eprint!("{}", print_text(v));
+            }
+            Some(Value::Unit)
+        }
+        "eprintln" => {
+            if let Some(v) = args.first() {
+                eprintln!("{}", print_text(v));
+            } else {
+                eprintln!();
+            }
+            Some(Value::Unit)
+        }
+        "args" => Some(Value::Array(
+            program_args().into_iter().map(Value::String).collect(),
+        )),
         "len" => {
             let n = match args.first()? {
                 Value::String(s) => s.chars().count() as i64,
@@ -168,6 +207,16 @@ pub fn call_builtin(name: &str, args: &[Value]) -> Option<Value> {
             let mut out = arr;
             out.push(val);
             Some(Value::Array(out))
+        }
+        // `get(xs, i)`: `Some(xs[i])` when `0 <= i < len(xs)`, otherwise `None`.
+        "get" => {
+            let item = match (args.first()?, int_arg(args.get(1))) {
+                (Value::Array(items), Some(i)) => {
+                    usize::try_from(i).ok().and_then(|i| items.get(i)).cloned()
+                }
+                _ => None,
+            };
+            Some(Value::Option(item.map(Box::new)))
         }
         "pop" => {
             let mut arr = match args.first()? {
@@ -237,6 +286,9 @@ pub fn call_builtin(name: &str, args: &[Value]) -> Option<Value> {
         "str_replace" => Some(str_ext::replace(args.first()?, args.get(1)?, args.get(2)?)?),
         "str_to_lower" => Some(str_ext::to_lower(args.first()?)?),
         "str_to_upper" => Some(str_ext::to_upper(args.first()?)?),
+        "to_string" => Some(Value::String(print_text(args.first()?))),
+        "parse_int" => Some(str_ext::parse_int(args.first()?)),
+        "parse_float" => Some(str_ext::parse_float(args.first()?)),
         "abs" => math::abs(args.first()?),
         "min" => math::min(args.first()?, args.get(1)?),
         "max" => math::max(args.first()?, args.get(1)?),

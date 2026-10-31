@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 
 use flux_diagnostics::{span_to_miette, DiagnosticBag, FluxError, SourceId};
-use flux_hir::{HirExpr, HirMatchArm, SymbolId};
+use flux_hir::{HirExpr, HirMatchArm, HirStmt, SymbolId};
 use flux_syntax::UnaryOp;
 
 use crate::types::{resolve_type_name, Type};
@@ -57,6 +57,65 @@ fn bind_match_arm_locals(
             scope.insert(arm.bindings[0], inner.clone());
         }
         _ => {}
+    }
+}
+
+/// Types a block arm's statements in order, extending `scope` with its lets so
+/// the arm's final expression can use them.
+fn infer_arm_body(
+    ctx: &TypeCheckContext,
+    arm: &HirMatchArm,
+    scope: &mut HashMap<SymbolId, Type>,
+    names: &HashMap<SymbolId, String>,
+    source: SourceId,
+    diagnostics: &mut DiagnosticBag,
+) {
+    for stmt in &arm.body.stmts {
+        match stmt {
+            HirStmt::Let(l) => {
+                let value = infer_expr(ctx, &l.value, scope, names, source, diagnostics)
+                    .unwrap_or(Type::Error);
+                let ty = match &l.ty {
+                    Some(ann) => {
+                        let declared =
+                            super::super::resolve::resolve_hir_type(ctx, ann, diagnostics)
+                                .unwrap_or(Type::Error);
+                        check_assignable(&declared, &value, l.value.span(), diagnostics);
+                        declared
+                    }
+                    None => value,
+                };
+                scope.insert(l.name, ty);
+            }
+            HirStmt::Assign(a) => {
+                let value = infer_expr(ctx, &a.value, scope, names, source, diagnostics)
+                    .unwrap_or(Type::Error);
+                if let Some(target) = scope.get(&a.name).cloned() {
+                    check_assignable(&target, &value, a.value.span(), diagnostics);
+                }
+            }
+            HirStmt::Expr(e) => {
+                let _ = infer_expr(ctx, e, scope, names, source, diagnostics);
+            }
+            _ => {}
+        }
+    }
+}
+
+fn check_assignable(
+    expected: &Type,
+    found: &Type,
+    span: flux_diagnostics::Span,
+    diagnostics: &mut DiagnosticBag,
+) {
+    let (e, f) = (unwrap_value_type(expected), unwrap_value_type(found));
+    if !e.is_error() && !f.is_error() && !types_compatible(&e, &f) {
+        diagnostics.push(FluxError::TypeMismatch {
+            expected: e.display(),
+            found: f.display(),
+            span: span_to_miette(span),
+            source_id: span.source,
+        });
     }
 }
 
@@ -243,7 +302,7 @@ pub(crate) fn infer_expr(
             if super::super::util::numeric_compatible(&tv, &ev) {
                 Some(super::super::util::widen_numeric(&tv, &ev))
             } else if types_compatible(&tv, &ev) {
-                Some(tv)
+                Some(super::super::util::refine_unknown(&tv, &ev))
             } else {
                 diagnostics.push(FluxError::TypeMismatch {
                     expected: tv.display(),
@@ -256,7 +315,7 @@ pub(crate) fn infer_expr(
         }
         HirExpr::Array { elems, .. } => {
             if elems.is_empty() {
-                return Some(Type::Array(Box::new(Type::Unit)));
+                return Some(Type::Array(Box::new(Type::Empty)));
             }
             let first = infer_expr(ctx, &elems[0], types, names, source, diagnostics)?;
             let elem = unwrap_value_type(&first);
@@ -330,6 +389,7 @@ pub(crate) fn infer_expr(
                         });
                     }
                 }
+                infer_arm_body(ctx, arm, &mut arm_scope, names, source, diagnostics);
                 arm_types.push(infer_expr(
                     ctx,
                     &arm.expr,
@@ -379,6 +439,8 @@ pub(crate) fn infer_expr(
                         source_id: span.source,
                     });
                     unified = Type::Error;
+                } else {
+                    unified = super::super::util::refine_unknown(&unified, &arm_ty);
                 }
             }
             Some(unified)

@@ -240,7 +240,7 @@ impl Executor {
         }
     }
 
-    fn call_function(&mut self, name: &str, args: &[RuntimeValue]) -> RuntimeValue {
+    pub(crate) fn call_function(&mut self, name: &str, args: &[RuntimeValue]) -> RuntimeValue {
         // Higher-order builtins are handled here so they can invoke user functions/closures.
         if flux_std::is_hof(name) {
             return match name {

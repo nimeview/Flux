@@ -1,0 +1,72 @@
+// Config utility: read `key = value` lines, skip comments, validate required keys.
+// The exit status is the number of problems found.
+import io { println }
+import str { str_split, str_trim, str_starts_with, str_contains, str_len, to_string, parse_int }
+import collections { push, len, get }
+
+struct Entry {
+    key: String,
+    value: String
+}
+
+fn part(parts: [String], index: Int) -> String {
+    match get(parts, index) {
+        Some(p) => str_trim(p),
+        None => ""
+    }
+}
+
+fn parse_entry(line: String) -> Entry {
+    let parts = str_split(line, "=")
+    Entry { key: part(parts, 0), value: part(parts, 1) }
+}
+
+fn entries(text: String) -> [Entry] {
+    let mut out: [Entry] = []
+    for raw in str_split(text, "\n") {
+        let line = str_trim(raw)
+        if str_len(line) > 0 && !str_starts_with(line, "#") && str_contains(line, "=") {
+            out = push(out, parse_entry(line))
+        }
+    }
+    out
+}
+
+fn lookup(es: [Entry], key: String) -> String {
+    let mut found = ""
+    for e in es {
+        if e.key == key { found = e.value }
+    }
+    found
+}
+
+fn check(text: String) -> Int {
+    let es = entries(text)
+    println("entries: " + to_string(len(es)))
+    let mut problems = 0
+    let name = lookup(es, "name")
+    if str_len(name) == 0 {
+        println("missing: name")
+        problems = problems + 1
+    }
+    let port = match parse_int(lookup(es, "port")) {
+        Ok(p) => p,
+        Err(_) => -1
+    }
+    if port < 1 || port > 65535 {
+        println("invalid: port")
+        problems = problems + 1
+    }
+    if problems == 0 {
+        println("ok: " + name + " on port " + to_string(port))
+        0
+    } else {
+        problems
+    }
+}
+
+const CONFIG = "# service config\nname = api\nport = 8080\n\ndebug = true\n"
+
+fn main() -> Int {
+    check(CONFIG)
+}

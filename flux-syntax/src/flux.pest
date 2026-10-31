@@ -108,7 +108,8 @@ for_stmt = { "for" ~ ident ~ "in" ~ expr ~ block }
 expr = { match_expr | if_expr | or_expr }
 
 match_expr = { "match" ~ or_expr ~ "{" ~ match_arm ~ ("," ~ match_arm)* ~ "}" }
-match_arm = { match_pattern ~ guard? ~ "=>" ~ expr }
+match_arm = { match_pattern ~ guard? ~ "=>" ~ (arm_block | expr) }
+arm_block = { "{" ~ block_stmts ~ "}" }
 guard = { "if" ~ expr }
 match_pattern = { tuple_pat | struct_pat | simple_pat }
 simple_pat = { ident }
@@ -177,7 +178,8 @@ float_suffix = _{ "f32" | "f64" }
 int_lit = ${ ASCII_DIGIT+ ~ int_suffix? }
 int_suffix = _{ "i8" | "i16" | "i32" | "i64" | "u8" | "u16" | "u32" | "u64" }
 string_lit = ${ "\"" ~ string_content* ~ "\"" }
-string_content = _{ string_char | interp_expr }
-string_char = @{ !( "\"" | "{" ) ~ ANY }
+string_content = _{ string_escape | string_char | interp_expr }
+string_escape = @{ "\\" ~ ANY }
+string_char = @{ !( "\"" | "{" | "\\" ) ~ ANY }
 interp_expr = { "{" ~ ident ~ "}" }
 bool_lit = { "true" | "false" }

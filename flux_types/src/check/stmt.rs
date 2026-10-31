@@ -15,7 +15,7 @@ use crate::types::Type;
 use super::infer::infer_expr;
 
 use super::resolve::resolve_hir_type;
-use super::util::{types_compatible, unwrap_value_type};
+use super::util::{default_unknown_variants, mentions_empty, types_compatible, unwrap_value_type};
 
 fn require_bool(
     ctx: &TypeCheckContext,
@@ -141,6 +141,9 @@ fn check_derived_expr(
             for arm in arms {
                 if let Some(guard) = &arm.guard {
                     check_derived_expr(ctx, guard, names, diagnostics);
+                }
+                for e in arm.body_exprs() {
+                    check_derived_expr(ctx, e, names, diagnostics);
                 }
                 check_derived_expr(ctx, &arm.expr, names, diagnostics);
             }
@@ -374,8 +377,9 @@ fn check_stmt(
                     .and_then(|t| resolve_hir_type(ctx, t, diagnostics))
                     .unwrap_or_else(|| {
                         // Use scope (includes params + prior locals) not just module-level types.
-                        infer_expr(ctx, &s.value, scope, names, source, diagnostics)
-                            .unwrap_or(Type::Error)
+                        let inferred = infer_expr(ctx, &s.value, scope, names, source, diagnostics)
+                            .unwrap_or(Type::Error);
+                        reject_empty_array_binding(inferred, s.span, diagnostics)
                     });
             scope.insert(s.name, ty);
             if !s.mutable {
@@ -578,4 +582,24 @@ fn check_stmt(
             );
         }
     }
+}
+
+/// A binding cannot take its type from a bare `[]`: there is no element type
+/// to infer. Reports that and returns the type to use instead (elements `Error`).
+pub(super) fn reject_empty_array_binding(
+    ty: Type,
+    span: flux_diagnostics::Span,
+    diagnostics: &mut DiagnosticBag,
+) -> Type {
+    let ty = default_unknown_variants(&ty);
+    if !mentions_empty(&ty) {
+        return ty;
+    }
+    diagnostics.push(FluxError::TypeMismatch {
+        expected: "an element type annotation, e.g. `let xs: [String] = []`".into(),
+        found: "empty array `[]` with no element type".into(),
+        span: span_to_miette(span),
+        source_id: span.source,
+    });
+    Type::Array(Box::new(Type::Error))
 }

@@ -685,6 +685,7 @@ fn collect_expr_local_declarations(expr: &HirExpr, out: &mut std::collections::H
                 if let Some(guard) = &arm.guard {
                     collect_expr_local_declarations(guard, out);
                 }
+                collect_block_local_declarations(&arm.body, out);
                 collect_expr_local_declarations(&arm.expr, out);
             }
         }
@@ -820,6 +821,7 @@ fn remap_expr_symbols(expr: &mut HirExpr, remap: &HashMap<SymbolId, SymbolId>) {
                 if let Some(guard) = &mut arm.guard {
                     remap_expr_symbols(guard, remap);
                 }
+                remap_block_symbols(&mut arm.body, remap);
                 remap_expr_symbols(&mut arm.expr, remap);
             }
         }
@@ -1104,6 +1106,7 @@ fn walk_expr_calls(
         } => {
             walk_expr_calls(scrutinee, program, generic_fns, out);
             for arm in arms {
+                walk_block_calls(&arm.body, program, generic_fns, out);
                 walk_expr_calls(&arm.expr, program, generic_fns, out);
             }
         }
@@ -1246,6 +1249,7 @@ fn collect_calls_in_expr(
         } => {
             collect_calls_in_expr(program, scrutinee, base_name, out);
             for arm in arms {
+                collect_calls_in_block(program, &arm.body, base_name, out);
                 collect_calls_in_expr(program, &arm.expr, base_name, out);
             }
         }
@@ -1562,6 +1566,14 @@ fn rewrite_expr_matching_calls(
         } => {
             rewrite_expr_matching_calls(scrutinee, from, to, match_types, symbol_types, program);
             for arm in arms {
+                rewrite_block_matching_calls(
+                    &mut arm.body,
+                    from,
+                    to,
+                    match_types,
+                    symbol_types,
+                    program,
+                );
                 rewrite_expr_matching_calls(
                     &mut arm.expr,
                     from,

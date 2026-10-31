@@ -233,6 +233,7 @@ fn collect_refs_expr(expr: &HirExpr, map: &mut HashMap<SymbolId, Vec<Span>>) {
                 if let Some(g) = &arm.guard {
                     collect_refs_expr(g, map);
                 }
+                collect_refs_block(&arm.body, map);
                 collect_refs_expr(&arm.expr, map);
             }
         }

@@ -20,6 +20,7 @@ flux_types = { path = "../flux_types" }
 flux_ir = { path = "../flux_ir" }
 flux_runtime = { path = "../flux-runtime", features = ["jit"] }
 flux_resolve = { path = "../flux_resolve" }
+flux_std = { path = "../flux_std" }
 flux_fmt = { path = "../flux_fmt" }
 flux_lsp = { path = "../flux_lsp" }
 flux_wasm = { path = "../flux_wasm" }

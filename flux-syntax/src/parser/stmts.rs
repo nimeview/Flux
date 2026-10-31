@@ -188,10 +188,15 @@ pub(super) fn parse_if_stmt(
     let cond = parse_expr(source_id, inner.next().expect("if cond"));
     let then_branch = parse_block(source_id, inner.next().expect("if then"));
     let else_branch = inner.next().map(|p| {
+        // `else_clause = { "else" ~ (if_stmt | block) }`: branch on its child.
+        let p = if p.as_rule() == Rule::else_clause {
+            p.into_inner().next().expect("else body")
+        } else {
+            p
+        };
         let else_span = span_of(source_id, &p);
         match p.as_rule() {
             Rule::if_stmt => ElseBranch::If(Box::new(parse_if_stmt(source_id, p, else_span))),
-            Rule::block => ElseBranch::Block(parse_block(source_id, p)),
             _ => ElseBranch::Block(parse_block(source_id, p)),
         }
     });

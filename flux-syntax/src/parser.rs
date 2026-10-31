@@ -61,6 +61,25 @@ pub fn parse_program(
             });
             return None;
         }
+        if let Some((span, escape)) = invalid_escape(source_id, pair.clone()) {
+            diagnostics.push(FluxError::Parse {
+                message: format!(
+                    "unknown escape sequence `{escape}` in string literal \
+                     (supported: \\n \\t \\r \\0 \\\\ \\\" \\{{ \\}})"
+                ),
+                span: span_to_miette(span),
+                source_id,
+            });
+            return None;
+        }
+        if let Some(span) = invalid_arm_block(source_id, pair.clone()) {
+            diagnostics.push(FluxError::Parse {
+                message: "a block match arm must end with an expression, which is its value".into(),
+                span: span_to_miette(span),
+                source_id,
+            });
+            return None;
+        }
         if let Some(item) = parse_item(source_id, pair) {
             items.push(item);
         }
@@ -70,6 +89,38 @@ pub fn parse_program(
         source: source_id,
         items,
     })
+}
+
+/// An `arm_block` whose last statement is not an expression statement.
+fn invalid_arm_block(source_id: SourceId, pair: pest::iterators::Pair<'_, Rule>) -> Option<Span> {
+    if pair.as_rule() == Rule::arm_block {
+        let ends_with_expr = pair
+            .clone()
+            .into_inner()
+            .next()
+            .and_then(|stmts| stmts.into_inner().next_back())
+            .and_then(|stmt| stmt.into_inner().next())
+            .is_some_and(|inner| inner.as_rule() == Rule::expr_stmt);
+        if !ends_with_expr {
+            return Some(span_of(source_id, &pair));
+        }
+    }
+    pair.into_inner()
+        .find_map(|child| invalid_arm_block(source_id, child))
+}
+
+fn invalid_escape(
+    source_id: SourceId,
+    pair: pest::iterators::Pair<'_, Rule>,
+) -> Option<(Span, String)> {
+    if pair.as_rule() == Rule::string_escape {
+        if exprs::unescape(pair.as_str()).is_none() {
+            return Some((span_of(source_id, &pair), pair.as_str().to_string()));
+        }
+        return None;
+    }
+    pair.into_inner()
+        .find_map(|child| invalid_escape(source_id, child))
 }
 
 fn invalid_integer_literal(

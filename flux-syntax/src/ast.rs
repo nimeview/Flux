@@ -377,6 +377,10 @@ pub enum StringPart {
 pub struct MatchArm {
     pub pattern: MatchPattern,
     pub guard: Option<Expr>,
+    /// Statements of a block arm `p => { stmts…; expr }`, run before `expr`
+    /// (empty for an expression arm).
+    pub stmts: Vec<Stmt>,
+    /// The arm's value: the expression, or a block arm's final expression.
     pub expr: Expr,
     pub span: Span,
 }

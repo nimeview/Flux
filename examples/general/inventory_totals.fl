@@ -1,0 +1,49 @@
+// Data transform: parse `name,qty,price` records and total them.
+import io { println }
+import str { str_split, str_trim, to_string, parse_int, parse_float }
+import collections { get }
+
+struct Line {
+    name: String,
+    qty: Int,
+    price: Float
+}
+
+fn field(cols: [String], index: Int) -> String {
+    match get(cols, index) {
+        Some(c) => str_trim(c),
+        None => ""
+    }
+}
+
+fn parse_line(row: String) -> Line {
+    let cols = str_split(row, ",")
+    let qty = match parse_int(field(cols, 1)) {
+        Ok(n) => n,
+        Err(_) => 0
+    }
+    let price = match parse_float(field(cols, 2)) {
+        Ok(p) => p,
+        Err(_) => 0.0
+    }
+    Line { name: field(cols, 0), qty: qty, price: price }
+}
+
+fn summarize(data: String) -> Float {
+    let mut total = 0.0
+    let mut count = 0
+    for row in str_split(data, "\n") {
+        let line = parse_line(row)
+        let cost = (line.qty as Float) * line.price
+        println(line.name + ": " + to_string(line.qty) + " x " + to_string(line.price) + " = " + to_string(cost))
+        total = total + cost
+        count = count + line.qty
+    }
+    println("items: " + to_string(count) + ", total: " + to_string(total))
+    total
+}
+
+fn main() -> Int {
+    let total = summarize("apple,3,0.5\npear,2,0.75\nfig,10,0.2")
+    if total > 0.0 { 0 } else { 1 }
+}

@@ -11,6 +11,9 @@ cargo test
 # Execute a program
 cargo run -p flux_cli -- run programs/ok/basics/basics.fl
 
+# A program with `fn main() -> Int` runs it, prints only its own output, and exits with its result
+cargo run -p flux_cli -- run examples/general/text_stats.fl -- examples/general/text_stats_input.txt
+
 # Run the entry point declared in ./flux.toml (no file argument needed)
 cargo run -p flux_cli -- run
 

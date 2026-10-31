@@ -83,6 +83,55 @@ pub(crate) fn widen_numeric(a: &Type, b: &Type) -> Type {
     }
 }
 
+/// `a` with each unknown (`Empty`) part replaced by the matching part of `b`:
+/// joining `Option<_>` with `Option<Int>` gives `Option<Int>`.
+pub(crate) fn refine_unknown(a: &Type, b: &Type) -> Type {
+    match (a, b) {
+        (Type::Empty, other) => other.clone(),
+        (Type::Array(x), Type::Array(y)) => Type::Array(Box::new(refine_unknown(x, y))),
+        (Type::Option(x), Type::Option(y)) => Type::Option(Box::new(refine_unknown(x, y))),
+        (Type::Result { ok: ao, err: ae }, Type::Result { ok: bo, err: be }) => Type::Result {
+            ok: Box::new(refine_unknown(ao, bo)),
+            err: Box::new(refine_unknown(ae, be)),
+        },
+        _ => a.clone(),
+    }
+}
+
+/// Unknown `Option`/`Result` parts left in an unannotated binding take their
+/// historical defaults (`Option<Unit>`, `Ok` side `Unit`, `Err` side `String`).
+/// Array elements are not defaulted: a bare `[]` binding stays an error.
+pub(crate) fn default_unknown_variants(ty: &Type) -> Type {
+    let fill = |t: &Type, default: Type| match t {
+        Type::Empty => default,
+        other => default_unknown_variants(other),
+    };
+    match ty {
+        Type::Option(x) => Type::Option(Box::new(fill(x, Type::Unit))),
+        Type::Result { ok, err } => Type::Result {
+            ok: Box::new(fill(ok, Type::Unit)),
+            err: Box::new(fill(err, Type::String)),
+        },
+        Type::Array(x) => Type::Array(Box::new(match x.as_ref() {
+            Type::Empty => Type::Empty,
+            other => default_unknown_variants(other),
+        })),
+        Type::Cell(x) => Type::Cell(Box::new(default_unknown_variants(x))),
+        Type::Read(x) => Type::Read(Box::new(default_unknown_variants(x))),
+        other => other.clone(),
+    }
+}
+
+/// Whether `ty` still contains the element type of a bare `[]`.
+pub(crate) fn mentions_empty(ty: &Type) -> bool {
+    match ty {
+        Type::Empty => true,
+        Type::Array(e) | Type::Option(e) | Type::Cell(e) | Type::Read(e) => mentions_empty(e),
+        Type::Result { ok, err } => mentions_empty(ok) || mentions_empty(err),
+        _ => false,
+    }
+}
+
 pub(crate) fn types_compatible(expected: &Type, found: &Type) -> bool {
     if expected.is_error() || found.is_error() {
         return true;
@@ -105,6 +154,10 @@ pub(crate) fn types_compatible(expected: &Type, found: &Type) -> bool {
         // result explicitly; value boundaries require an explicit `as` cast.
         (Type::Cell(e), Type::Cell(f)) | (Type::Read(e), Type::Read(f)) => types_compatible(e, f),
         (Type::Option(e), Type::Option(f)) => types_compatible(e, f),
+        // A part no constructor could know (`[]`, `None`, `Ok`'s error, …)
+        // fits any type in either direction; `refine_unknown` fills it in.
+        (_, Type::Empty) | (Type::Empty, _) => true,
+        (Type::Array(e), Type::Array(f)) => types_compatible(e, f),
         (
             Type::Result {
                 ok: e_ok,

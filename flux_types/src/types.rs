@@ -40,6 +40,9 @@ pub enum Type {
         variants: Vec<(String, Option<Type>)>,
     },
     Var(String),
+    /// Element type of an empty array literal `[]` before context fixes it.
+    /// An array of `Empty` fits any array type; a binding may not keep it.
+    Empty,
     Func {
         params: Vec<Type>,
         ret: Box<Type>,
@@ -130,6 +133,7 @@ impl Type {
                 format!("fn({ps}) -> {}", ret.display())
             }
             Type::Error => "<error>".into(),
+            Type::Empty => "_".into(),
         }
     }
 

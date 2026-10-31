@@ -47,12 +47,25 @@ pub(super) fn lower_expr(
                 });
             }
             let sym = resolve_name(name, *span, symbols, diagnostics)?;
-            if is_reactive_kind(
-                symbols
-                    .lookup(name)
-                    .map(|s| s.kind)
-                    .unwrap_or(SymbolKind::Local { mutable: false }),
-            ) {
+            // Bare `None` (the builtin) is the value `None()`, not the constructor.
+            if name == "None" && symbols.lookup(name).map(|s| s.kind) == Some(SymbolKind::Builtin) {
+                return Some(HirExpr::Call {
+                    callee: Box::new(HirExpr::Ident {
+                        symbol: sym,
+                        span: *span,
+                    }),
+                    args: Vec::new(),
+                    span: *span,
+                });
+            }
+            if !symbols.constants.contains(&sym)
+                && is_reactive_kind(
+                    symbols
+                        .lookup(name)
+                        .map(|s| s.kind)
+                        .unwrap_or(SymbolKind::Local { mutable: false }),
+                )
+            {
                 match scope.context() {
                     crate::CompileContext::PureFn => {
                         diagnostics.push(FluxError::ReactiveInPureContext {
@@ -368,6 +381,29 @@ fn hint_types_for_call(
             Some(vec![init, elem])
         }
         _ => None,
+    }
+}
+
+/// Records (or clears, when unknown) the element type HOF closures over `name`
+/// should assume. An annotation such as `[String]` wins over the value.
+pub(super) fn record_array_hint(
+    symbols: &mut SymbolTable,
+    name: &str,
+    annotation: Option<&TypeName>,
+    value: Option<&Expr>,
+) {
+    let hint = match annotation {
+        Some(TypeName::Array { inner, .. }) => Some((**inner).clone()),
+        Some(_) => None,
+        None => value.and_then(|v| infer_syntax_elem_type(v, symbols)),
+    };
+    match hint {
+        Some(elem) => {
+            symbols.array_elem_hints.insert(name.to_string(), elem);
+        }
+        None => {
+            symbols.array_elem_hints.remove(name);
+        }
     }
 }
 

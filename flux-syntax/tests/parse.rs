@@ -74,3 +74,82 @@ fn parses_bool_precedence() {
     let program = parse(src);
     assert_eq!(program.items.len(), 1);
 }
+
+fn string_value(src: &str) -> String {
+    match &parse(src).items[0] {
+        Item::Let(l) => match &l.value {
+            flux_syntax::Expr::String { value, .. } => value.clone(),
+            other => panic!("expected a plain string literal, got {other:?}"),
+        },
+        other => panic!("expected let, got {other:?}"),
+    }
+}
+
+#[test]
+fn string_escapes_decode() {
+    assert_eq!(
+        string_value(r#"let s = "a\nb\tc\rd\0e\\f\"g\{h\}""#),
+        "a\nb\tc\rd\0e\\f\"g{h}"
+    );
+}
+
+#[test]
+fn unknown_string_escape_is_a_parse_error() {
+    let mut diags = DiagnosticBag::new();
+    let src = "let s = \"bad \\q\"\n";
+    assert!(parse_program(SourceId(0), src, &mut diags).is_none());
+    let err = diags.errors.first().expect("diagnostic");
+    assert!(matches!(err, FluxError::Parse { message, .. } if message.contains("`\\q`")));
+    let span = err.label_span();
+    assert_eq!(&src[span.start..span.end], "\\q");
+}
+
+#[test]
+fn if_statement_keeps_else_and_else_if_bodies() {
+    let program = parse("fn f(c: Int) -> Int {\n  let mut r = 0\n  if c > 10 {\n    r = 1\n  } else if c == 0 {\n    r = 5\n  } else {\n    r = 9\n  }\n  r\n}\n");
+    let Item::Fn(f) = &program.items[0] else {
+        panic!("expected fn");
+    };
+    let flux_syntax::Stmt::If(first) = &f.body.stmts[1] else {
+        panic!("expected if");
+    };
+    let Some(flux_syntax::ElseBranch::If(second)) = &first.else_branch else {
+        panic!("expected else-if, got {:?}", first.else_branch);
+    };
+    assert_eq!(
+        second.then_branch.stmts.len(),
+        1,
+        "else-if body was dropped"
+    );
+    let Some(flux_syntax::ElseBranch::Block(last)) = &second.else_branch else {
+        panic!("expected final else, got {:?}", second.else_branch);
+    };
+    assert_eq!(last.stmts.len(), 1, "else body was dropped");
+}
+
+#[test]
+fn block_match_arm_splits_statements_and_value() {
+    let program = parse(
+        "let a = match n {\n  Some(v) => {\n    let w = v + 1\n    w\n  },\n  None => 0\n}\n",
+    );
+    let Item::Let(l) = &program.items[0] else {
+        panic!("expected let");
+    };
+    let flux_syntax::Expr::Match { arms, .. } = &l.value else {
+        panic!("expected match");
+    };
+    assert_eq!(arms[0].stmts.len(), 1);
+    assert!(matches!(&arms[0].expr, flux_syntax::Expr::Ident { name, .. } if name == "w"));
+    assert!(arms[1].stmts.is_empty());
+}
+
+#[test]
+fn block_match_arm_must_end_with_an_expression() {
+    let mut diags = DiagnosticBag::new();
+    let src = "fn f(n: Int) -> Int {\n  match n {\n    _ => {\n      let x = 1\n    }\n  }\n}\n";
+    assert!(parse_program(SourceId(0), src, &mut diags).is_none());
+    assert!(diags.errors.iter().any(|e| matches!(
+        e,
+        FluxError::Parse { message, .. } if message.contains("must end with an expression")
+    )));
+}

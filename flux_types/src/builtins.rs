@@ -6,9 +6,13 @@ pub const BUILTIN_FNS: &[&str] = flux_std::BUILTIN_FNS;
 /// Type signature of a builtin function, if known.
 pub fn builtin_fn_type(name: &str) -> Option<Type> {
     match name {
-        "print" | "println" => Some(Type::Func {
+        "print" | "println" | "eprint" | "eprintln" => Some(Type::Func {
             params: vec![Type::String],
             ret: Box::new(Type::Unit),
+        }),
+        "args" => Some(Type::Func {
+            params: vec![],
+            ret: Box::new(Type::Array(Box::new(Type::String))),
         }),
         "len" => Some(Type::Func {
             params: vec![Type::Array(Box::new(Type::Int))],
@@ -21,6 +25,10 @@ pub fn builtin_fn_type(name: &str) -> Option<Type> {
         "push" => Some(Type::Func {
             params: vec![Type::Array(Box::new(Type::Int)), Type::Int],
             ret: Box::new(Type::Array(Box::new(Type::Int))),
+        }),
+        "get" => Some(Type::Func {
+            params: vec![Type::Array(Box::new(Type::Var("T".into()))), Type::Int],
+            ret: Box::new(Type::Option(Box::new(Type::Var("T".into())))),
         }),
         "pop" => Some(Type::Func {
             params: vec![Type::Array(Box::new(Type::Int))],
@@ -80,6 +88,24 @@ pub fn builtin_fn_type(name: &str) -> Option<Type> {
         "str_trim" => Some(Type::Func {
             params: vec![Type::String],
             ret: Box::new(Type::String),
+        }),
+        "to_string" => Some(Type::Func {
+            params: vec![Type::Var("T".into())],
+            ret: Box::new(Type::String),
+        }),
+        "parse_int" => Some(Type::Func {
+            params: vec![Type::String],
+            ret: Box::new(Type::Result {
+                ok: Box::new(Type::Int64),
+                err: Box::new(Type::String),
+            }),
+        }),
+        "parse_float" => Some(Type::Func {
+            params: vec![Type::String],
+            ret: Box::new(Type::Result {
+                ok: Box::new(Type::Float64),
+                err: Box::new(Type::String),
+            }),
         }),
         "read_line" => Some(Type::Func {
             params: vec![],

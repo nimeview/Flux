@@ -146,6 +146,25 @@ fn item_span(item: &Item) -> Span {
     }
 }
 
+/// Inverse of the lexer's string escapes, so formatting preserves the value.
+fn escape_text(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for c in text.chars() {
+        match c {
+            '\n' => out.push_str("\\n"),
+            '\t' => out.push_str("\\t"),
+            '\r' => out.push_str("\\r"),
+            '\0' => out.push_str("\\0"),
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            '{' => out.push_str("\\{"),
+            '}' => out.push_str("\\}"),
+            c => out.push(c),
+        }
+    }
+    out
+}
+
 fn pub_prefix(pub_: bool) -> &'static str {
     if pub_ {
         "pub "
@@ -161,6 +180,7 @@ fn indent(out: &mut String, level: usize) {
 }
 
 fn format_item(item: &Item, out: &mut String, level: usize) {
+    LEVEL.with(|l| l.set(level));
     match item {
         Item::Import(i) => {
             indent(out, level);
@@ -430,7 +450,14 @@ fn format_block(block: &flux_syntax::Block, out: &mut String, level: usize) {
     }
 }
 
+thread_local! {
+    /// Indent level of the statement/item being printed; `expr_fmt` uses it to
+    /// lay out multi-line expressions such as block match arms.
+    static LEVEL: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 fn format_stmt(stmt: &Stmt, out: &mut String, level: usize) {
+    LEVEL.with(|l| l.set(level));
     match stmt {
         Stmt::Let(l) => {
             indent(out, level);
@@ -525,28 +552,65 @@ fn format_stmt(stmt: &Stmt, out: &mut String, level: usize) {
 
 fn format_if_stmt(stmt: &flux_syntax::IfStmt, out: &mut String, level: usize) {
     indent(out, level);
-    out.push_str(&format!("if {} {{\n", expr_fmt(&stmt.cond)));
-    format_block(&stmt.then_branch, out, level + 1);
-    indent(out, level);
-    if let Some(else_b) = &stmt.else_branch {
-        out.push_str("} else ");
-        match else_b {
-            flux_syntax::ElseBranch::If(inner) => {
-                out.push_str(&format!("if {} {{\n", expr_fmt(&inner.cond)));
-                format_block(&inner.then_branch, out, level + 1);
-                indent(out, level);
-                out.push_str("}\n");
+    let mut current = stmt;
+    // Print the whole `if … else if … else …` chain, however long.
+    loop {
+        out.push_str(&format!("if {} {{\n", expr_fmt(&current.cond)));
+        format_block(&current.then_branch, out, level + 1);
+        indent(out, level);
+        match &current.else_branch {
+            Some(flux_syntax::ElseBranch::If(next)) => {
+                out.push_str("} else ");
+                current = next;
             }
-            flux_syntax::ElseBranch::Block(b) => {
-                out.push_str("{\n");
+            Some(flux_syntax::ElseBranch::Block(b)) => {
+                out.push_str("} else {\n");
                 format_block(b, out, level + 1);
                 indent(out, level);
                 out.push_str("}\n");
+                return;
+            }
+            None => {
+                out.push_str("}\n");
+                return;
             }
         }
-    } else {
-        out.push_str("}\n");
     }
+}
+
+/// Multi-line `match` for when an arm is a block: arms one level in, block
+/// statements two levels in, relative to the enclosing statement.
+fn match_block_fmt(scrutinee: &flux_syntax::Expr, arms: &[flux_syntax::MatchArm]) -> String {
+    let base = LEVEL.with(|l| l.get());
+    let mut out = format!("match {} {{\n", expr_fmt(scrutinee));
+    for (i, arm) in arms.iter().enumerate() {
+        let guard = arm
+            .guard
+            .as_ref()
+            .map(|g| format!(" if {}", expr_fmt(g)))
+            .unwrap_or_default();
+        indent(&mut out, base + 1);
+        out.push_str(&format!("{}{guard} => ", match_pattern_fmt(&arm.pattern)));
+        if arm.stmts.is_empty() {
+            out.push_str(&expr_fmt(&arm.expr));
+        } else {
+            out.push_str("{\n");
+            for stmt in &arm.stmts {
+                format_stmt(stmt, &mut out, base + 2);
+            }
+            LEVEL.with(|l| l.set(base + 2));
+            indent(&mut out, base + 2);
+            out.push_str(&expr_fmt(&arm.expr));
+            out.push('\n');
+            indent(&mut out, base + 1);
+            out.push('}');
+        }
+        LEVEL.with(|l| l.set(base));
+        out.push_str(if i + 1 < arms.len() { ",\n" } else { "\n" });
+    }
+    indent(&mut out, base);
+    out.push('}');
+    out
 }
 
 fn type_name_fmt(ty: &flux_syntax::TypeName) -> String {
@@ -585,12 +649,12 @@ fn expr_fmt(expr: &flux_syntax::Expr) -> String {
             }
         }
         flux_syntax::Expr::Bool { value, .. } => value.to_string(),
-        flux_syntax::Expr::String { value, .. } => format!("\"{value}\""),
+        flux_syntax::Expr::String { value, .. } => format!("\"{}\"", escape_text(value)),
         flux_syntax::Expr::InterpolatedString { parts, .. } => {
             let mut out = String::from("\"");
             for part in parts {
                 match part {
-                    flux_syntax::StringPart::Text(text) => out.push_str(text),
+                    flux_syntax::StringPart::Text(text) => out.push_str(&escape_text(text)),
                     flux_syntax::StringPart::Ident(name) => out.push_str(&format!("{{{name}}}")),
                 }
             }
@@ -668,6 +732,9 @@ fn expr_fmt(expr: &flux_syntax::Expr) -> String {
                 .join(", ");
             format!("{} {{ {fs} }}", name.name)
         }
+        flux_syntax::Expr::Match {
+            scrutinee, arms, ..
+        } if arms.iter().any(|a| !a.stmts.is_empty()) => match_block_fmt(scrutinee, arms),
         flux_syntax::Expr::Match {
             scrutinee, arms, ..
         } => {
