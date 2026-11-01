@@ -501,3 +501,71 @@ let r1 = pass(Some(3))\nlet r2 = passr(Err(\"bad\"))\nlet r3 = passp(P { x: 7 })
         assert_eq!(jit.executor.get_value(name), want, "JIT `{name}`");
     }
 }
+
+#[test]
+fn jit_parity_events_emitted_from_a_function_are_handled() {
+    // A compiled `emit` only queued the event, and only handlers drained the
+    // queue: `emit` from a JIT-compiled function was silently lost.
+    let _guard = jit_test_lock();
+    reset_jit();
+    let src = "event Tick(n: Int)\nlet mut base = 0\non Tick { n ->\n    base = base + n\n}\nfn pump() -> Int {\n    let mut i = 0\n    while i < 3 {\n        emit Tick(i + 1)\n        i = i + 1\n    }\n    0\n}\n";
+    for mode in [ExecutionMode::Vm, ExecutionMode::Jit] {
+        let mut compiled = compile_with_mode(source_from("<emit-fn>", src), mode)
+            .unwrap_or_else(|e| panic!("{mode:?}: {:?}", e.diagnostics.errors));
+        compiled.executor.call("pump", &[]).expect("pump runs");
+        assert_eq!(
+            compiled.executor.get_value("base"),
+            Some(RuntimeValue::int_i64(6)),
+            "{mode:?}"
+        );
+    }
+}
+
+#[test]
+fn jit_parity_handler_assignments_inside_control_flow_apply() {
+    let _guard = jit_test_lock();
+    reset_jit();
+    let src = "event Tick(n: Int)\nlet mut base = 0\nlet mut big = 0\nlet mut odd = 0\non Tick { n ->\n    base = base + n\n    if n > 1 {\n        big = big + 1\n    } else {\n        odd = odd + 10\n    }\n    let mut i = 0\n    while i < n {\n        odd = odd + 1\n        i = i + 1\n    }\n}\n";
+    for mode in [ExecutionMode::Vm, ExecutionMode::Jit] {
+        let mut compiled = compile_with_mode(source_from("<handler-if>", src), mode)
+            .unwrap_or_else(|e| panic!("{mode:?}: {:?}", e.diagnostics.errors));
+        for n in [1, 2, 3] {
+            compiled.executor.emit("Tick", RuntimeValue::int_i64(n));
+        }
+        for (name, want) in [("base", 6), ("big", 2), ("odd", 16)] {
+            assert_eq!(
+                compiled.executor.get_value(name),
+                Some(RuntimeValue::int_i64(want)),
+                "{mode:?} `{name}`"
+            );
+        }
+    }
+}
+
+#[test]
+fn jit_parity_handler_assignment_inside_if_applies() {
+    // Only top-level assignments of a compiled handler were written back, so
+    // `if c { x = … }` in a JIT handler was lost. Such a handler now runs on
+    // the VM, with the reason in the stats.
+    let _guard = jit_test_lock();
+    reset_jit();
+    let src = "event Tick(n: Int)\nlet mut big = 0\non Tick { n ->\n    if n > 1 {\n        big = big + 1\n    }\n}\n";
+    for mode in [ExecutionMode::Vm, ExecutionMode::Jit] {
+        let mut compiled = compile_with_mode(source_from("<handler-if>", src), mode)
+            .unwrap_or_else(|e| panic!("{mode:?}: {:?}", e.diagnostics.errors));
+        for n in [1, 2, 3] {
+            compiled.executor.emit("Tick", RuntimeValue::int_i64(n));
+        }
+        if let Some(stats) = compiled.executor.jit_stats() {
+            assert!(
+                stats.reasons.contains_key("conditional_source_assignment"),
+                "{stats:?}"
+            );
+        }
+        assert_eq!(
+            compiled.executor.get_value("big"),
+            Some(RuntimeValue::int_i64(2)),
+            "{mode:?}"
+        );
+    }
+}

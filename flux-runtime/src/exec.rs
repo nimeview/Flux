@@ -59,6 +59,8 @@ pub struct Executor {
     functions: HashMap<String, std::sync::Arc<CompiledFunction>>,
     /// `program.nodes` index by binding name.
     node_index: HashMap<String, usize>,
+    /// Each node's code, shared so a recomputation does not copy it.
+    node_code: Vec<std::sync::Arc<[flux_ir::Inst]>>,
     in_watch: bool,
     /// When true, `set_source` records mutations and skips propagation until flush.
     defer_propagation: bool,
@@ -146,6 +148,11 @@ impl Executor {
             .filter(|(_, n)| matches!(n.kind, IrNodeKind::Source | IrNodeKind::Derived))
             .map(|(i, n)| (n.name.clone(), i))
             .collect();
+        let node_code = program
+            .nodes
+            .iter()
+            .map(|n| std::sync::Arc::from(n.code.as_slice()))
+            .collect();
 
         let backend = ActiveBackend::from_mode(mode, &program);
 
@@ -154,6 +161,7 @@ impl Executor {
             program,
             functions,
             node_index,
+            node_code,
             in_watch: false,
             defer_propagation: false,
             mutated_sources: HashSet::new(),
@@ -416,11 +424,13 @@ impl Executor {
     }
 
     fn eval_derived_vm(&mut self, name: &str) -> RuntimeValue {
-        let code = self
+        let Some(code) = self
             .node_index
             .get(name)
-            .map(|&idx| self.program.nodes[idx].code.clone())
-            .unwrap_or_default();
+            .map(|&idx| self.node_code[idx].clone())
+        else {
+            return RuntimeValue::Unit;
+        };
         let value = self.eval_expr(&code, &mut Locals::default());
         // HIR allows control flow in match arms only inside functions.
         debug_assert!(
@@ -584,6 +594,8 @@ impl Executor {
         slots: &[u64],
     ) {
         use flux_ir::IrStmt;
+        // Compiled handlers assign sources only at the top level (see
+        // `JitEngine::new`), so these are all the targets the run assigned.
         let assigns: Vec<(String, RuntimeValue)> = body
             .iter()
             .filter_map(|stmt| {

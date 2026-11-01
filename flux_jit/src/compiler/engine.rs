@@ -359,12 +359,14 @@ impl JitEngine {
         for (i, w) in program.watches.iter().enumerate() {
             let mut set = HashSet::new();
             loads_in_stmts(&w.body, &mut set);
+            top_level_targets(&w.body, &mut set);
             set.retain(is_node);
             entry_reads.insert(format!("__watch_{i}"), set);
         }
         for (i, h) in program.on_handlers.iter().enumerate() {
             let mut set = HashSet::new();
             loads_in_stmts(&h.body, &mut set);
+            top_level_targets(&h.body, &mut set);
             set.retain(is_node);
             entry_reads.insert(format!("__on_{i}"), set);
         }
@@ -405,6 +407,13 @@ impl JitEngine {
             // A body may call functions compiled before it, and itself.
             let mut callable: HashSet<String> = jit_fn_ids.keys().cloned().collect();
             callable.insert(func.name.clone());
+            // A compiled `emit` only queues the event, and only handlers
+            // drain that queue; the VM runs the handler at the `emit`, before
+            // the next statement. So a function that emits runs on the VM.
+            if stmts_emit(&func.body) {
+                engine.note_fallback(&func.name, "emits_events");
+                continue;
+            }
             if !func_is_numeric(&func.body, &callable) {
                 engine.note_fallback(&func.name, "non_numeric_fn_body");
                 continue;
@@ -462,11 +471,17 @@ impl JitEngine {
 
         for (i, watch) in program.watches.iter().enumerate() {
             call_scratch_pairs = call_scratch_pairs.max(max_call_argc_in_stmts(&watch.body));
+            let key = format!("__watch_{i}");
             if !stmts_numeric(&watch.body, &jit_fn_names) {
+                engine.note_fallback(&key, "non_numeric_watch");
+                continue;
+            }
+            // As for handlers: only top-level assignments are read back.
+            if nested_node_assignment(&watch.body, &engine.layout.name_to_idx, false) {
+                engine.note_fallback(&key, "conditional_source_assignment");
                 continue;
             }
             let label = format!("stmt___watch_{i}");
-            let key = format!("__watch_{i}");
             if let Some((expr, _)) = engine.compile_fn_stmts(
                 &label,
                 &watch.body,
@@ -482,11 +497,19 @@ impl JitEngine {
         }
         for (i, handler) in program.on_handlers.iter().enumerate() {
             call_scratch_pairs = call_scratch_pairs.max(max_call_argc_in_stmts(&handler.body));
+            let key = format!("__on_{i}");
             if !stmts_numeric(&handler.body, &jit_fn_names) {
+                engine.note_fallback(&key, "non_numeric_handler");
+                continue;
+            }
+            // The runtime reads back only top-level assignments, and an
+            // assignment runs `watch`es even when it stores the same value,
+            // so a conditional one must run where its execution is visible.
+            if nested_node_assignment(&handler.body, &engine.layout.name_to_idx, false) {
+                engine.note_fallback(&key, "conditional_source_assignment");
                 continue;
             }
             let label = format!("stmt___on_{i}");
-            let key = format!("__on_{i}");
             // The parameter arrives in the first scratch slot and is copied
             // into a local on entry, so calls may reuse the slot.
             let params: Vec<String> = handler.param.iter().cloned().collect();
@@ -558,8 +581,9 @@ impl JitEngine {
     }
 
     /// Reactive nodes the compiled entry `key` (a node, function, `__watch_i`,
-    /// or `__on_i`) may read, including through calls. The runtime checks that
-    /// their values have a tagged form before running compiled code.
+    /// or `__on_i`) may read, including through calls, and the ones a handler
+    /// assigns (read back after the run). The runtime fills only these slots,
+    /// after checking that their values have a tagged form.
     pub fn reads<'a>(&'a self, key: &str) -> impl Iterator<Item = &'a String> + 'a {
         self.entry_reads
             .get(key)
@@ -831,6 +855,51 @@ fn loads_in_code(code: &[Inst], set: &mut HashSet<String>) {
     for inst in code {
         if let Inst::Block(stmts) = inst {
             loads_in_stmts(stmts, set);
+        }
+    }
+}
+
+/// Whether `stmts` contain an `emit` (at any depth).
+fn stmts_emit(stmts: &[IrStmt]) -> bool {
+    stmts.iter().any(|s| match s {
+        IrStmt::Emit { .. } => true,
+        IrStmt::If {
+            then_body,
+            else_body,
+            ..
+        } => stmts_emit(then_body) || else_body.as_deref().is_some_and(stmts_emit),
+        IrStmt::While { body, .. } | IrStmt::For { body, .. } => stmts_emit(body),
+        _ => false,
+    })
+}
+
+/// Whether `stmts` assign a reactive node inside `if`/`while`/`for`.
+fn nested_node_assignment(stmts: &[IrStmt], nodes: &HashMap<String, u32>, nested: bool) -> bool {
+    stmts.iter().any(|s| match s {
+        IrStmt::Assign { target, .. } => nested && nodes.contains_key(target),
+        IrStmt::If {
+            then_body,
+            else_body,
+            ..
+        } => {
+            nested_node_assignment(then_body, nodes, true)
+                || else_body
+                    .as_deref()
+                    .is_some_and(|b| nested_node_assignment(b, nodes, true))
+        }
+        IrStmt::While { body, .. } | IrStmt::For { body, .. } => {
+            nested_node_assignment(body, nodes, true)
+        }
+        _ => false,
+    })
+}
+
+/// Names assigned at the top level of `stmts` (the ones read back after a
+/// compiled handler runs).
+fn top_level_targets(stmts: &[IrStmt], set: &mut HashSet<String>) {
+    for stmt in stmts {
+        if let IrStmt::Assign { target, .. } = stmt {
+            set.insert(target.clone());
         }
     }
 }

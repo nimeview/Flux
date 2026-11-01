@@ -105,6 +105,27 @@ All other workloads, VM and JIT, stayed within noise (±4%). VM `enum_match`: 1.
 - Correctness fix in the same change: structs, `Option`, and `Result` have no tagged form, and compiled code received them as `()` (`pass(Some(3))` returned `()`). The runtime now runs an entry on the VM when an argument, event payload, or reactive node it reads has no tagged form. `collections` and `reactive_events` pay about 3% for that check, which is folded into building the slot buffer.
 - The differential test now has `match` at normal frequency and a user enum. All 141 programs that produce a value are compiled natively (before: 105 of 152).
 
+## Event propagation (2026-11-02)
+
+Turbo Boost off. A/B against 2535202 in a temporary worktree, same session.
+
+| Workload | VM before | VM after | JIT before | JIT after |
+|----------|-----------|----------|------------|-----------|
+| reactive_events_1000 | 12.19 ms | **9.91 ms** | 14.83 ms | **10.69 ms** |
+| collections | 51.6 ms | 51.6 ms | 21.2 ms | **16.2 ms** |
+| structs_match | 77.3 ms | 77.0 ms | 78.4 ms | 74.9 ms |
+
+All other workloads stayed within noise.
+
+- VM: recomputing a derived value cloned the node's whole IR (`Vec<Inst>` with its strings) on every recomputation. Node code is now shared (`Executor::node_code: Vec<Arc<[Inst]>>`).
+- JIT: every entry (a derived value, a call, a handler) converted every reactive node into the slot buffer, then grew the buffer: about O(nodes²) per event. It now fills only the nodes the entry reads or assigns (`JitEngine::reads`), reuses one buffer for calls and derived values, and builds the emit table only when the handler emitted something.
+- Correctness fixes found while profiling (tests in `flux_cli/tests/jit.rs`):
+  - `emit` from a JIT-compiled function was lost (only handlers drained the queue). Such functions now run on the VM (`emits_events`).
+  - An assignment to a source inside `if`/`while`/`for` in a JIT handler or watch was lost (only top-level assignments were read back). Those bodies now run on the VM (`conditional_source_assignment`).
+  - Handlers and watches that are not eligible now report a reason.
+
+The JIT remains slightly slower than the VM on `reactive_events`. There, each derived value is a single operation, and entering compiled code costs more than that operation.
+
 ## Findings
 
 1. **Arrays were copied quadratically (fixed).** `Value::Array(Vec<Value>)` has full value semantics, so every read of a local array (`len(xs)`, `get(xs, i)`, passing it to a function) deep-clones it, nested structs included. `xs = push(xs, v)` copies it as well, because the old value is still held by `xs` during the call. Doubling the size roughly quadruples the time, for building (`push`: 500 → 0.3 s, 1,000 → 0.9 s, 2,000 → 3.6 s) and for indexed scanning (1,000 → 1.1 s, 2,000 → 4.2 s). Fix:

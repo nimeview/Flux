@@ -51,6 +51,9 @@ impl ExecBackend for VmBackend {
 #[cfg(feature = "jit")]
 pub struct JitBackend {
     pub(crate) engine: Rc<flux_jit::JitEngine>,
+    /// Slot buffer reused by calls and derived values, which are frequent
+    /// (one per derived node per event); a re-entrant use gets a fresh one.
+    buffer: std::cell::RefCell<Vec<u64>>,
 }
 
 #[cfg(feature = "jit")]
@@ -58,6 +61,7 @@ impl JitBackend {
     pub fn new(program: &CompiledProgram) -> Self {
         Self {
             engine: flux_jit::get_or_compile(program),
+            buffer: std::cell::RefCell::new(Vec::new()),
         }
     }
 
@@ -87,17 +91,16 @@ impl JitBackend {
             return None;
         }
         let _heap = flux_value::heap_scope();
-        let mut slots = build_slot_buffer(&self.engine, graph, name)?;
-        slots[self.engine.depth_pair() as usize * 2 + 1] = depth;
-        for (i, arg) in args.iter().enumerate() {
-            let tv = flux_value::value_to_tagged(arg);
-            let off = (self.engine.host_slot_count() as usize + i) * 2;
-            slots[off] = tv.tag;
-            slots[off + 1] = tv.data;
-        }
-        self.engine
-            .call_fn_with_slots(name, &slots)
-            .map(from_tagged)
+        self.with_slots(graph, name, |slots| {
+            slots[self.engine.depth_pair() as usize * 2 + 1] = depth;
+            for (i, arg) in args.iter().enumerate() {
+                let tv = flux_value::value_to_tagged(arg);
+                let off = (self.engine.host_slot_count() as usize + i) * 2;
+                slots[off] = tv.tag;
+                slots[off + 1] = tv.data;
+            }
+            self.engine.call_fn_with_slots(name, slots).map(from_tagged)
+        })?
     }
 
     pub fn try_run_handler(
@@ -111,7 +114,10 @@ impl JitBackend {
         }
         // The returned slots hold tagged handles: the caller keeps a
         // `flux_value::heap_scope` open until it has read them.
-        let mut slots = build_slot_buffer(&self.engine, graph, key)?;
+        let mut slots = Vec::new();
+        if !fill_slots(&self.engine, graph, key, &mut slots) {
+            return None;
+        }
         let param_tv = param.map(flux_value::value_to_tagged);
         slots = self.engine.build_stmt_slots(key, &slots, param_tv);
         flux_jit::take_emit_events();
@@ -119,6 +125,9 @@ impl JitBackend {
         let emitted = flux_jit::take_emit_events();
         if result.is_err() {
             // The handler aborted; its queued emits and slot writes are discarded.
+            return Some((result, Vec::new(), slots));
+        }
+        if emitted.is_empty() {
             return Some((result, Vec::new(), slots));
         }
         let event_table: HashMap<u64, String> = self
@@ -155,44 +164,61 @@ impl JitBackend {
             return None;
         }
         let _heap = flux_value::heap_scope();
-        let slots = build_slot_buffer(&self.engine, graph, name)?;
-        self.engine.eval_expr_with(name, &slots).map(from_tagged)
+        self.with_slots(graph, name, |slots| {
+            self.engine.eval_expr_with(name, slots).map(from_tagged)
+        })?
+    }
+
+    /// Runs `f` on the reused slot buffer filled for entry `key` (a fresh
+    /// one if it is in use); `None` when an input has no tagged form.
+    fn with_slots<R>(
+        &self,
+        graph: &ReactiveGraph,
+        key: &str,
+        f: impl FnOnce(&mut Vec<u64>) -> R,
+    ) -> Option<R> {
+        let mut fresh = Vec::new();
+        let mut shared = self.buffer.try_borrow_mut();
+        let slots = match shared.as_mut() {
+            Ok(buffer) => &mut **buffer,
+            Err(_) => &mut fresh,
+        };
+        fill_slots(&self.engine, graph, key, slots).then(|| f(slots))
     }
 }
 
 #[cfg(feature = "jit")]
-/// The slot buffer for compiled entry `key`, or `None` when a node it reads
-/// has no tagged form (a struct, `Option`, or `Result` would arrive as `()`):
-/// the VM runs the entry then. Such nodes are rare, so the read set is only
-/// consulted when one exists.
-fn build_slot_buffer(
+/// Fills `slots` for compiled entry `key`; `false` when a node it reads has
+/// no tagged form (a struct, `Option`, or `Result` would arrive as `()`), and
+/// the VM runs the entry instead.
+fn fill_slots(
     engine: &flux_jit::JitEngine,
     graph: &ReactiveGraph,
     key: &str,
-) -> Option<Vec<u64>> {
-    let mut flat = engine.layout.flat.clone();
-    flat.resize(engine.slot_capacity_pairs() as usize * 2, 0);
-    let mut untagged: Vec<&String> = Vec::new();
-    for (name, &id) in &graph.name_to_id {
-        let Some(&idx) = engine.layout.name_to_idx.get(name) else {
+    slots: &mut Vec<u64>,
+) -> bool {
+    slots.clear();
+    slots.extend_from_slice(&engine.layout.flat);
+    slots.resize(engine.slot_capacity_pairs() as usize * 2, 0);
+    // Only the nodes this entry reads or assigns: converting every node for
+    // each event made a compiled handler slower than the VM.
+    for name in engine.reads(key) {
+        let (Some(&idx), Some(value)) =
+            (engine.layout.name_to_idx.get(name), graph.get_by_name(name))
+        else {
             continue;
         };
-        let value = &graph.nodes[id.0 as usize].value;
         if !flux_value::is_tag_representable(value) {
-            untagged.push(name);
-            continue;
+            return false;
         }
         let tv = flux_value::value_to_tagged(value);
         let base = idx as usize * 2;
-        if base + 1 < flat.len() {
-            flat[base] = tv.tag;
-            flat[base + 1] = tv.data;
+        if base + 1 < slots.len() {
+            slots[base] = tv.tag;
+            slots[base + 1] = tv.data;
         }
     }
-    if !untagged.is_empty() && engine.reads(key).any(|read| untagged.contains(&read)) {
-        return None;
-    }
-    Some(flat)
+    true
 }
 
 #[allow(clippy::large_enum_variant)]
