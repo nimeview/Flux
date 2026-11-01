@@ -153,7 +153,7 @@ fn parse_stmt(source_id: SourceId, pair: pest::iterators::Pair<'_, Rule>) -> Opt
             Some(Stmt::While(WhileStmt { cond, body, span }))
         }
         Rule::for_stmt => {
-            let mut inner = pair.into_inner();
+            let mut inner = pair.into_inner().filter(|p| p.as_rule() != Rule::kw_in);
             let name = parse_ident(source_id, inner.next().expect("for name"));
             let iter = parse_expr(source_id, inner.next().expect("for iter"));
             let body = parse_block(source_id, inner.next().expect("for body"));
@@ -190,7 +190,9 @@ pub(super) fn parse_if_stmt(
     let else_branch = inner.next().map(|p| {
         // `else_clause = { "else" ~ (if_stmt | block) }`: branch on its child.
         let p = if p.as_rule() == Rule::else_clause {
-            p.into_inner().next().expect("else body")
+            p.into_inner()
+                .find(|c| c.as_rule() != Rule::kw_else)
+                .expect("else body")
         } else {
             p
         };

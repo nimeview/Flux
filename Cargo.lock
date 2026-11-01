@@ -706,6 +706,7 @@ dependencies = [
  "flux_syntax",
  "miette",
  "serde",
+ "sha2",
  "toml",
 ]
 

@@ -82,3 +82,57 @@ fn run_without_manifest_explains_the_lookup() {
         text(&output.stderr)
     );
 }
+
+#[test]
+fn init_lib_creates_a_tested_library_an_app_can_depend_on() {
+    let dir = tempfile::tempdir().unwrap();
+    let init = flux(&["init", "--lib", "greeter"], dir.path());
+    assert!(init.status.success(), "{}", text(&init.stderr));
+    let lib = dir.path().join("greeter");
+    assert!(lib.join("lib.fl").exists() && lib.join("lib_test.fl").exists());
+    let test = flux(&["test"], &lib);
+    assert_eq!(test.status.code(), Some(0), "{}", text(&test.stdout));
+    assert!(text(&test.stdout).contains("lib_test.fl::test_greet ... ok"));
+    for file in ["lib.fl", "lib_test.fl"] {
+        assert!(
+            flux(&["fmt", "--check", file], &lib).status.success(),
+            "{file}"
+        );
+    }
+
+    assert!(flux(&["init", "app"], dir.path()).status.success());
+    let app = dir.path().join("app");
+    let manifest = fs::read_to_string(app.join("flux.toml")).unwrap();
+    fs::write(
+        app.join("flux.toml"),
+        format!("{manifest}\n[dependencies]\ngreeter = {{ path = \"../greeter\" }}\n"),
+    )
+    .unwrap();
+    fs::write(
+        app.join("main.fl"),
+        "import io { println }\nimport greeter { greet }\nfn main() -> Int {\n  println(greet(\"you\"))\n  0\n}\n",
+    )
+    .unwrap();
+    let run = flux(&["run"], &app);
+    assert_eq!(text(&run.stdout), "hello, you!\n", "{}", text(&run.stderr));
+    assert!(app.join("flux.lock").exists());
+}
+
+#[test]
+fn init_never_overwrites_an_existing_project() {
+    let dir = tempfile::tempdir().unwrap();
+    assert!(flux(&["init", "app"], dir.path()).status.success());
+    let app = dir.path().join("app");
+    fs::write(app.join("main.fl"), "let mine = 1\n").unwrap();
+    let again = flux(&["init", "app"], dir.path());
+    assert!(!again.status.success());
+    assert!(
+        text(&again.stderr).contains("already exists"),
+        "{}",
+        text(&again.stderr)
+    );
+    assert_eq!(
+        fs::read_to_string(app.join("main.fl")).unwrap(),
+        "let mine = 1\n"
+    );
+}

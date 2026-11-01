@@ -32,7 +32,10 @@ pub(super) fn parse_expr(source_id: SourceId, pair: pest::iterators::Pair<'_, Ru
                             Rule::guard => {
                                 guard = Some(parse_expr(
                                     source_id,
-                                    child.into_inner().next().expect("guard expr"),
+                                    child
+                                        .into_inner()
+                                        .find(|p| p.as_rule() != Rule::kw_if)
+                                        .expect("guard expr"),
                                 ));
                             }
                             Rule::expr => arm_expr = Some(parse_expr(source_id, child)),

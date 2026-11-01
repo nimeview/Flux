@@ -34,6 +34,12 @@ fn formatted_programs_still_type_check() {
     let mut checked = 0;
     let mut failures = Vec::new();
     for dir in program_dirs() {
+        // A package with dependencies cannot resolve from a copied directory;
+        // `packages_example.rs` checks those files with `flux fmt --check`.
+        let manifest = std::fs::read_to_string(dir.join("flux.toml")).unwrap_or_default();
+        if manifest.contains("[dependencies]") {
+            continue;
+        }
         // Format a whole directory together so sibling imports still resolve.
         let copy = tempfile::tempdir().unwrap();
         let mut files = Vec::new();

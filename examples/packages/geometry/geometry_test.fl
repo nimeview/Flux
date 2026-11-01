@@ -1,0 +1,16 @@
+import math { assert, assert_eq }
+
+import lib { Point, distance, perimeter }
+
+fn test_distance_is_euclidean() {
+    assert_eq(distance(Point { x: 0.0, y: 0.0 }, Point { x: 3.0, y: 4.0 }), 5.0)
+}
+
+fn test_perimeter_of_a_right_triangle() {
+    let t = [Point { x: 0.0, y: 0.0 }, Point { x: 3.0, y: 0.0 }, Point { x: 3.0, y: 4.0 }]
+    assert_eq(perimeter(t), 12.0)
+}
+
+fn test_degenerate_polygons_have_no_length() -> Bool {
+    perimeter([Point { x: 1.0, y: 1.0 }]) == 0.0
+}

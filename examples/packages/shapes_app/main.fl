@@ -1,0 +1,16 @@
+// shapes_app: uses the local `geometry` package (see flux.toml).
+// Run: flux run --locked
+import io { println }
+
+import str { to_string }
+
+import geometry { Point, distance, perimeter }
+
+fn main() -> Int {
+    let a = Point { x: 0.0, y: 0.0 }
+    let b = Point { x: 3.0, y: 4.0 }
+    println("distance: " + to_string(distance(a, b)))
+    let square = [Point { x: 0.0, y: 0.0 }, Point { x: 2.0, y: 0.0 }, Point { x: 2.0, y: 2.0 }, Point { x: 0.0, y: 2.0 }]
+    println("square perimeter: " + to_string(perimeter(square)))
+    0
+}

@@ -31,8 +31,13 @@ All notable changes to Flux are documented here.
 
 ### Added (tooling)
 - `flux test [filter] [--jit]`: runs `fn test_*()` functions in isolation with per-test results and a non-zero exit on failure
+- `flux.lock` pins the transitive path-dependency tree by content; `--locked` on `run`/`check`/`test` refuses a missing or stale lock
+- `examples/packages`: a `geometry` library (with tests) consumed by `shapes_app` through a locked path dependency
+- `flux init --lib` creates a library package (`lib.fl`, `lib_test.fl`); `RELEASE.md` gains the versioning and compatibility policy
 
 ### Changed
+- `flux init` refuses a directory that already has `flux.toml` (it used to overwrite `flux.toml` and the entry file); `flux.lock` checksums ignore CRLF vs LF
+- Keywords `as`, `in`, `if` (guard), and `else` end at a word boundary: `3` followed by a line `assert_eq(…)` no longer parses as the cast `3 as sert_eq…`
 - `assert` / `assert_eq` failures are the runtime error `assertion failed[: a != b]` instead of crashing the `flux` process
 - Modules have their own namespaces: a module's private items, its own imports (including stdlib), and transitive path dependencies now work (previously only the selected `pub` items of directly imported modules were copied into the root's scope). `watch`/`on` in an imported module is now an error instead of being dropped silently. Type names remain program-global.
 - `flux.toml`: a registry/version dependency, a missing path dependency, or invalid TOML is an error instead of being ignored

@@ -1,0 +1,32 @@
+// geometry: small 2D helpers, used by `shapes_app` as a path dependency.
+import math { sqrt }
+
+import collections { len, get, range }
+
+pub struct Point {
+    x: Float,
+    y: Float
+}
+
+fn square(v: Float) -> Float {
+    v * v
+}
+
+pub fn distance(a: Point, b: Point) -> Float {
+    sqrt(square(a.x - b.x) + square(a.y - b.y))
+}
+
+fn corner(points: [Point], i: Int) -> Point {
+    match get(points, i % len(points)) { Some(p) => p, None => Point { x: 0.0, y: 0.0 } }
+}
+
+// Length of the closed polygon through `points` (0.0 for fewer than 2).
+pub fn perimeter(points: [Point]) -> Float {
+    let mut total = 0.0
+    if len(points) > 1 {
+        for i in range(len(points)) {
+            total = total + distance(corner(points, i), corner(points, i + 1))
+        }
+    }
+    total
+}

@@ -23,6 +23,13 @@ cargo run -p flux_cli -- run --verbose programs/demo/counter.fl
 # Run every `fn test_*()` in the project (assert / assert_eq from `math`)
 cargo run -p flux_cli -- test
 
+# Projects with path dependencies keep a flux.lock; --locked fails if it is stale (use in CI)
+cargo run -p flux_cli -- check --locked
+
+# Library + app example: examples/packages/geometry is a path dependency of shapes_app
+(cd examples/packages/shapes_app && cargo run -q -p flux_cli -- run --locked)
+(cd examples/packages/geometry && cargo run -q -p flux_cli -- test)
+
 # Type-check only (import-aware)
 cargo run -p flux_cli -- check programs/ok/basics/basics.fl
 

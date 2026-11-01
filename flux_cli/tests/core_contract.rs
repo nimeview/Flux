@@ -478,3 +478,12 @@ fn get_requires_an_array_and_an_integer_index() {
             .any(|e| matches!(e, FluxError::TypeMismatch { .. })));
     }
 }
+
+#[test]
+fn keywords_end_at_a_word_boundary() {
+    // `3` followed by a line `assert_eq(…)` used to parse as `3 as sert_eq…`.
+    let src = "fn assert_eq(a: Int, b: Int) -> Int { a + b }\nfn iffy(a: Int) -> Int { a + 1 }\nfn f() -> Int {\n  let x = 3\n  assert_eq(x, 1)\n}\nfn g() -> Int {\n  let inputs = [1, 2]\n  let mut s = 0\n  for i in inputs { s = s + i }\n  let elsewhere = s\n  iffy(elsewhere)\n}\nlet a = f()\nlet b = g()\nlet c = 3 as Float\n";
+    assert_eq!(run_value(src, "a"), RuntimeValue::int_i64(4));
+    assert_eq!(run_value(src, "b"), RuntimeValue::int_i64(4));
+    assert_eq!(run_value(src, "c"), RuntimeValue::float_f64(3.0));
+}

@@ -255,9 +255,10 @@ Selective imports: `import io { println, read_line }`. Stdlib modules live under
 | `flux repl [--jit]` | Interactive shell |
 | `flux check file.fl` | Type-check only |
 | `flux test [filter] [--jit]` | Run every `fn test_*()` in the project (see below) |
+| `--locked` (on `run`, `check`, `test`) | Require `flux.lock` to match the dependency tree; never write it (§9) |
 | `flux fmt file.fl [--write] [--check]` | Format source (`--check` fails if reformat needed) |
 | `flux migrate [--write] path` | Migrate v1 top-level bindings to v2 `let` / `let mut` |
-| `flux init [path]` | Create `flux.toml` + entry file |
+| `flux init [path] [--lib]` | Create a project: an app (`main.fl`) or, with `--lib`, a library (`lib.fl` + `lib_test.fl`). Refuses a directory that already has `flux.toml` and never overwrites a source file |
 | `flux lsp file.fl` | JSON diagnostics |
 | `flux lsp-server` | Stdio LSP: diagnostics, hover, completion, go-to-def, format, document symbols, rename |
 | `flux wasm file.fl` | Experimental stub: always fails, writes nothing |
@@ -283,6 +284,8 @@ Dependencies are local path packages, each a directory with its own `flux.toml`:
 [dependencies]
 geometry = { path = "../geometry" }   # then: import geometry { area }
 ```
+
+**`flux.lock`.** For a project that declares dependencies, `flux check`, `run`, and `test` keep a `flux.lock` next to `flux.toml`. It lists every package in the transitive path-dependency tree, sorted by path, with its `[package] name`, its directory relative to the project, and a `sha256` over its `flux.toml` and all of its `.fl` files (hidden directories and `target/` excluded). Commit it. Without `--locked`, a stale lock is rewritten. With `--locked`, the lock is never written, and a missing or different lock is an error naming each `added`/`changed`/`removed` package; nothing runs. A project without dependencies gets no lock. Editors (LSP) and the REPL never write it.
 
 A registry/version dependency (`name = "1.2.0"`) is an error, because no registry exists yet. So are a path that is not a directory and invalid TOML; all three are reported against the offending `flux.toml` line.
 

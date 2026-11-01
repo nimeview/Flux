@@ -48,7 +48,10 @@ pub(super) fn parse_import(
                 alias = Some(
                     parse_ident(
                         source_id,
-                        child.into_inner().next().expect("import as ident"),
+                        child
+                            .into_inner()
+                            .find(|p| p.as_rule() == Rule::ident)
+                            .expect("import as ident"),
                     )
                     .name,
                 );

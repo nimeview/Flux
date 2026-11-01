@@ -1,5 +1,6 @@
 //! Module resolution for multi-file Flux programs.
 
+pub mod lockfile;
 mod manifest;
 
 use std::collections::{HashMap, HashSet};

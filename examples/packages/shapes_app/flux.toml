@@ -1,0 +1,7 @@
+[package]
+name = "shapes_app"
+version = "0.1.0"
+entry = "main.fl"
+
+[dependencies]
+geometry = { path = "../geometry" }

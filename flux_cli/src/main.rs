@@ -42,6 +42,9 @@ enum Commands {
         /// Also print declared events and watch/on effect handlers
         #[arg(long)]
         verbose: bool,
+        /// Fail instead of updating flux.lock when dependencies changed
+        #[arg(long)]
+        locked: bool,
         /// Arguments for the program, after `--` (read with `args()` from `io`)
         #[arg(last = true)]
         args: Vec<String>,
@@ -56,11 +59,17 @@ enum Commands {
         /// Run tests on the VM interpreter
         #[arg(long)]
         vm: bool,
+        /// Fail instead of updating flux.lock when dependencies changed
+        #[arg(long)]
+        locked: bool,
     },
     /// Parse and type-check without running (defaults to the `flux.toml` entry point)
     Check {
         /// Path to the source file (defaults to the entry point declared in ./flux.toml)
         file: Option<String>,
+        /// Fail instead of updating flux.lock when dependencies changed
+        #[arg(long)]
+        locked: bool,
     },
     /// Interactive read-eval-print loop
     Repl {
@@ -90,6 +99,9 @@ enum Commands {
         /// Package name
         #[arg(long)]
         name: Option<String>,
+        /// Create a library package (`lib.fl` + `lib_test.fl`) instead of an app
+        #[arg(long)]
+        lib: bool,
     },
     /// Emit LSP-style JSON diagnostics for a file (one-shot; deprecated, prefer `lsp-server`)
     Lsp {
@@ -123,16 +135,33 @@ fn main() {
             no_cache,
             quiet,
             verbose,
+            locked,
             args,
         } => {
             flux_std::set_program_args(args);
-            run_file(file.as_deref(), use_jit(jit, vm), no_cache, quiet, verbose).unwrap_or(1)
+            run_file(
+                file.as_deref(),
+                use_jit(jit, vm),
+                no_cache,
+                quiet,
+                verbose,
+                locked,
+            )
+            .unwrap_or(1)
         }
-        Commands::Test { filter, jit, vm } => {
+        Commands::Test {
+            filter,
+            jit,
+            vm,
+            locked,
+        } => {
             let root = find_manifest()
                 .and_then(|m| m.parent().map(std::path::Path::to_path_buf))
                 .or_else(|| std::env::current_dir().ok())
                 .unwrap_or_else(|| std::path::PathBuf::from("."));
+            if sync_project_lock(&root, locked).is_err() {
+                std::process::exit(1);
+            }
             let mode = if use_jit(jit, vm) {
                 ExecutionMode::Jit
             } else {
@@ -140,7 +169,7 @@ fn main() {
             };
             flux_cli::test_runner::run_tests(&root, filter.as_deref(), mode)
         }
-        Commands::Check { file } => match check_file(file.as_deref()) {
+        Commands::Check { file, locked } => match check_file(file.as_deref(), locked) {
             Ok(()) => 0,
             Err(()) => 1,
         },
@@ -149,7 +178,7 @@ fn main() {
             Ok(()) => 0,
             Err(()) => 1,
         },
-        Commands::Init { path, name } => match init_cmd(&path, name) {
+        Commands::Init { path, name, lib } => match init_cmd(&path, name, lib) {
             Ok(()) => 0,
             Err(()) => 1,
         },
@@ -238,8 +267,13 @@ fn run_file(
     no_cache: bool,
     quiet: bool,
     verbose: bool,
+    locked: bool,
 ) -> Result<i32, ()> {
     let path = resolve_run_target(file)?;
+    sync_project_lock(
+        &flux_resolve::find_project_root(std::path::Path::new(&path)),
+        locked,
+    )?;
     let mode = if jit {
         ExecutionMode::Jit
     } else {
@@ -299,8 +333,23 @@ fn run_main(executor: &mut flux_runtime::Executor) -> i32 {
     }
 }
 
-fn check_file(file: Option<&str>) -> Result<(), ()> {
+/// Creates or refreshes `flux.lock` for a project with dependencies; with
+/// `locked`, a missing or stale lock is an error and nothing runs.
+fn sync_project_lock(project_root: &std::path::Path, locked: bool) -> Result<(), ()> {
+    if !project_root.join("flux.toml").exists() {
+        return Ok(());
+    }
+    flux_resolve::lockfile::sync_lock(project_root, locked)
+        .map(|_| ())
+        .map_err(|message| eprintln!("error: {message}"))
+}
+
+fn check_file(file: Option<&str>, locked: bool) -> Result<(), ()> {
     let path = resolve_run_target(file)?;
+    sync_project_lock(
+        &flux_resolve::find_project_root(std::path::Path::new(&path)),
+        locked,
+    )?;
     match typecheck_file(std::path::Path::new(&path)) {
         Ok(compiled) => {
             let _ = report_warnings(&compiled.source, &compiled.sources, &compiled.warnings);
@@ -337,7 +386,7 @@ fn fmt_file(path: &str, write: bool, check: bool) -> Result<(), ()> {
     Ok(())
 }
 
-fn init_cmd(path: &str, name: Option<String>) -> Result<(), ()> {
+fn init_cmd(path: &str, name: Option<String>, lib: bool) -> Result<(), ()> {
     let dir = std::path::Path::new(path);
     let pkg_name = name.unwrap_or_else(|| {
         dir.file_name()
@@ -345,10 +394,11 @@ fn init_cmd(path: &str, name: Option<String>) -> Result<(), ()> {
             .unwrap_or("my_app")
             .to_string()
     });
-    init_project(dir, &pkg_name).map_err(|e| {
+    init_project(dir, &pkg_name, lib).map_err(|e| {
         eprintln!("{e:?}");
     })?;
-    println!("Created Flux project `{pkg_name}` in {}", dir.display());
+    let kind = if lib { "library" } else { "project" };
+    println!("Created Flux {kind} `{pkg_name}` in {}", dir.display());
     Ok(())
 }
 
