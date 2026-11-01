@@ -25,17 +25,15 @@ pub enum FluxError {
     },
 
     #[error("cannot read reactive `{name}` in a pure function")]
-    #[diagnostic(
-        code(flux::E002),
-        help(
-            "use `snap({name})` to take a snapshot, or move this code into `watch`, `on`, or `rfn`"
-        )
-    )]
+    #[diagnostic(code(flux::E002))]
     ReactiveInPureContext {
         name: String,
         #[label("reactive read")]
         span: miette::SourceSpan,
         source_id: SourceId,
+        /// How to fix it; mentions `const` when `name` is an immutable `let`.
+        #[help]
+        help: String,
     },
 
     #[error("cannot assign to derived binding `{name}`")]

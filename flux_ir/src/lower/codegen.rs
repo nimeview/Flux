@@ -72,6 +72,17 @@ fn emit_match_arm_cond(
     program: &HirProgram,
     code: &mut Vec<Inst>,
 ) {
+    if let Some(literal) = &arm.literal {
+        code.push(Inst::Load(scrutinee_name.to_string()));
+        emit_expr(literal, program, code);
+        code.push(Inst::CmpEq);
+        if let Some(guard) = &arm.guard {
+            let mut guard_code = Vec::new();
+            emit_expr(guard, program, &mut guard_code);
+            code.push(Inst::ShortAnd(guard_code));
+        }
+        return;
+    }
     if arm.variant.is_empty() {
         if let Some(guard) = &arm.guard {
             emit_match_bindings(scrutinee_name, arm, program, code);

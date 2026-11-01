@@ -48,6 +48,7 @@ The VM is the reference; the JIT must produce the same value or error, or fall b
 - Mixed `Int`/`Float` arithmetic and comparison promote the integer to `Float64`. Operators on two integers keep the integer type, so `Int / Int` is `Int`: division by zero is a runtime error rather than a value of another type.
 - Casts are checked: an integer out of the target range, a negative value cast to an unsigned type, or a `NaN`/infinite/out-of-range float cast to an integer is the runtime error `numeric cast out of range`. Float → integer casts truncate toward zero.
 - A runtime error stops the current evaluation and is reported as `runtime error: <message> in <context>`, where the context names the binding, `watch`, or `on` handler. Statements after the failing one do not run. If the error happens during module initialization, `flux run` exits non-zero. Out-of-range integer *literals* are rejected at parse time.
+- **Display.** A finite Float always prints with a decimal point or exponent (`5.0`, `2.5`), so the type is visible in output; `inf`, `-inf`, and `NaN` print as themselves. Integers print without one.
 - `range` never overflows near the `Int64` limits. A range longer than 10,000,000 elements is the runtime error `allocation limit exceeded`, not an out-of-memory abort.
 
 ```flux
@@ -115,7 +116,9 @@ Each `.fl` file is a module with its own namespace. Inside a module, all of its 
 
 **Block value.** A function body's value is its final expression. When the final statement is an `if … else` (including `else if` chains), the value is the final expression of the branch that runs. Both branches must have compatible types, with no numeric widening. An `if` without `else` has type `Unit`.
 
-**Statement boundaries.** A newline does not end an expression that can continue. A line starting with `-` continues the previous line as a subtraction (`f()` followed by a line `-1` parses as `f() - 1`). Use `0 - 1`, parentheses, or put the value first.
+**Module initialization order.** Bindings with literal initializers have their values from the start. Computed initializers (`let a = f()`, `const C = B + 1`) run in dependency order: after the bindings they read, directly or through any function they call, and otherwise in declaration order. So a binding may use a `const` declared later. Top-level `if` and assignments keep their position. A cycle among initializers is an error.
+
+**Statement boundaries.** A newline does not end an expression that can continue: a binary operator at the end of a line, or a line starting with `+`, continues it. A line that starts with a binary `-` is a compile error rather than a silent subtraction from the line above (`f()` followed by a line `-1` used to mean `f() - 1`). To subtract, end the previous line with `-`; for a negative value on its own line, write `0 - 1` or bind it with `let`. Unary minus elsewhere (`let d = -a`, `2 * -3`) is unaffected.
 
 **Derived expressions** (right-hand side of derived bindings) must be pure: no `snap()`, loops, control flow (**E008**), or side-effect builtins such as `print` / I/O (**E017**), including effects reached through user function calls. `snap()` is available in ordinary `fn` bodies for explicit snapshot reads.
 
@@ -154,6 +157,10 @@ Arithmetic (`+ - * / %`), comparisons, boolean ops (`&&`, `||`, `!`), `if e { a 
 ### Match guards
 
 `match x { n if n > 0 => n, _ => 0 }` — patterns may include `if` guards evaluated after the pattern binds.
+
+### Literal patterns
+
+`match n { 0 => "zero", -1 => "minus one", _ => "other" }`, `match s { "y" => true, _ => false }`, and `true =>` / `false =>` compare the scrutinee with `==`. Allowed literals are Int (optionally negative), String without `{…}` interpolation, and Bool. A Float literal pattern is an error, because exact float equality is a trap. The literal must have the scrutinee's type. Literal arms never make a match exhaustive, so a `_` or binding arm is required.
 
 ### Block match arms
 

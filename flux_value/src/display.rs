@@ -5,7 +5,7 @@ use crate::{int_to_i128, Value};
 pub fn render(value: &Value) -> String {
     match value {
         Value::Int { width, bits } => int_to_i128(*width, *bits).to_string(),
-        Value::Float { width, bits } => float_to_f64(*width, *bits).to_string(),
+        Value::Float { width, bits } => float_text(float_to_f64(*width, *bits)),
         Value::Char(c) => format!("'{c}'"),
         Value::Bool(v) => v.to_string(),
         Value::String(v) => format!("\"{v}\""),
@@ -35,5 +35,16 @@ pub fn render(value: &Value) -> String {
         Value::Option(Some(v)) => format!("Some({})", render(v)),
         Value::Result(Ok(v)) => format!("Ok({})", render(v)),
         Value::Result(Err(v)) => format!("Err({})", render(v)),
+    }
+}
+
+/// A finite float always shows a decimal point (`5.0`, not `5`), so its type
+/// is visible in output; `inf`, `-inf`, and `NaN` print as themselves.
+fn float_text(f: f64) -> String {
+    let text = f.to_string();
+    if f.is_finite() && !text.contains(['.', 'e', 'E']) {
+        format!("{text}.0")
+    } else {
+        text
     }
 }

@@ -68,10 +68,23 @@ pub(super) fn lower_expr(
             {
                 match scope.context() {
                     crate::CompileContext::PureFn => {
+                        let help = if symbols.immutable_lets.contains(&sym) {
+                            format!(
+                                "`{name}` is a module `let` (a reactive source); if it is a \
+                                 fixed value, declare it `const {name} = …` to read it here, \
+                                 or use `snap({name})`"
+                            )
+                        } else {
+                            format!(
+                                "use `snap({name})` to take a snapshot, or move this code into \
+                                 `watch`, `on`, or `rfn`"
+                            )
+                        };
                         diagnostics.push(FluxError::ReactiveInPureContext {
                             name: name.clone(),
                             span: span_to_miette(*span),
                             source_id: span.source,
+                            help,
                         });
                         return None;
                     }

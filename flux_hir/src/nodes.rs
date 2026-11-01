@@ -308,6 +308,9 @@ pub struct HirMatchArm {
     pub bindings: Vec<SymbolId>,
     pub binding_fields: Vec<String>,
     pub guard: Option<HirExpr>,
+    /// A literal pattern (`0`, `"a"`, `true`): the arm matches when the
+    /// scrutinee `==` it. `variant` is empty and there are no bindings.
+    pub literal: Option<HirExpr>,
     /// Block-arm statements run before `expr`: only `let`, assignment to a
     /// local, and expression statements (empty for an expression arm).
     pub body: HirBlock,

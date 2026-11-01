@@ -355,6 +355,8 @@ pub struct FieldInit {
 #[derive(Debug, Clone)]
 pub enum MatchPattern {
     Simple(Ident),
+    /// A literal (`0`, `-1`, `"a"`, `true`) the scrutinee is compared to.
+    Literal(Expr),
     Tuple {
         variant: Ident,
         bindings: Vec<Ident>,

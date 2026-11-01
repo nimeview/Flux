@@ -34,7 +34,7 @@ fn app_runs_against_its_locked_dependency() {
         );
         assert_eq!(
             text(&out.stdout),
-            "distance: 5\nsquare perimeter: 8\n",
+            "distance: 5.0\nsquare perimeter: 8.0\n",
             "{engine}"
         );
     }

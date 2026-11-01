@@ -354,7 +354,23 @@ pub(crate) fn infer_expr(
             for arm in arms {
                 let mut arm_scope = types.clone();
                 bind_match_arm_locals(ctx, &scrut_ty, arm, &mut arm_scope, source, diagnostics);
-                if arm.variant.is_empty() {
+                if let Some(literal) = &arm.literal {
+                    // A literal arm never covers the type: it needs a catch-all.
+                    let lit_ty = infer_expr(ctx, literal, &arm_scope, names, source, diagnostics)
+                        .unwrap_or(Type::Error);
+                    let (want, got) = (
+                        unwrap_value_type(&scrut_value_ty),
+                        unwrap_value_type(&lit_ty),
+                    );
+                    if !want.is_error() && !got.is_error() && !types_compatible(&want, &got) {
+                        diagnostics.push(FluxError::TypeMismatch {
+                            expected: want.display(),
+                            found: got.display(),
+                            span: span_to_miette(literal.span()),
+                            source_id: literal.span().source,
+                        });
+                    }
+                } else if arm.variant.is_empty() {
                     if arm.guard.is_none() {
                         has_catch_all = true;
                     }

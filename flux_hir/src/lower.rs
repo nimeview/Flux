@@ -192,6 +192,15 @@ fn lower_program_inner(
         if let Some(err) = declare_item(item, &mut symbols) {
             push_duplicate(diagnostics, item, err);
         }
+        if let Item::Let(l) = item {
+            if !l.mutable {
+                for name in l.pattern.binding_names() {
+                    if let Some(id) = symbols.lookup(&name).map(|s| s.id) {
+                        symbols.immutable_lets.insert(id);
+                    }
+                }
+            }
+        }
         if let Item::Enum(e) = item {
             for v in &e.variants {
                 symbols

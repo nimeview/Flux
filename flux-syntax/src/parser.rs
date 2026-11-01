@@ -72,6 +72,17 @@ pub fn parse_program(
             });
             return None;
         }
+        if let Some(span) = leading_minus(source_id, input, pair.clone()) {
+            diagnostics.push(FluxError::Parse {
+                message: "this line starts with `-`, which would continue the expression on \
+                          the line above as a subtraction; to subtract, end the previous line \
+                          with `-`; for a new negative value, write `0 - …` or bind it with `let`"
+                    .into(),
+                span: span_to_miette(span),
+                source_id,
+            });
+            return None;
+        }
         if let Some(span) = invalid_arm_block(source_id, pair.clone()) {
             diagnostics.push(FluxError::Parse {
                 message: "a block match arm must end with an expression, which is its value".into(),
@@ -89,6 +100,30 @@ pub fn parse_program(
         source: source_id,
         items,
     })
+}
+
+/// A binary `-` that begins a line: newlines do not end expressions, so
+/// `f()` followed by a line `-1` would silently mean `f() - 1`.
+fn leading_minus(
+    source_id: SourceId,
+    input: &str,
+    pair: pest::iterators::Pair<'_, Rule>,
+) -> Option<Span> {
+    if pair.as_rule() == Rule::add_expr {
+        let children: Vec<_> = pair.clone().into_inner().collect();
+        for window in children.windows(2) {
+            let (lhs, op) = (&window[0], &window[1]);
+            if op.as_rule() != Rule::add_op || op.as_str() != "-" {
+                continue;
+            }
+            let lhs_end = lhs.as_span().start() + lhs.as_str().trim_end().len();
+            if input[lhs_end..op.as_span().start()].contains('\n') {
+                return Some(span_of(source_id, op));
+            }
+        }
+    }
+    pair.into_inner()
+        .find_map(|child| leading_minus(source_id, input, child))
 }
 
 /// An `arm_block` whose last statement is not an expression statement.

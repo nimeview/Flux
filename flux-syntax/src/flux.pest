@@ -111,7 +111,10 @@ match_expr = { "match" ~ or_expr ~ "{" ~ match_arm ~ ("," ~ match_arm)* ~ "}" }
 match_arm = { match_pattern ~ guard? ~ "=>" ~ (arm_block | expr) }
 arm_block = { "{" ~ block_stmts ~ "}" }
 guard = { kw_if ~ expr }
-match_pattern = { tuple_pat | struct_pat | simple_pat }
+match_pattern = { lit_pat | tuple_pat | struct_pat | simple_pat }
+// Int, String, and Bool literals; compared with `==`.
+lit_pat = { float_lit | neg_int_lit | int_lit | string_lit | bool_lit }
+neg_int_lit = ${ "-" ~ int_lit }
 simple_pat = { ident }
 tuple_pat = { ident ~ "(" ~ ident_list? ~ ")" }
 struct_pat = { ident ~ "{" ~ ident_list ~ "}" }
@@ -191,4 +194,4 @@ string_content = _{ string_escape | string_char | interp_expr }
 string_escape = @{ "\\" ~ ANY }
 string_char = @{ !( "\"" | "{" | "\\" ) ~ ANY }
 interp_expr = { "{" ~ ident ~ "}" }
-bool_lit = { "true" | "false" }
+bool_lit = @{ ("true" | "false") ~ kw_end }

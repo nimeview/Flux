@@ -10,6 +10,11 @@ use flux_hir::{
     HirBlock, HirElse, HirExpr, HirFn, HirIf, HirProgram, HirStmt, SymbolId, SymbolKind,
 };
 
+thread_local! {
+    /// Function bodies being inlined by the current read walk.
+    static INLINING: std::cell::RefCell<HashSet<String>> = std::cell::RefCell::new(HashSet::new());
+}
+
 pub(super) fn collect_reads_expr(
     expr: &HirExpr,
     program: &HirProgram,
@@ -128,8 +133,12 @@ fn collect_expr_reads(
                 HirExpr::Ident { symbol, .. } => {
                     if let Some(name) = program.names.get(symbol) {
                         if let Some(rfn) = reactive_fns.get(name) {
-                            for stmt in &rfn.body.stmts {
-                                collect_stmt_reads(stmt, program, reactive_fns, set);
+                            // Recursive functions: inline each body once per walk.
+                            if INLINING.with(|s| s.borrow_mut().insert(name.clone())) {
+                                for stmt in &rfn.body.stmts {
+                                    collect_stmt_reads(stmt, program, reactive_fns, set);
+                                }
+                                INLINING.with(|s| s.borrow_mut().remove(name));
                             }
                         }
                     }

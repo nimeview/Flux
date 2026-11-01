@@ -52,6 +52,9 @@ pub struct SymbolTable {
     /// `const` bindings: fixed at compile time, so reading one is not a
     /// reactive read (pure `fn`s may use them).
     pub constants: std::collections::HashSet<SymbolId>,
+    /// Module `let` bindings declared without `mut` (still reactive sources;
+    /// used only to suggest `const` in E002).
+    pub immutable_lets: std::collections::HashSet<SymbolId>,
     /// Trait impl methods keyed by `(receiver type tag, method name)`, populated as
     /// `impl Trait for Type` blocks are lowered. Used for exact `x.method(...)` dispatch.
     pub trait_impl_index: HashMap<(String, String), SymbolId>,
@@ -84,6 +87,7 @@ impl SymbolTable {
             const_bindings: std::collections::HashSet::new(),
             array_elem_hints: HashMap::new(),
             constants: std::collections::HashSet::new(),
+            immutable_lets: std::collections::HashSet::new(),
             trait_impl_index: HashMap::new(),
             module_aliases: HashMap::new(),
             qualified_symbols: HashMap::new(),

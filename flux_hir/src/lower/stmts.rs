@@ -3,7 +3,7 @@
 use flux_diagnostics::{span_to_miette, DiagnosticBag, FluxError, Span};
 use flux_syntax::{
     AssignStmt, Block, ElseBranch, EmitStmt, Expr, ForStmt, IfStmt, LetPattern, LetStmt,
-    MatchPattern, ReturnStmt, Stmt, TypeName, WhileStmt,
+    MatchPattern, ReturnStmt, Stmt, TypeName, UnaryOp, WhileStmt,
 };
 
 use crate::context::ScopeKind;
@@ -117,7 +117,25 @@ pub(super) fn lower_match_arm(
     reads_reactive: &mut bool,
 ) -> Option<HirMatchArm> {
     symbols.push(ScopeKind::Block);
+    let mut literal = None;
     let (variant, bindings, binding_fields) = match &arm.pattern {
+        MatchPattern::Literal(value) => {
+            let constant = matches!(
+                value,
+                Expr::Int { .. } | Expr::String { .. } | Expr::Bool { .. }
+            ) || matches!(value, Expr::Unary { op: UnaryOp::Neg, expr, .. } if matches!(**expr, Expr::Int { .. }));
+            if !constant {
+                diagnostics.push(FluxError::Parse {
+                    message: "a literal pattern must be an Int, a String without `{…}` \
+                              interpolation, or a Bool"
+                        .into(),
+                    span: span_to_miette(value.span()),
+                    source_id: value.span().source,
+                });
+            }
+            literal = lower_expr(value, symbols, scope, diagnostics, reads_reactive);
+            (String::new(), vec![], vec![])
+        }
         MatchPattern::Simple(v) => {
             if v.name == "_" {
                 (String::new(), vec![], vec![])
@@ -184,6 +202,7 @@ pub(super) fn lower_match_arm(
         bindings,
         binding_fields,
         guard,
+        literal,
         body: HirBlock {
             stmts: body,
             span: arm.span,

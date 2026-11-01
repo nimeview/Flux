@@ -780,6 +780,7 @@ fn let_pattern_fmt(pattern: &flux_syntax::LetPattern) -> String {
 fn match_pattern_fmt(pattern: &flux_syntax::MatchPattern) -> String {
     match pattern {
         flux_syntax::MatchPattern::Simple(v) => v.name.clone(),
+        flux_syntax::MatchPattern::Literal(value) => expr_fmt(value),
         flux_syntax::MatchPattern::Tuple {
             variant, bindings, ..
         } => {

@@ -185,6 +185,20 @@ fn parse_match_pattern(source_id: SourceId, pair: pest::iterators::Pair<'_, Rule
     };
     let span = span_of(source_id, &pair);
     match pair.as_rule() {
+        Rule::lit_pat => {
+            let lit = pair.into_inner().next().expect("literal pattern");
+            let value = if lit.as_rule() == Rule::neg_int_lit {
+                let inner = parse_expr(source_id, lit.into_inner().next().expect("int"));
+                Expr::Unary {
+                    op: UnaryOp::Neg,
+                    expr: Box::new(inner),
+                    span,
+                }
+            } else {
+                parse_expr(source_id, lit)
+            };
+            MatchPattern::Literal(value)
+        }
         Rule::simple_pat => {
             let ident = parse_ident(source_id, pair.into_inner().next().expect("simple pat"));
             MatchPattern::Simple(ident)

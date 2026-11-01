@@ -23,6 +23,7 @@ All notable changes to Flux are documented here.
 - String escapes `\n \t \r \0 \\ \" \{ \}`; any other `\x` is a parse error
 - `str` module: `to_string`, `parse_int`, `parse_float` (strict; `Result` on bad input)
 - `collections.get(xs, i) -> Option[T]` for bounds-checked element access
+- Literal match patterns: `0 =>`, `-1 =>`, `"y" =>`, `true =>` (compared with `==`; a catch-all arm is still required)
 - Program entry point: `fn main()` / `fn main() -> Int` runs after module init; its result is the exit status and no binding dump is printed. `io.eprint`/`eprintln` (stderr) and `io.args()` (arguments after `--`). `const` bindings are readable from pure functions
 - `[]` takes its element type from context (annotation, argument, return, `push`); an unannotated `let xs = []` is a clear error
 - `examples/general/`: text statistics, record aggregation, config validation
@@ -36,6 +37,10 @@ All notable changes to Flux are documented here.
 - `flux init --lib` creates a library package (`lib.fl`, `lib_test.fl`); `RELEASE.md` gains the versioning and compatibility policy
 
 ### Changed
+- Floats always display a decimal point (`5.0`, not `5`)
+- A line starting with a binary `-` is a compile error instead of silently subtracting from the line above
+- Module initializers run in dependency order (also through called functions); fixes a `const` computed from a later `const` reading as uninitialized when a function used it during init
+- `true`/`false` end at a word boundary (`let trueish = 1` parses); E002 suggests `const` when a pure function reads an immutable module `let`
 - `flux init` refuses a directory that already has `flux.toml` (it used to overwrite `flux.toml` and the entry file); `flux.lock` checksums ignore CRLF vs LF
 - Keywords `as`, `in`, `if` (guard), and `else` end at a word boundary: `3` followed by a line `assert_eq(…)` no longer parses as the cast `3 as sert_eq…`
 - `assert` / `assert_eq` failures are the runtime error `assertion failed[: a != b]` instead of crashing the `flux` process

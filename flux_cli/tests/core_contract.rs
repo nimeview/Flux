@@ -487,3 +487,132 @@ fn keywords_end_at_a_word_boundary() {
     assert_eq!(run_value(src, "b"), RuntimeValue::int_i64(4));
     assert_eq!(run_value(src, "c"), RuntimeValue::float_f64(3.0));
 }
+
+#[test]
+fn floats_always_display_a_decimal_point() {
+    let src = "import str { to_string }\nlet a = to_string(5.0)\nlet b = to_string(2.5)\nlet c = to_string(10.0 * 0.2)\nlet d = to_string(1.0 / 0.0)\nlet e = to_string(3)\nlet f = to_string(-0.0)\n";
+    for (name, want) in [
+        ("a", "5.0"),
+        ("b", "2.5"),
+        ("c", "2.0"),
+        ("d", "inf"),
+        ("e", "3"),
+        ("f", "-0.0"),
+    ] {
+        assert_eq!(
+            run_value(src, name),
+            RuntimeValue::String(want.into()),
+            "{name}"
+        );
+    }
+}
+
+#[test]
+fn literal_match_patterns_compare_with_equality() {
+    let src = "fn name(n: Int) -> String {\n  match n { 0 => \"zero\", -1 => \"minus one\", k if k > 100 => \"big\", _ => \"other\" }\n}\nfn yes(s: String) -> Bool { match s { \"y\" => true, \"yes\" => true, _ => false } }\nlet mut x = 0\nlet a = name(x)\nlet b = name(x - 1)\nlet c = name(x + 500)\nlet d = name(x + 7)\nlet e = yes(\"yes\")\nlet f = yes(\"nope\")\nlet trueish = 1\n";
+    for mode in [
+        flux_runtime::ExecutionMode::Vm,
+        flux_runtime::ExecutionMode::Jit,
+    ] {
+        let compiled = flux_cli::pipeline::compile_with_mode(source_from("<lit>", src), mode)
+            .unwrap_or_else(|failure| panic!("{:?}", failure.diagnostics.errors));
+        let get = |name| compiled.executor.get_value(name).expect(name);
+        let s = |v: &str| RuntimeValue::String(v.into());
+        assert_eq!(get("a"), s("zero"), "{mode:?}");
+        assert_eq!(get("b"), s("minus one"), "{mode:?}");
+        assert_eq!(get("c"), s("big"), "{mode:?}");
+        assert_eq!(get("d"), s("other"), "{mode:?}");
+        assert_eq!(get("e"), RuntimeValue::Bool(true), "{mode:?}");
+        assert_eq!(get("f"), RuntimeValue::Bool(false), "{mode:?}");
+    }
+}
+
+#[test]
+fn literal_patterns_need_a_catch_all_and_a_matching_type() {
+    for (src, needle) in [
+        (
+            "let n = 1\nlet a = match n { 0 => 1, 1 => 2 }\n",
+            "catch-all",
+        ),
+        (
+            "let n = 1\nlet a = match n { \"x\" => 1, _ => 2 }\n",
+            "String",
+        ),
+        (
+            "let n = 1.0\nlet a = match n { 1.5 => 1, _ => 2 }\n",
+            "literal pattern must be",
+        ),
+    ] {
+        let failure = match compile(source_from("<lit>", src)) {
+            Ok(_) => panic!("compiled: {src}"),
+            Err(failure) => failure,
+        };
+        let text = format!("{:?}", failure.diagnostics.errors);
+        assert!(text.contains(needle), "{src}: {text}");
+    }
+}
+
+#[test]
+fn module_init_follows_dependencies_through_function_calls() {
+    // `a = f()` reads `C` through `f`; `C` is computed from `B`, both declared later.
+    let src = "fn f() -> Int { C * 2 }\nfn depth(n: Int) -> Int { if n > 0 { depth(n - 1) + 1 } else { 0 } }\nlet a = f()\nconst C = B + 1\nconst B = 4\nlet d = depth(3)\n";
+    for mode in [
+        flux_runtime::ExecutionMode::Vm,
+        flux_runtime::ExecutionMode::Jit,
+    ] {
+        let compiled = flux_cli::pipeline::compile_with_mode(source_from("<init>", src), mode)
+            .unwrap_or_else(|failure| panic!("{:?}", failure.diagnostics.errors));
+        assert_eq!(
+            compiled.executor.get_value("a"),
+            Some(RuntimeValue::int_i64(10)),
+            "{mode:?}"
+        );
+        assert_eq!(
+            compiled.executor.get_value("d"),
+            Some(RuntimeValue::int_i64(3)),
+            "{mode:?}"
+        );
+    }
+}
+
+#[test]
+fn reading_an_immutable_let_from_a_fn_suggests_const() {
+    let failure = match compile(source_from(
+        "<e002>",
+        "let greeting = \"hi\"\nfn f() -> String { greeting }\nlet r = f()\n",
+    )) {
+        Ok(_) => panic!("reactive read in a pure fn compiled"),
+        Err(failure) => failure,
+    };
+    assert!(failure.diagnostics.errors.iter().any(|e| matches!(
+        e,
+        FluxError::ReactiveInPureContext { help, .. } if help.contains("const greeting")
+    )));
+}
+
+#[test]
+fn a_line_starting_with_minus_is_an_error_not_a_subtraction() {
+    for src in [
+        "import io { println }\nfn g() -> Int {\n  println(\"x\")\n  -1\n}\nlet r = g()\n",
+        "let a = 5 // note\n  - 2\n",
+    ] {
+        let failure = match compile(source_from("<minus>", src)) {
+            Ok(_) => panic!("silently compiled as subtraction: {src}"),
+            Err(failure) => failure,
+        };
+        assert!(
+            failure.diagnostics.errors.iter().any(|e| matches!(
+                e,
+                FluxError::Parse { message, .. } if message.contains("starts with `-`")
+            )),
+            "{src}: {:?}",
+            failure.diagnostics.errors
+        );
+    }
+    // Operators at the end of a line, a leading `+`, and unary minus still work.
+    let ok = "let a = 5 -\n  2\nlet b = 5\n  + 2\nlet c = 2 * -3 - -1\nlet d = -a\n";
+    assert_eq!(run_value(ok, "a"), RuntimeValue::int_i64(3));
+    assert_eq!(run_value(ok, "b"), RuntimeValue::int_i64(7));
+    assert_eq!(run_value(ok, "c"), RuntimeValue::int_i64(-5));
+    assert_eq!(run_value(ok, "d"), RuntimeValue::int_i64(-3));
+}

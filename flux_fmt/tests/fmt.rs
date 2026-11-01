@@ -84,3 +84,9 @@ fn block_match_arms_format_on_their_own_lines() {
     let input = "let a = match parse_int(\"4\") {\n    Ok(v) => {\n        let w = v + 1\n        w\n    },\n    Err(_) => 0\n}\n";
     assert_eq!(format_source(input).expect("format"), input);
 }
+
+#[test]
+fn literal_match_patterns_round_trip() {
+    let input = "let a = match n { 0 => \"zero\", -1 => \"neg\", \"s\" => \"str\", true => \"t\", _ => \"other\" }\n";
+    assert_eq!(format_source(input).expect("format"), input);
+}

@@ -48,8 +48,8 @@ fn inventory_totals_parses_and_aggregates_records() {
         &[
             "apple: 3 x 0.5 = 1.5",
             "pear: 2 x 0.75 = 1.5",
-            "fig: 10 x 0.2 = 2",
-            "items: 15, total: 5",
+            "fig: 10 x 0.2 = 2.0",
+            "items: 15, total: 5.0",
         ],
     );
 }

@@ -47,7 +47,8 @@ pub fn lower_to_ir(
     diagnostics: &mut DiagnosticBag,
 ) -> Option<CompiledProgram> {
     let mut nodes = Vec::new();
-    let mut init_stmts = Vec::new();
+    // (statement, target binding, value read set or None for a barrier)
+    let mut init_items: Vec<InitItem> = Vec::new();
     let mut functions = Vec::new();
     let mut watches = Vec::new();
     let mut on_handlers = Vec::new();
@@ -62,6 +63,17 @@ pub fn lower_to_ir(
             HirItem::Fn(f) if f.reactive => {
                 program.names.get(&f.name).map(|name| (name.clone(), f))
             }
+            _ => None,
+        })
+        .collect();
+
+    // Every function, for initialization order: an initializer depends on the
+    // bindings it reads directly or through any function it calls.
+    let all_fns: HashMap<String, &HirFn> = program
+        .items
+        .iter()
+        .filter_map(|item| match item {
+            HirItem::Fn(f) => program.names.get(&f.name).map(|name| (name.clone(), f)),
             _ => None,
         })
         .collect();
@@ -141,23 +153,35 @@ pub fn lower_to_ir(
                 if b.kind == BindingKind::Source && const_expr(&b.value).is_none() =>
             {
                 if let Some(target) = program.names.get(&b.name) {
-                    init_stmts.push(IrStmt::Assign {
-                        target: target.clone(),
-                        expr: lower_expr(&b.value, program),
+                    init_items.push(InitItem {
+                        stmt: IrStmt::Assign {
+                            target: target.clone(),
+                            expr: lower_expr(&b.value, program),
+                        },
+                        target: Some(b.name),
+                        reads: Some(collect_reads_expr(&b.value, program, &all_fns)),
                     });
                 }
             }
             HirItem::Binding(_) | HirItem::Event(_) => {}
             HirItem::SourceAssign(a) => {
                 if let Some(target) = program.names.get(&a.name) {
-                    init_stmts.push(IrStmt::Assign {
-                        target: target.clone(),
-                        expr: lower_expr(&a.value, program),
+                    init_items.push(InitItem {
+                        stmt: IrStmt::Assign {
+                            target: target.clone(),
+                            expr: lower_expr(&a.value, program),
+                        },
+                        target: None,
+                        reads: None,
                     });
                 }
             }
             HirItem::InitIf(i) => {
-                init_stmts.push(lower_if_stmt(i, program));
+                init_items.push(InitItem {
+                    stmt: lower_if_stmt(i, program),
+                    target: None,
+                    reads: None,
+                });
             }
             HirItem::Fn(f) => {
                 if let Some(name) = runtime_symbol_name(program, &f.name) {
@@ -185,6 +209,8 @@ pub fn lower_to_ir(
             HirItem::Struct(_) | HirItem::Enum(_) | HirItem::Trait(_) | HirItem::Impl(_) => {}
         }
     }
+
+    let init_stmts = order_init_stmts(init_items, program, &binding_spans, diagnostics)?;
 
     if let Some(cycle) = find_dependency_cycle(&nodes) {
         let cycle_names: Vec<String> = cycle.iter().map(|&idx| nodes[idx].name.clone()).collect();
@@ -223,4 +249,83 @@ pub fn lower_to_ir(
         on_handlers,
         events,
     })
+}
+
+struct InitItem {
+    stmt: IrStmt,
+    /// The source binding this statement initializes, if it is one.
+    target: Option<SymbolId>,
+    /// Bindings its value reads (through called functions too); `None` marks
+    /// a barrier (a top-level `if` or assignment) that keeps its position.
+    reads: Option<std::collections::HashSet<SymbolId>>,
+}
+
+/// Orders module initialization: a computed source initializer runs after
+/// the initializers of the bindings it reads (declaration order otherwise),
+/// so `let a = f()` may use a `const` declared later. Barriers stay in place
+/// relative to everything before and after them. A cycle is an error.
+fn order_init_stmts(
+    items: Vec<InitItem>,
+    program: &HirProgram,
+    binding_spans: &HashMap<SymbolId, Span>,
+    diagnostics: &mut DiagnosticBag,
+) -> Option<Vec<IrStmt>> {
+    let target_index: HashMap<SymbolId, usize> = items
+        .iter()
+        .enumerate()
+        .filter_map(|(i, item)| item.target.map(|t| (t, i)))
+        .collect();
+    let n = items.len();
+    let mut deps: Vec<std::collections::BTreeSet<usize>> = vec![Default::default(); n];
+    let mut last_barrier: Option<usize> = None;
+    for (i, item) in items.iter().enumerate() {
+        match &item.reads {
+            None => {
+                deps[i].extend(0..i);
+                last_barrier = Some(i);
+            }
+            Some(reads) => {
+                deps[i].extend(last_barrier);
+                deps[i].extend(
+                    reads
+                        .iter()
+                        .filter_map(|sym| target_index.get(sym).copied())
+                        .filter(|&j| j != i),
+                );
+            }
+        }
+    }
+    // Statements after a barrier stay after it.
+    for (i, item) in items.iter().enumerate() {
+        if item.reads.is_none() {
+            for later in deps.iter_mut().skip(i + 1) {
+                later.insert(i);
+            }
+        }
+    }
+    let mut done = vec![false; n];
+    let mut order = Vec::with_capacity(n);
+    while order.len() < n {
+        let Some(next) = (0..n).find(|&i| !done[i] && deps[i].iter().all(|&d| done[d])) else {
+            let stuck: Vec<String> = (0..n)
+                .filter(|&i| !done[i])
+                .filter_map(|i| items[i].target)
+                .filter_map(|t| program.names.get(&t).cloned())
+                .collect();
+            let span = (0..n)
+                .filter(|&i| !done[i])
+                .find_map(|i| items[i].target.and_then(|t| binding_spans.get(&t).copied()))
+                .unwrap_or(Span::DUMMY);
+            diagnostics.push(FluxError::CyclicDependency {
+                cycle: format_cycle(&stuck),
+                span: span_to_miette(span),
+                source_id: span.source,
+            });
+            return None;
+        };
+        done[next] = true;
+        order.push(next);
+    }
+    let mut slots: Vec<Option<IrStmt>> = items.into_iter().map(|item| Some(item.stmt)).collect();
+    Some(order.into_iter().filter_map(|i| slots[i].take()).collect())
 }
