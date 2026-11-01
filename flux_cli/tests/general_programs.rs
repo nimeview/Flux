@@ -67,3 +67,32 @@ fn text_stats_reads_the_file_named_on_the_command_line() {
     let stdout = run_with("text_stats.fl", "--vm", &["--", file.to_str().unwrap()]);
     assert!(stdout.starts_with("lines: 2\nwords: 3\n"), "{stdout}");
 }
+
+#[test]
+fn calculator_tokenizes_parses_and_reports_errors() {
+    assert_report(
+        "calculator.fl",
+        &[
+            "1 + 2 * 3 = 7",
+            "(1 + 2) * 3 = 9",
+            "2 * (3 + 4) * 5 = 70",
+            "1 + : error: unexpected end of input",
+            "7 $ 2: error: unexpected character `$`",
+        ],
+    );
+}
+
+#[test]
+fn shopping_cart_reacts_to_events() {
+    assert_report(
+        "shopping_cart.fl",
+        &[
+            "items=0 subtotal=0 total=0 expensive=0",
+            "items=1 subtotal=12 total=12 expensive=0",
+            "items=2 subtotal=162 total=162 expensive=1",
+            "items=2 subtotal=162 total=81 expensive=1",
+            "items=0 subtotal=0 total=0 expensive=0",
+            "items=1 subtotal=40 total=40 expensive=0",
+        ],
+    );
+}

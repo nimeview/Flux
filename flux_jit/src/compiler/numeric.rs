@@ -31,7 +31,7 @@ pub(crate) fn is_numeric_code(code: &[Inst], jit_fns: &HashSet<String>) -> bool 
             then_branch,
             else_branch,
         } => is_numeric_code(then_branch, jit_fns) && is_numeric_code(else_branch, jit_fns),
-        Inst::MakeArray(_) => true,
+        Inst::MakeArray(_) | Inst::Index => true,
         // Pattern matching: locals are Cranelift variables, so a binding made
         // in one branch is scoped like on the VM. Tags are compared on user
         // enums; `Option`/`Result`/struct values never reach compiled code

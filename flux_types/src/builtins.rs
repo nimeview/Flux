@@ -26,6 +26,14 @@ pub fn builtin_fn_type(name: &str) -> Option<Type> {
             params: vec![Type::Array(Box::new(Type::Int)), Type::Int],
             ret: Box::new(Type::Array(Box::new(Type::Int))),
         }),
+        "set" => Some(Type::Func {
+            params: vec![
+                Type::Array(Box::new(Type::Var("T".into()))),
+                Type::Int,
+                Type::Var("T".into()),
+            ],
+            ret: Box::new(Type::Array(Box::new(Type::Var("T".into())))),
+        }),
         "get" => Some(Type::Func {
             params: vec![Type::Array(Box::new(Type::Var("T".into()))), Type::Int],
             ret: Box::new(Type::Option(Box::new(Type::Var("T".into())))),
@@ -76,6 +84,10 @@ pub fn builtin_fn_type(name: &str) -> Option<Type> {
         "str_len" => Some(Type::Func {
             params: vec![Type::String],
             ret: Box::new(Type::Int),
+        }),
+        "str_chars" => Some(Type::Func {
+            params: vec![Type::String],
+            ret: Box::new(Type::Array(Box::new(Type::String))),
         }),
         "str_split" => Some(Type::Func {
             params: vec![Type::String, Type::String],

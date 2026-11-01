@@ -141,3 +141,31 @@ fn extreme_source_is_a_diagnostic_not_a_crash() {
         }
     }
 }
+
+#[test]
+fn closing_stdout_early_is_not_a_panic() {
+    // `flux run app.fl | head -1`: printing to a closed pipe panicked.
+    use std::io::{BufRead, BufReader};
+    use std::process::Stdio;
+    let dir = tempfile::tempdir().unwrap();
+    fs::write(
+        dir.path().join("many.fl"),
+        "import io { println }\nfn main() -> Int {\n    let mut i = 0\n    while i < 200000 {\n        println(i)\n        i = i + 1\n    }\n    0\n}\n",
+    )
+    .unwrap();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_flux"))
+        .args(["run", "many.fl"])
+        .current_dir(dir.path())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn flux");
+    let mut first = String::new();
+    BufReader::new(child.stdout.take().expect("stdout"))
+        .read_line(&mut first)
+        .unwrap();
+    assert_eq!(first, "0\n");
+    let output = child.wait_with_output().expect("wait");
+    assert!(output.status.success(), "{}", stderr(&output));
+    assert!(!stderr(&output).contains("panicked"), "{}", stderr(&output));
+}

@@ -162,7 +162,12 @@ fn collect_expr_reads(
             }
         }
         HirExpr::Unary { expr, .. } => collect_expr_reads(expr, program, reactive_fns, set),
-        HirExpr::Binary { left, right, .. } => {
+        HirExpr::Binary { left, right, .. }
+        | HirExpr::Index {
+            base: left,
+            index: right,
+            ..
+        } => {
             collect_expr_reads(left, program, reactive_fns, set);
             collect_expr_reads(right, program, reactive_fns, set);
         }

@@ -196,7 +196,12 @@ fn collect_refs_expr(expr: &HirExpr, map: &mut HashMap<SymbolId, Vec<Span>>) {
         HirExpr::Field { base, .. } => collect_refs_expr(base, map),
         HirExpr::Closure { fn_symbol, .. } => push_ref(map, *fn_symbol, expr.span()),
         HirExpr::Unary { expr, .. } => collect_refs_expr(expr, map),
-        HirExpr::Binary { left, right, .. } => {
+        HirExpr::Binary { left, right, .. }
+        | HirExpr::Index {
+            base: left,
+            index: right,
+            ..
+        } => {
             collect_refs_expr(left, map);
             collect_refs_expr(right, map);
         }

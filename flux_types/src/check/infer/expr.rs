@@ -116,6 +116,54 @@ fn infer_arm_body(
     }
 }
 
+/// The payload type of `variant` in `ty` (an enum, `Option`, or `Result`).
+fn variant_payload_type(ty: &Type, variant: &str) -> Option<Type> {
+    match (unwrap_value_type(ty), variant) {
+        (Type::Option(inner), "Some") => Some(*inner),
+        (Type::Result { ok, .. }, "Ok") => Some(*ok),
+        (Type::Result { err, .. }, "Err") => Some(*err),
+        (Type::Enum { variants, .. }, _) => variants
+            .into_iter()
+            .find(|(name, _)| name == variant)
+            .and_then(|(_, payload)| payload),
+        _ => None,
+    }
+}
+
+/// Whether the pattern shapes together match every value of `ty`.
+fn shapes_cover(shapes: &[&flux_hir::PatShape], ty: &Type) -> bool {
+    use flux_hir::PatShape;
+    if shapes.iter().any(|s| matches!(s, PatShape::Any)) {
+        return true;
+    }
+    let variants: Vec<String> = match unwrap_value_type(ty) {
+        Type::Option(_) => vec!["Some".into(), "None".into()],
+        Type::Result { .. } => vec!["Ok".into(), "Err".into()],
+        Type::Enum { variants, .. } => variants.into_iter().map(|(name, _)| name).collect(),
+        _ => return false,
+    };
+    variants.iter().all(|variant| {
+        let payloads: Vec<&Option<Box<PatShape>>> = shapes
+            .iter()
+            .filter_map(|s| match s {
+                PatShape::Variant { name, payload } if name == variant => Some(payload),
+                _ => None,
+            })
+            .collect();
+        if payloads.is_empty() {
+            return false;
+        }
+        if payloads
+            .iter()
+            .any(|p| p.as_deref().is_none_or(|p| *p == PatShape::Any))
+        {
+            return true;
+        }
+        let inner: Vec<&PatShape> = payloads.iter().filter_map(|p| p.as_deref()).collect();
+        variant_payload_type(ty, variant).is_some_and(|payload| shapes_cover(&inner, &payload))
+    })
+}
+
 fn check_assignable(
     expected: &Type,
     found: &Type,
@@ -381,6 +429,8 @@ pub(crate) fn infer_expr(
             };
             let mut arm_types = Vec::new();
             let mut covered_variants = std::collections::HashSet::new();
+            // Payload shapes of nested-pattern arms, per outer variant.
+            let mut nested_arms: HashMap<String, Vec<flux_hir::PatShape>> = HashMap::new();
             let mut has_catch_all = false;
             for arm in arms {
                 let mut arm_scope = types.clone();
@@ -420,6 +470,11 @@ pub(crate) fn infer_expr(
                         });
                     } else if arm.guard.is_none() {
                         covered_variants.insert(arm.variant.clone());
+                    } else if let Some(shape) = &arm.nested {
+                        nested_arms
+                            .entry(arm.variant.clone())
+                            .or_default()
+                            .push(shape.clone());
                     }
                 } else {
                     diagnostics.push(FluxError::TypeMismatch {
@@ -446,6 +501,11 @@ pub(crate) fn infer_expr(
                 if arm.diverges {
                     continue;
                 }
+                // A block arm ending in a statement is `()`.
+                if arm.unit {
+                    arm_types.push(Type::Unit);
+                    continue;
+                }
                 arm_types.push(infer_expr(
                     ctx,
                     &arm.expr,
@@ -454,6 +514,15 @@ pub(crate) fn infer_expr(
                     source,
                     diagnostics,
                 )?);
+            }
+            // A variant is also covered when its nested-pattern arms together
+            // cover its payload (`Some(A)`, `Some(B)` for `Option[AB]`).
+            for (variant, shapes) in &nested_arms {
+                let payload = variant_payload_type(&scrut_value_ty, variant);
+                let refs: Vec<&flux_hir::PatShape> = shapes.iter().collect();
+                if payload.is_some_and(|ty| shapes_cover(&refs, &ty)) {
+                    covered_variants.insert(variant.clone());
+                }
             }
             if !has_catch_all {
                 if let Some(variants) = &variants {
@@ -659,6 +728,32 @@ pub(crate) fn infer_expr(
             Some(Type::Error)
         }
         HirExpr::Closure { fn_symbol, .. } => types.get(fn_symbol).cloned(),
+        HirExpr::Index { base, index, span } => {
+            let base_ty = infer_expr(ctx, base, types, names, source, diagnostics)?;
+            let index_ty = infer_expr(ctx, index, types, names, source, diagnostics)?;
+            let index_ty = unwrap_value_type(&index_ty);
+            if !index_ty.is_error() && !index_ty.is_integer() {
+                diagnostics.push(FluxError::TypeMismatch {
+                    expected: "an integer index".into(),
+                    found: index_ty.display(),
+                    span: span_to_miette(index.span()),
+                    source_id: index.span().source,
+                });
+            }
+            match unwrap_value_type(&base_ty) {
+                Type::Array(inner) => Some(*inner),
+                Type::Error => Some(Type::Error),
+                other => {
+                    diagnostics.push(FluxError::TypeMismatch {
+                        expected: "an array to index".into(),
+                        found: other.display(),
+                        span: span_to_miette(*span),
+                        source_id: span.source,
+                    });
+                    Some(Type::Error)
+                }
+            }
+        }
         HirExpr::ToText { expr, span } => {
             let inner = infer_expr(ctx, expr, types, names, source, diagnostics)?;
             let inner = unwrap_value_type(&inner);

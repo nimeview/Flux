@@ -292,6 +292,10 @@ fn infer_mono_type(
         }
         HirExpr::Cast { ty, .. } => Some(normalize_mono_type(resolve_type_name(ty, program)?)),
         HirExpr::ToText { .. } => Some(Type::String),
+        HirExpr::Index { base, .. } => match infer_mono_type(base, symbols, program)? {
+            Type::Array(inner) => Some(*inner),
+            _ => None,
+        },
         HirExpr::Try { expr, .. } => match infer_mono_type(expr, symbols, program)? {
             Type::Result { ok, .. } => Some(*ok),
             Type::Option(inner) => Some(*inner),
@@ -660,7 +664,12 @@ fn collect_expr_local_declarations(expr: &HirExpr, out: &mut std::collections::H
             }
         }
         HirExpr::Field { base, .. } => collect_expr_local_declarations(base, out),
-        HirExpr::Binary { left, right, .. } => {
+        HirExpr::Binary { left, right, .. }
+        | HirExpr::Index {
+            base: left,
+            index: right,
+            ..
+        } => {
             collect_expr_local_declarations(left, out);
             collect_expr_local_declarations(right, out);
         }
@@ -796,7 +805,12 @@ fn remap_expr_symbols(expr: &mut HirExpr, remap: &HashMap<SymbolId, SymbolId>) {
             }
         }
         HirExpr::Field { base, .. } => remap_expr_symbols(base, remap),
-        HirExpr::Binary { left, right, .. } => {
+        HirExpr::Binary { left, right, .. }
+        | HirExpr::Index {
+            base: left,
+            index: right,
+            ..
+        } => {
             remap_expr_symbols(left, remap);
             remap_expr_symbols(right, remap);
         }
@@ -1096,7 +1110,12 @@ fn walk_expr_calls(
                 walk_expr_calls(a, program, generic_fns, out);
             }
         }
-        HirExpr::Binary { left, right, .. } => {
+        HirExpr::Binary { left, right, .. }
+        | HirExpr::Index {
+            base: left,
+            index: right,
+            ..
+        } => {
             walk_expr_calls(left, program, generic_fns, out);
             walk_expr_calls(right, program, generic_fns, out);
         }
@@ -1263,7 +1282,12 @@ fn collect_calls_in_expr(
                 collect_calls_in_expr(program, a, base_name, out);
             }
         }
-        HirExpr::Binary { left, right, .. } => {
+        HirExpr::Binary { left, right, .. }
+        | HirExpr::Index {
+            base: left,
+            index: right,
+            ..
+        } => {
             collect_calls_in_expr(program, left, base_name, out);
             collect_calls_in_expr(program, right, base_name, out);
         }
@@ -1602,7 +1626,12 @@ fn rewrite_expr_matching_calls(
                 rewrite_expr_matching_calls(a, from, to, match_types, symbol_types, program);
             }
         }
-        HirExpr::Binary { left, right, .. } => {
+        HirExpr::Binary { left, right, .. }
+        | HirExpr::Index {
+            base: left,
+            index: right,
+            ..
+        } => {
             rewrite_expr_matching_calls(left, from, to, match_types, symbol_types, program);
             rewrite_expr_matching_calls(right, from, to, match_types, symbol_types, program);
         }

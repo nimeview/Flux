@@ -157,7 +157,12 @@ fn scan_expr(
         | HirExpr::ToText { expr, .. }
         | HirExpr::Try { expr, .. } => scan_expr(expr, program, builtin_symbols, calls, has_effect),
         HirExpr::Field { base, .. } => scan_expr(base, program, builtin_symbols, calls, has_effect),
-        HirExpr::Binary { left, right, .. } => {
+        HirExpr::Binary { left, right, .. }
+        | HirExpr::Index {
+            base: left,
+            index: right,
+            ..
+        } => {
             scan_expr(left, program, builtin_symbols, calls, has_effect);
             scan_expr(right, program, builtin_symbols, calls, has_effect);
         }

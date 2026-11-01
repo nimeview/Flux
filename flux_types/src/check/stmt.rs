@@ -104,7 +104,12 @@ fn check_derived_expr(
             check_derived_expr(ctx, callee, names, diagnostics);
         }
         HirExpr::Unary { expr, .. } => check_derived_expr(ctx, expr, names, diagnostics),
-        HirExpr::Binary { left, right, .. } => {
+        HirExpr::Binary { left, right, .. }
+        | HirExpr::Index {
+            base: left,
+            index: right,
+            ..
+        } => {
             check_derived_expr(ctx, left, names, diagnostics);
             check_derived_expr(ctx, right, names, diagnostics);
         }

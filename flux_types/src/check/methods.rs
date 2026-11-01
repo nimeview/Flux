@@ -99,7 +99,12 @@ fn expr(e: &mut HirExpr, calls: &Calls) {
         | HirExpr::ToText { expr: inner, .. }
         | HirExpr::Try { expr: inner, .. } => expr(inner, calls),
         HirExpr::Field { base, .. } => expr(base, calls),
-        HirExpr::Binary { left, right, .. } => {
+        HirExpr::Binary { left, right, .. }
+        | HirExpr::Index {
+            base: left,
+            index: right,
+            ..
+        } => {
             expr(left, calls);
             expr(right, calls);
         }

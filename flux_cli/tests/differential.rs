@@ -1,6 +1,6 @@
 //! Differential VM/JIT check on generated programs: integer arithmetic (with
 //! division by zero and overflow), loops that reassign locals, `if`/`match`
-//! operands, user enums with payloads, calls, and recursion. The VM is the reference; the JIT must give
+//! operands, indexing, user enums with payloads, calls, and recursion. The VM is the reference; the JIT must give
 //! the same value or the same runtime error. Deterministic and bounded.
 
 use std::sync::{Mutex, MutexGuard, OnceLock};
@@ -51,7 +51,7 @@ impl Gen {
             };
         }
         let d = depth - 1;
-        match self.pick(9) {
+        match self.pick(10) {
             0..=3 => {
                 let op = ["+", "-", "*", "/", "%"][self.pick(5) as usize];
                 format!(
@@ -78,6 +78,14 @@ impl Gen {
             6 if call.is_some() => {
                 format!("{}({})", call.unwrap_or("g"), self.expr(d, vars, call))
             }
+            // Indexing, often out of bounds (negative or past the end).
+            8 => format!(
+                "([{}, {}, {}][{}])",
+                self.expr(d, vars, call),
+                self.expr(d, vars, call),
+                self.expr(d, vars, call),
+                self.expr(d, vars, call)
+            ),
             // A user enum with payloads (built and matched in compiled code).
             7 if call.is_some() => format!(
                 "(match mk({}) {{ A(v) => v, B => {}, C(v) => v - {} }})",
@@ -172,7 +180,7 @@ fn jit_matches_vm_on_generated_programs() {
     );
     // Meaningful only if both outcomes occur and the JIT compiles `f` itself.
     assert!(
-        values > 50 && errors > 10 && native > 110,
+        values > 50 && errors > 10 && native * 10 >= values * 9,
         "values {values}, errors {errors}, natively compiled {native}"
     );
 }

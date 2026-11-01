@@ -67,8 +67,8 @@ pub enum Inst {
     Const(IrValue),
     Load(String),
     /// Moves a local out (it is unbound until reassigned). Only emitted for
-    /// `x = push(x, v)` when `v` does not read `x`, so the array is not
-    /// shared during the call and `push` can append in place.
+    /// `x = push(x, v)` / `x = set(x, i, v)` when the other arguments do not
+    /// read `x`, so the array is not shared and is updated in place.
     Take(String),
     /// Statements run in the current locals, pushing nothing: a match arm
     /// block with control flow. A `return`/`break`/`continue` inside leaves
@@ -77,6 +77,9 @@ pub enum Inst {
     /// `?`: replaces `Ok(v)`/`Some(v)` with `v`; on `Err`/`None` returns that
     /// value from the enclosing function.
     Try,
+    /// `xs[i]`: pops the index, then the array; pushes the element, or fails
+    /// with `IndexOutOfBounds` outside `0..len`.
+    Index,
     Add,
     Sub,
     Mul,

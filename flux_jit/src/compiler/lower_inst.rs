@@ -368,6 +368,16 @@ pub(crate) fn lower_insts(
                 stack.push(abort_on_error(pair, b));
             }
 
+            Inst::Index => {
+                let (it, id) = stack.pop()?;
+                let (at, ad) = stack.pop()?;
+                let index_ref = module.declare_func_in_func(host_funcs.array_index, b.func);
+                let call = b.ins().call(index_ref, &[at, ad, it, id]);
+                let results = b.inst_results(call);
+                let pair = (results[0], results[1]);
+                stack.push(abort_on_error(pair, b));
+            }
+
             Inst::MakeArray(count) => {
                 let mut pairs = Vec::new();
                 for _ in 0..*count {

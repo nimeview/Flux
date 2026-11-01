@@ -167,7 +167,12 @@ pub(super) fn tree_depth_exceeds(program: &Program) -> Option<Span> {
                     | Expr::Unary { expr: x, .. }
                     | Expr::Cast { expr: x, .. }
                     | Expr::Try { expr: x, .. } => work.push((Node::Expr(x), d)),
-                    Expr::Binary { left, right, .. } => {
+                    Expr::Binary { left, right, .. }
+                    | Expr::Index {
+                        base: left,
+                        index: right,
+                        ..
+                    } => {
                         work.push((Node::Expr(left), d));
                         work.push((Node::Expr(right), d));
                     }

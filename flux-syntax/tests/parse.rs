@@ -144,14 +144,18 @@ fn block_match_arm_splits_statements_and_value() {
 }
 
 #[test]
-fn block_match_arm_must_end_with_an_expression() {
-    let mut diags = DiagnosticBag::new();
+fn block_match_arm_may_end_with_a_statement() {
+    // Its value is `()`; the type checker rejects it where a value is needed.
     let src = "fn f(n: Int) -> Int {\n  match n {\n    _ => {\n      let x = 1\n    }\n  }\n}\n";
-    assert!(parse_program(SourceId(0), src, &mut diags).is_none());
-    assert!(diags.errors.iter().any(|e| matches!(
-        e,
-        FluxError::Parse { message, .. } if message.contains("must end with an expression")
-    )));
+    let program = parse(src);
+    let Item::Fn(f) = &program.items[0] else {
+        panic!("expected a function");
+    };
+    let Some(flux_syntax::Stmt::Expr(flux_syntax::Expr::Match { arms, .. })) = f.body.stmts.last()
+    else {
+        panic!("expected a match");
+    };
+    assert!(arms[0].expr.is_none());
 }
 
 /// Parse error messages, or `None` if `src` parses.

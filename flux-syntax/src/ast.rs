@@ -343,6 +343,12 @@ pub enum Expr {
         ty: String,
         span: Span,
     },
+    /// `base[index]`: the array element at `index`.
+    Index {
+        base: Box<Expr>,
+        index: Box<Expr>,
+        span: Span,
+    },
     /// `expr?`: unwraps `Ok`/`Some`, or returns the `Err`/`None` from the
     /// enclosing function.
     Try {
@@ -366,6 +372,10 @@ pub enum MatchPattern {
     Tuple {
         variant: Ident,
         bindings: Vec<Ident>,
+        /// A nested payload pattern (`Some(Num(n))`, `Ok(0)`); then
+        /// `bindings` is empty. A lone name in `bindings` may also be a
+        /// payload-free variant (`Some(LParen)`); lowering decides.
+        nested: Option<Box<MatchPattern>>,
         span: Span,
     },
     Struct {
@@ -390,8 +400,8 @@ pub struct MatchArm {
     /// (empty for an expression arm).
     pub stmts: Vec<Stmt>,
     /// The arm's value: the expression, or a block arm's final expression.
-    /// `None` when the arm ends in `return`/`break`/`continue` (the last of
-    /// `stmts`) and so has no value.
+    /// `None` when a block arm does not end in an expression: it leaves
+    /// (`return`/`break`/`continue` last) or its value is `()`.
     pub expr: Option<Expr>,
     pub span: Span,
 }
@@ -505,7 +515,8 @@ impl Expr {
             | Self::StructLit { span, .. }
             | Self::Match { span, .. }
             | Self::Cast { span, .. }
-            | Self::Try { span, .. } => *span,
+            | Self::Try { span, .. }
+            | Self::Index { span, .. } => *span,
         }
     }
 }

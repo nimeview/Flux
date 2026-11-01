@@ -59,11 +59,11 @@ pub(super) fn infer_builtin_call(
         | "str_ends_with" | "str_join" | "write_file" | "append_file" | "push" | "map" | "get" => {
             Some((2, 2))
         }
-        "clamp" | "str_replace" => Some((3, 3)),
+        "clamp" | "str_replace" | "set" => Some((3, 3)),
         "read_line" | "None" | "args" => Some((0, 0)),
-        "len" | "Some" | "Ok" | "Err" | "pop" | "str_len" | "str_trim" | "to_string"
-        | "parse_int" | "parse_float" | "str_to_lower" | "str_to_upper" | "abs" | "sqrt"
-        | "floor" | "ceil" | "read_file" | "file_exists" => Some((1, 1)),
+        "len" | "Some" | "Ok" | "Err" | "pop" | "str_len" | "str_trim" | "str_chars"
+        | "to_string" | "parse_int" | "parse_float" | "str_to_lower" | "str_to_upper" | "abs"
+        | "sqrt" | "floor" | "ceil" | "read_file" | "file_exists" => Some((1, 1)),
         _ => None,
     };
     if let Some((min, max)) = arity {
@@ -213,6 +213,34 @@ pub(super) fn infer_builtin_call(
                         found: got.display(),
                         span: span_to_miette(arg.span()),
                         source_id: arg.span().source,
+                    });
+                }
+            }
+            Some(Type::Array(Box::new(elem_ty)))
+        }
+        "set" => {
+            let elem_ty = infer_array_elem(ctx, args.first(), types, names, source, diagnostics);
+            if let Some(index) = args.get(1) {
+                let got = infer_expr(ctx, index, types, names, source, diagnostics)?;
+                let got = unwrap_value_type(&got);
+                if !got.is_error() && !got.is_integer() {
+                    diagnostics.push(FluxError::TypeMismatch {
+                        expected: "an integer index".into(),
+                        found: got.display(),
+                        span: span_to_miette(index.span()),
+                        source_id: index.span().source,
+                    });
+                }
+            }
+            if let Some(value) = args.get(2) {
+                let got = infer_expr(ctx, value, types, names, source, diagnostics)?;
+                let got = unwrap_value_type(&got);
+                if !elem_ty.is_error() && !got.is_error() && !types_compatible(&elem_ty, &got) {
+                    diagnostics.push(FluxError::TypeMismatch {
+                        expected: elem_ty.display(),
+                        found: got.display(),
+                        span: span_to_miette(value.span()),
+                        source_id: value.span().source,
                     });
                 }
             }
@@ -371,6 +399,20 @@ pub(super) fn infer_builtin_call(
                 }
             }
             Some(Type::Bool)
+        }
+        "str_chars" => {
+            if let Some(arg) = args.first() {
+                let got = infer_expr(ctx, arg, types, names, source, diagnostics)?;
+                if !matches!(unwrap_value_type(&got), Type::String) {
+                    diagnostics.push(FluxError::TypeMismatch {
+                        expected: "String".into(),
+                        found: got.display(),
+                        span: span_to_miette(arg.span()),
+                        source_id: arg.span().source,
+                    });
+                }
+            }
+            Some(Type::Array(Box::new(Type::String)))
         }
         "str_trim" => {
             if let Some(arg) = args.first() {

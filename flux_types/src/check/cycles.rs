@@ -80,7 +80,12 @@ fn collect_refs(expr: &HirExpr, out: &mut HashSet<SymbolId>) {
             }
         }
         HirExpr::Field { base, .. } => collect_refs(base, out),
-        HirExpr::Binary { left, right, .. } => {
+        HirExpr::Binary { left, right, .. }
+        | HirExpr::Index {
+            base: left,
+            index: right,
+            ..
+        } => {
             collect_refs(left, out);
             collect_refs(right, out);
         }

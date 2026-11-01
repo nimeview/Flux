@@ -151,7 +151,12 @@ fn collect_uses_expr(expr: &HirExpr, used: &mut HashSet<SymbolId>) {
             used.insert(*fn_symbol);
         }
         HirExpr::Unary { expr, .. } => collect_uses_expr(expr, used),
-        HirExpr::Binary { left, right, .. } => {
+        HirExpr::Binary { left, right, .. }
+        | HirExpr::Index {
+            base: left,
+            index: right,
+            ..
+        } => {
             collect_uses_expr(left, used);
             collect_uses_expr(right, used);
         }

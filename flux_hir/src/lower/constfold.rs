@@ -67,6 +67,7 @@ fn eval_const_hir_expr(expr: &HirExpr) -> Option<Value> {
         | HirExpr::Match { .. }
         | HirExpr::Cast { .. }
         | HirExpr::ToText { .. }
+        | HirExpr::Index { .. }
         | HirExpr::Try { .. } => None,
     }
 }

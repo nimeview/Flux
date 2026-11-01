@@ -158,6 +158,26 @@ pub extern "C" fn flux_jit_array_len(array_id: u64) -> u64 {
     array_len(array_id)
 }
 
+/// `xs[i]`: the element, or `IndexOutOfBounds` outside `0..len` (as the VM).
+#[no_mangle]
+pub extern "C" fn flux_jit_array_index(
+    tag_a: u64,
+    data_a: u64,
+    tag_i: u64,
+    data_i: u64,
+) -> TaggedVal {
+    let index = tagged_to_value(TaggedVal {
+        tag: tag_i,
+        data: data_i,
+    })
+    .as_int()
+    .and_then(|i| u64::try_from(i).ok());
+    match index {
+        Some(i) if tag_a == flux_value::TAG_ARRAY && i < array_len(data_a) => array_get(data_a, i),
+        _ => TaggedVal::error(flux_value::ArithError::IndexOutOfBounds),
+    }
+}
+
 #[no_mangle]
 pub extern "C" fn flux_jit_array_get(array_id: u64, index: u64) -> TaggedVal {
     array_get(array_id, index)

@@ -300,6 +300,12 @@ pub enum HirExpr {
         ty: String,
         span: Span,
     },
+    /// `base[index]` on an array.
+    Index {
+        base: Box<HirExpr>,
+        index: Box<HirExpr>,
+        span: Span,
+    },
     /// `{expr}` in a string literal: the value as text, like `to_string`.
     ToText {
         expr: Box<HirExpr>,
@@ -329,6 +335,28 @@ pub struct HirMatchArm {
     /// The arm ends in `return`/`break`/`continue` and has no value; `expr`
     /// is a placeholder that never runs, and the arm adds no type to the match.
     pub diverges: bool,
+    /// The block arm ends in a statement that is not a jump: its value is
+    /// `()` (`expr` is a placeholder).
+    pub unit: bool,
+    /// For an arm lowered from a nested pattern (`Some(Num(n))`) without a
+    /// user guard: the payload's pattern shape, so exhaustiveness checking
+    /// can count it. (Its `guard` is the synthesized nested test.)
+    pub nested: Option<PatShape>,
+}
+
+/// The shape of a (sub)pattern, for exhaustiveness checking.
+#[derive(Debug, Clone, PartialEq)]
+pub enum PatShape {
+    /// `_` or a binding: matches everything.
+    Any,
+    /// A literal: never exhausts a type on its own.
+    Literal,
+    /// A variant, with the shape of its payload (`None` = payload-free or
+    /// not inspected).
+    Variant {
+        name: String,
+        payload: Option<Box<PatShape>>,
+    },
 }
 
 impl HirMatchArm {
@@ -403,7 +431,8 @@ impl HirExpr {
             | Self::Match { span, .. }
             | Self::Cast { span, .. }
             | Self::Try { span, .. }
-            | Self::ToText { span, .. } => *span,
+            | Self::ToText { span, .. }
+            | Self::Index { span, .. } => *span,
         }
     }
 }

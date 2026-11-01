@@ -993,3 +993,200 @@ fn push_stays_within_the_collection_limit() {
         flux_value::MAX_COLLECTION_LEN
     ));
 }
+
+#[test]
+fn a_block_arm_ending_in_a_statement_is_unit() {
+    // A `match` used for its effects needed a dummy `0` at the end of each
+    // block arm ("a block match arm must end with an expression").
+    let src = "fn tally(xs: [Int]) -> Int {\n    let mut pos = 0\n    let mut neg = 0\n    for x in xs {\n        match x > 0 {\n            true => {\n                pos = pos + 1\n            },\n            _ => {\n                if x < 0 {\n                    neg = neg + 1\n                }\n            }\n        }\n    }\n    pos * 10 + neg\n}\nlet r = tally([1, -2, 0, 3, -4, -5])\n";
+    for mode in [
+        flux_runtime::ExecutionMode::Vm,
+        flux_runtime::ExecutionMode::Jit,
+    ] {
+        let compiled = flux_cli::pipeline::compile_with_mode(source_from("<unit-arm>", src), mode)
+            .unwrap_or_else(|failure| panic!("{:?}", failure.diagnostics.errors));
+        assert_eq!(
+            compiled.executor.get_value("r"),
+            Some(RuntimeValue::int_i64(23)),
+            "{mode:?}"
+        );
+    }
+    // Mixing a `()` arm with a valued arm is an ordinary type mismatch.
+    let failure = match compile(source_from(
+        "<unit-arm>",
+        "fn f(x: Int) -> Int {\n    let y = match x {\n        0 => {\n            let z = 1\n        },\n        _ => 5\n    }\n    y\n}\nlet r = f(1)\n",
+    )) {
+        Ok(_) => panic!("a () arm unified with Int"),
+        Err(failure) => failure,
+    };
+    assert!(
+        failure
+            .diagnostics
+            .errors
+            .iter()
+            .any(|e| e.to_string() == "type mismatch: expected `Unit`, found `Int64`"),
+        "{:?}",
+        failure.diagnostics.errors
+    );
+}
+
+#[test]
+fn str_chars_splits_into_characters() {
+    let src = "import str { str_chars }\nimport collections { len }\nlet a = str_chars(\"héllo 🙂\")\nlet b = len(str_chars(\"\"))\n";
+    let compiled = compile(source_from("<chars>", src))
+        .unwrap_or_else(|failure| panic!("{:?}", failure.diagnostics.errors));
+    let chars = ["h", "é", "l", "l", "o", " ", "🙂"];
+    assert_eq!(
+        compiled.executor.get_value("a"),
+        Some(RuntimeValue::array(
+            chars
+                .iter()
+                .map(|c| RuntimeValue::String((*c).into()))
+                .collect()
+        ))
+    );
+    assert_eq!(
+        compiled.executor.get_value("b"),
+        Some(RuntimeValue::int_i64(0))
+    );
+}
+
+#[test]
+fn indexing_reads_an_element_or_fails_out_of_bounds() {
+    let src = "import collections { len, range }\n\
+fn sum(xs: [Int]) -> Int {\n    let mut t = 0\n    let mut i = 0\n    while i < len(xs) {\n        t = t + xs[i]\n        i = i + 1\n    }\n    t\n}\n\
+fn grid() -> Int { [[1, 2], [3, 4]][1][0] }\n\
+fn last(names: [String]) -> String { names[len(names) - 1] }\n\
+let a = sum(range(1000))\nlet b = grid()\nlet c = last([\"a\", \"b\", \"c\"])\n";
+    for mode in [
+        flux_runtime::ExecutionMode::Vm,
+        flux_runtime::ExecutionMode::Jit,
+    ] {
+        let compiled = flux_cli::pipeline::compile_with_mode(source_from("<index>", src), mode)
+            .unwrap_or_else(|failure| panic!("{:?}", failure.diagnostics.errors));
+        assert_eq!(
+            compiled.executor.get_value("a"),
+            Some(RuntimeValue::int_i64(499500)),
+            "{mode:?}"
+        );
+        assert_eq!(
+            compiled.executor.get_value("b"),
+            Some(RuntimeValue::int_i64(3)),
+            "{mode:?}"
+        );
+        assert_eq!(
+            compiled.executor.get_value("c"),
+            Some(RuntimeValue::String("c".into())),
+            "{mode:?}"
+        );
+        if let Some(stats) = compiled.executor.jit_stats() {
+            assert!(
+                !stats.fallback_nodes.iter().any(|n| n == "sum"),
+                "{stats:?}"
+            );
+        }
+        for bad in ["let r = [1, 2][2]\n", "let r = [1, 2][0 - 1]\n"] {
+            let failure =
+                match flux_cli::pipeline::compile_with_mode(source_from("<index>", bad), mode) {
+                    Ok(_) => panic!("{mode:?}: {bad} did not fail"),
+                    Err(failure) => failure,
+                };
+            assert!(
+                failure.diagnostics.errors.iter().any(|e| matches!(
+                    e,
+                    FluxError::Runtime { message, .. } if message.contains("index out of bounds")
+                )),
+                "{mode:?} {bad}: {:?}",
+                failure.diagnostics.errors
+            );
+        }
+    }
+    let failure = match compile(source_from("<index>", "let r = 5[0]\nlet s = [1][true]\n")) {
+        Ok(_) => panic!("ill-typed indexing compiled"),
+        Err(failure) => failure,
+    };
+    let messages: Vec<String> = failure
+        .diagnostics
+        .errors
+        .iter()
+        .map(|e| e.to_string())
+        .collect();
+    assert!(
+        messages
+            .iter()
+            .any(|m| m.contains("expected `an array to index`, found `Int64`")),
+        "{messages:?}"
+    );
+    assert!(
+        messages
+            .iter()
+            .any(|m| m.contains("expected `an integer index`, found `Bool`")),
+        "{messages:?}"
+    );
+}
+
+#[test]
+fn nested_patterns_match_through_payloads() {
+    let src = "import option { Some, None }\nimport result { Ok, Err }\n\
+enum Tok { Num(Int), Plus, LParen }\n\
+fn kind(t: Option[Tok]) -> Int {\n    match t {\n        Some(Num(n)) => n,\n        Some(Plus) => -1,\n        Some(LParen) => -2,\n        None => -3\n    }\n}\n\
+fn guarded(t: Option[Tok]) -> Int {\n    match t {\n        Some(Num(n)) if n > 10 => 100,\n        Some(Num(n)) => n,\n        _ => 0\n    }\n}\n\
+fn lit(r: Result[Int, String]) -> Int {\n    match r {\n        Ok(0) => 1000,\n        Ok(n) => n,\n        Err(_) => -1\n    }\n}\n\
+fn deep(o: Option[Option[Tok]]) -> Int {\n    match o {\n        Some(Some(Num(n))) => n * 2,\n        Some(Some(_)) => 1,\n        Some(None) => 2,\n        None => 3\n    }\n}\n\
+fn early(t: Option[Tok]) -> Int {\n    let v = match t {\n        Some(Num(n)) => n,\n        _ => return -99\n    }\n    v + 1\n}\n\
+let a = kind(Some(Num(7))) * 1000 + kind(Some(LParen)) * 10 + kind(None)\n\
+let b = guarded(Some(Num(50))) + guarded(Some(Num(5))) + guarded(None)\n\
+let c = lit(Ok(0)) + lit(Ok(5))\n\
+let d = deep(Some(Some(Num(4)))) * 100 + deep(Some(None)) * 10 + deep(None)\n\
+let e = early(Some(Num(1))) + early(None)\n";
+    for mode in [
+        flux_runtime::ExecutionMode::Vm,
+        flux_runtime::ExecutionMode::Jit,
+    ] {
+        let compiled = flux_cli::pipeline::compile_with_mode(source_from("<nested>", src), mode)
+            .unwrap_or_else(|failure| panic!("{:?}", failure.diagnostics.errors));
+        for (name, want) in [("a", 6977), ("b", 105), ("c", 1005), ("d", 823), ("e", -97)] {
+            assert_eq!(
+                compiled.executor.get_value(name),
+                Some(RuntimeValue::int_i64(want)),
+                "{name} {mode:?}"
+            );
+        }
+    }
+    // Nested arms count toward exhaustiveness; a missing payload variant does not.
+    let failure = match compile(source_from(
+        "<nested>",
+        "import option { Some, None }\nenum Tok { Num(Int), Plus, LParen }\nfn kind(t: Option[Tok]) -> Int {\n    match t {\n        Some(Num(n)) => n,\n        Some(Plus) => -1,\n        None => -3\n    }\n}\nlet a = kind(None)\n",
+    )) {
+        Ok(_) => panic!("a non-exhaustive nested match compiled"),
+        Err(failure) => failure,
+    };
+    assert!(
+        failure
+            .diagnostics
+            .errors
+            .iter()
+            .any(|e| e.to_string().contains("missing Some")),
+        "{:?}",
+        failure.diagnostics.errors
+    );
+}
+
+#[test]
+fn none_pattern_matches_only_none() {
+    // `None` in a pattern was a binding named `None`, so a first `None => 0`
+    // arm caught `Some(4)` too.
+    let src = "import option { Some, None }\nfn f(o: Option[Int]) -> Int {\n    match o {\n        None => 0,\n        Some(v) => v\n    }\n}\nlet b = f(Some(4))\n";
+    for mode in [
+        flux_runtime::ExecutionMode::Vm,
+        flux_runtime::ExecutionMode::Jit,
+    ] {
+        let compiled = flux_cli::pipeline::compile_with_mode(source_from("<none>", src), mode)
+            .unwrap_or_else(|failure| panic!("{:?}", failure.diagnostics.errors));
+        assert_eq!(
+            compiled.executor.get_value("b"),
+            Some(RuntimeValue::int_i64(4)),
+            "{mode:?}"
+        );
+    }
+}

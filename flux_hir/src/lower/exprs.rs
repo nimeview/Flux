@@ -306,6 +306,23 @@ pub(super) fn lower_expr(
                 span: *span,
             })
         }
+        Expr::Index { base, index, span } => Some(HirExpr::Index {
+            base: Box::new(lower_expr(
+                base,
+                symbols,
+                scope,
+                diagnostics,
+                reads_reactive,
+            )?),
+            index: Box::new(lower_expr(
+                index,
+                symbols,
+                scope,
+                diagnostics,
+                reads_reactive,
+            )?),
+            span: *span,
+        }),
         Expr::Try { expr, span } => {
             let inner = lower_expr(expr, symbols, scope, diagnostics, reads_reactive)?;
             Some(HirExpr::Try {

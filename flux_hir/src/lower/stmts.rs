@@ -2,8 +2,8 @@
 
 use flux_diagnostics::{span_to_miette, DiagnosticBag, FluxError, Span};
 use flux_syntax::{
-    AssignStmt, Block, ElseBranch, EmitStmt, Expr, ForStmt, IfStmt, LetPattern, LetStmt,
-    MatchPattern, ReturnStmt, Stmt, TypeName, UnaryOp, WhileStmt,
+    AssignStmt, Block, ElseBranch, EmitStmt, Expr, ForStmt, Ident, IfStmt, LetPattern, LetStmt,
+    MatchArm, MatchPattern, ReturnStmt, Stmt, TypeName, UnaryOp, WhileStmt,
 };
 
 use crate::context::ScopeKind;
@@ -109,6 +109,156 @@ fn lower_local_decl(
     }
 }
 
+/// The payload pattern of `Variant(…)` when it is more than a binding:
+/// a nested pattern, or a lone name that is a payload-free variant.
+fn nested_payload(pattern: &MatchPattern, symbols: &SymbolTable) -> Option<MatchPattern> {
+    let MatchPattern::Tuple {
+        bindings, nested, ..
+    } = pattern
+    else {
+        return None;
+    };
+    if let Some(inner) = nested {
+        return Some((**inner).clone());
+    }
+    match bindings.as_slice() {
+        [name] if is_variant_name(&name.name, symbols) => Some(MatchPattern::Simple(name.clone())),
+        _ => None,
+    }
+}
+
+fn pattern_span(pattern: &MatchPattern) -> Option<Span> {
+    match pattern {
+        MatchPattern::Simple(v) => Some(v.span),
+        MatchPattern::Literal(value) => Some(value.span()),
+        MatchPattern::Tuple { span, .. } | MatchPattern::Struct { span, .. } => Some(*span),
+    }
+}
+
+fn is_variant_name(name: &str, symbols: &SymbolTable) -> bool {
+    symbols.enum_variants.contains_key(name) || name == "None"
+}
+
+fn pattern_shape(pattern: &MatchPattern, symbols: &SymbolTable) -> PatShape {
+    match pattern {
+        MatchPattern::Literal(_) => PatShape::Literal,
+        MatchPattern::Simple(v) if is_variant_name(&v.name, symbols) => PatShape::Variant {
+            name: v.name.clone(),
+            payload: None,
+        },
+        MatchPattern::Simple(_) => PatShape::Any,
+        MatchPattern::Tuple { variant, .. } => PatShape::Variant {
+            name: variant.name.clone(),
+            payload: Some(Box::new(
+                nested_payload(pattern, symbols)
+                    .map_or(PatShape::Any, |inner| pattern_shape(&inner, symbols)),
+            )),
+        },
+        MatchPattern::Struct { variant, .. } => PatShape::Variant {
+            name: variant.name.clone(),
+            payload: Some(Box::new(PatShape::Any)),
+        },
+    }
+}
+
+/// `Outer(inner) [if g] => body`, where `inner` is a pattern, lowers to
+/// `Outer(tmp) if (match tmp { inner [if g] => true, _ => false })` with value
+/// `match tmp { inner => body, _ => <never runs> }`: nested patterns reuse
+/// ordinary matching (types, VM, JIT) one level at a time.
+fn lower_nested_arm(
+    arm: &MatchArm,
+    variant: &Ident,
+    inner: MatchPattern,
+    symbols: &mut SymbolTable,
+    scope: ScopeKind,
+    diagnostics: &mut DiagnosticBag,
+    reads_reactive: &mut bool,
+) -> Option<HirMatchArm> {
+    // The synthesized matches take the inner pattern's span: a match's
+    // scrutinee temporary is named after its span start, so each nesting
+    // level must differ (sharing the arm's span let an inner match overwrite
+    // the outer one's temporary).
+    let span = pattern_span(&inner).unwrap_or(arm.span);
+    let shape = arm.guard.is_none().then(|| pattern_shape(&inner, symbols));
+    symbols.push(ScopeKind::Block);
+    // NUL cannot appear in source names; each level declares its own symbol.
+    let tmp_name = "\0pat".to_string();
+    let Ok(tmp) = symbols.declare(&tmp_name, SymbolKind::Local { mutable: false }, span) else {
+        symbols.pop();
+        return None;
+    };
+    let tmp_expr = Expr::Ident {
+        name: tmp_name,
+        span,
+    };
+    let wildcard = |value: bool| MatchArm {
+        pattern: MatchPattern::Simple(Ident {
+            name: "_".into(),
+            span,
+        }),
+        guard: None,
+        stmts: vec![],
+        expr: Some(Expr::Bool { value, span }),
+        span,
+    };
+    let test = Expr::Match {
+        scrutinee: Box::new(tmp_expr.clone()),
+        arms: vec![
+            MatchArm {
+                pattern: inner.clone(),
+                guard: arm.guard.clone(),
+                stmts: vec![],
+                expr: Some(Expr::Bool { value: true, span }),
+                span,
+            },
+            wildcard(false),
+        ],
+        span,
+    };
+    let value = Expr::Match {
+        scrutinee: Box::new(tmp_expr),
+        arms: vec![
+            MatchArm {
+                pattern: inner,
+                guard: None,
+                stmts: arm.stmts.clone(),
+                expr: arm.expr.clone(),
+                span,
+            },
+            wildcard(false),
+        ],
+        span,
+    };
+    let guard = lower_expr(&test, symbols, scope, diagnostics, reads_reactive);
+    let mut expr = lower_expr(&value, symbols, scope, diagnostics, reads_reactive);
+    symbols.pop();
+    let (guard, expr) = (guard?, expr.as_mut()?);
+    // The fallback never runs (the guard checked the pattern): it takes no part
+    // in the type, and the arm leaves exactly when the real body does.
+    let mut diverges = false;
+    if let HirExpr::Match { arms, .. } = expr {
+        if let Some(fallback) = arms.last_mut() {
+            fallback.diverges = true;
+        }
+        diverges = arms.first().is_some_and(|a| a.diverges);
+    }
+    Some(HirMatchArm {
+        variant: variant.name.clone(),
+        bindings: vec![tmp],
+        binding_fields: vec![],
+        guard: Some(guard),
+        literal: None,
+        body: HirBlock {
+            stmts: vec![],
+            span,
+        },
+        expr: expr.clone(),
+        diverges,
+        unit: false,
+        nested: shape,
+    })
+}
+
 pub(super) fn lower_match_arm(
     arm: &flux_syntax::MatchArm,
     symbols: &mut SymbolTable,
@@ -116,6 +266,19 @@ pub(super) fn lower_match_arm(
     diagnostics: &mut DiagnosticBag,
     reads_reactive: &mut bool,
 ) -> Option<HirMatchArm> {
+    if let MatchPattern::Tuple { variant, .. } = &arm.pattern {
+        if let Some(inner) = nested_payload(&arm.pattern, symbols) {
+            return lower_nested_arm(
+                arm,
+                variant,
+                inner,
+                symbols,
+                scope,
+                diagnostics,
+                reads_reactive,
+            );
+        }
+    }
     symbols.push(ScopeKind::Block);
     let mut literal = None;
     let (variant, bindings, binding_fields) = match &arm.pattern {
@@ -139,7 +302,9 @@ pub(super) fn lower_match_arm(
         MatchPattern::Simple(v) => {
             if v.name == "_" {
                 (String::new(), vec![], vec![])
-            } else if symbols.enum_variants.contains_key(&v.name) {
+            } else if symbols.enum_variants.contains_key(&v.name) || v.name == "None" {
+                // `None` is `Option`'s variant; as a binding it caught every
+                // value (`None => 0` before `Some(v) => v` matched `Some(4)`).
                 (v.name.clone(), vec![], vec![])
             } else {
                 let id = symbols
@@ -193,7 +358,12 @@ pub(super) fn lower_match_arm(
         }
         body.extend(lower_stmt(stmt, symbols, diagnostics).unwrap_or_default());
     }
-    let diverges = arm.expr.is_none();
+    let leaves = matches!(
+        arm.stmts.last(),
+        Some(Stmt::Return(_) | Stmt::Break(_) | Stmt::Continue(_))
+    );
+    let diverges = arm.expr.is_none() && leaves;
+    let unit = arm.expr.is_none() && !leaves;
     let expr = match &arm.expr {
         Some(value) => lower_expr(value, symbols, scope, diagnostics, reads_reactive)?,
         None => HirExpr::Bool {
@@ -214,6 +384,8 @@ pub(super) fn lower_match_arm(
         },
         expr,
         diverges,
+        unit,
+        nested: None,
     })
 }
 

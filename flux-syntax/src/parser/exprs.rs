@@ -40,8 +40,8 @@ pub(super) fn parse_expr(source_id: SourceId, pair: pest::iterators::Pair<'_, Ru
                             }
                             Rule::expr => arm_expr = Some(parse_expr(source_id, child)),
                             Rule::arm_block => {
-                                // `parser::invalid_arm_block` guarantees a final
-                                // expression or `return`/`break`/`continue`.
+                                // A final expression is the arm's value;
+                                // otherwise the arm leaves or is `()`.
                                 let mut body = super::stmts::parse_block(source_id, child).stmts;
                                 if let Some(Stmt::Expr(_)) = body.last() {
                                     if let Some(Stmt::Expr(tail)) = body.pop() {
@@ -215,10 +215,19 @@ fn parse_match_pattern(source_id: SourceId, pair: pest::iterators::Pair<'_, Rule
         Rule::tuple_pat => {
             let mut inner = pair.into_inner();
             let variant = parse_ident(source_id, inner.next().expect("tuple variant"));
-            let bindings = inner.map(|p| parse_ident(source_id, p)).collect();
+            let (bindings, nested) = match inner.next() {
+                None => (vec![], None),
+                Some(p) if p.as_rule() == Rule::ident_list => (
+                    p.into_inner().map(|i| parse_ident(source_id, i)).collect(),
+                    None,
+                ),
+                Some(p) if p.as_rule() == Rule::ident => (vec![parse_ident(source_id, p)], None),
+                Some(p) => (vec![], Some(Box::new(parse_match_pattern(source_id, p)))),
+            };
             MatchPattern::Tuple {
                 variant,
                 bindings,
+                nested,
                 span,
             }
         }
@@ -499,6 +508,14 @@ fn parse_postfix_expr(source_id: SourceId, pair: pest::iterators::Pair<'_, Rule>
             expr = Expr::Field {
                 base: Box::new(expr),
                 field,
+                span,
+            };
+        } else if suffix.as_rule() == Rule::index_suffix {
+            let span = merge_span(expr.span(), span_of(source_id, &suffix));
+            let index = parse_expr(source_id, suffix.into_inner().next().expect("index expr"));
+            expr = Expr::Index {
+                base: Box::new(expr),
+                index: Box::new(index),
                 span,
             };
         } else if suffix.as_rule() == Rule::try_suffix {

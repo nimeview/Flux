@@ -62,6 +62,8 @@ pub enum ArithError {
     /// A broken compiler invariant (e.g. an unbound name at run time); a bug
     /// in Flux, reported instead of continuing with a made-up value.
     Internal = 9,
+    /// An array index outside `0..len` (`xs[i]`, `set(xs, i, v)`).
+    IndexOutOfBounds = 10,
 }
 
 impl ArithError {
@@ -75,6 +77,7 @@ impl ArithError {
             7 => Self::AssertionFailed,
             8 => Self::CallDepthExceeded,
             9 => Self::Internal,
+            10 => Self::IndexOutOfBounds,
             _ => Self::InvalidOperands,
         }
     }
@@ -90,6 +93,7 @@ impl ArithError {
             Self::AssertionFailed => "assertion failed",
             Self::CallDepthExceeded => "call depth limit exceeded (10000 nested calls)",
             Self::Internal => "internal error (a bug in Flux; please report it)",
+            Self::IndexOutOfBounds => "index out of bounds",
         }
     }
 }

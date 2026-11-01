@@ -123,7 +123,8 @@ match_pattern = { lit_pat | tuple_pat | struct_pat | simple_pat }
 lit_pat = { float_lit | neg_int_lit | int_lit | string_lit | bool_lit }
 neg_int_lit = ${ "-" ~ int_lit }
 simple_pat = { ident }
-tuple_pat = { ident ~ "(" ~ ident_list? ~ ")" }
+// The payload may itself be a pattern: `Some(Num(n))`, `Ok(0)`, `Some(LParen)`.
+tuple_pat = { ident ~ "(" ~ (lit_pat | tuple_pat | ident_list)? ~ ")" }
 struct_pat = { ident ~ "{" ~ ident_list ~ "}" }
 
 if_expr = { kw_if ~ or_expr ~ "{" ~ expr ~ "}" ~ kw_else ~ "{" ~ expr ~ "}" }
@@ -144,7 +145,9 @@ cast_expr = { unary_expr ~ (kw_as ~ type_name)* }
 unary_expr = { unary_op ~ unary_expr | postfix_expr }
 unary_op = { "-" | "!" }
 
-postfix_expr = { primary_expr ~ (call_suffix | field_suffix | try_suffix)* }
+postfix_expr = { primary_expr ~ (call_suffix | field_suffix | index_suffix | try_suffix)* }
+// `xs[i]`: the element at `i` (out of range is a runtime error).
+index_suffix = { "[" ~ expr ~ "]" }
 // `expr?`: the `Ok`/`Some` value, or return the `Err`/`None` from the function.
 try_suffix = { "?" }
 call_suffix = { call_args }

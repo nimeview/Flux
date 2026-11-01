@@ -116,17 +116,19 @@ pub(super) fn const_expr(expr: &HirExpr) -> Option<IrValue> {
     }
 }
 
-/// `x = push(x, v)` on a local lowers to `[Load x, <v>, Call push]`. When `<v>`
-/// does not touch `x`, loading `x` by move leaves the array unshared, so the
-/// VM's `push` appends in place instead of copying it (O(1) rather than O(n)).
+/// `x = push(x, v)` on a local lowers to `[Load x, <v>, Call push]` (and
+/// `x = set(x, i, v)` likewise). When the other arguments do not touch `x`,
+/// loading `x` by move leaves the array unshared, so the VM updates it in
+/// place instead of copying it (O(1) rather than O(n)).
 fn take_for_push(target: &str, code: &mut [Inst]) {
     if !target.starts_with("\0flux_local_") {
         return;
     }
-    let [Inst::Load(first), value @ .., Inst::Call { name, argc: 2 }] = code else {
+    let [Inst::Load(first), value @ .., Inst::Call { name, argc }] = code else {
         return;
     };
-    if first != target || name != "push" || mentions_name(value, target) || can_leave(value) {
+    let in_place = (name == "push" && *argc == 2) || (name == "set" && *argc == 3);
+    if first != target || !in_place || mentions_name(value, target) || can_leave(value) {
         return;
     }
     code[0] = Inst::Take(target.to_string());

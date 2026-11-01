@@ -607,7 +607,12 @@ fn match_block_fmt(scrutinee: &flux_syntax::Expr, arms: &[flux_syntax::MatchArm]
         out.push_str(&format!("{}{guard} => ", match_pattern_fmt(&arm.pattern)));
         match (&arm.expr, arm.stmts.as_slice()) {
             (Some(value), []) => out.push_str(&expr_fmt(value)),
-            (None, [jump]) => out.push_str(&jump_fmt(jump)),
+            (
+                None,
+                [jump @ (flux_syntax::Stmt::Return(_)
+                | flux_syntax::Stmt::Break(_)
+                | flux_syntax::Stmt::Continue(_))],
+            ) => out.push_str(&jump_fmt(jump)),
             (value, stmts) => {
                 out.push_str("{\n");
                 for stmt in stmts {
@@ -780,6 +785,17 @@ fn expr_fmt(expr: &flux_syntax::Expr) -> String {
         flux_syntax::Expr::Cast { expr, ty, .. } => {
             format!("{} as {ty}", expr_fmt(expr))
         }
+        flux_syntax::Expr::Index { base, index, .. } => match base.as_ref() {
+            flux_syntax::Expr::Binary { .. }
+            | flux_syntax::Expr::Unary { .. }
+            | flux_syntax::Expr::Cast { .. }
+            | flux_syntax::Expr::If { .. }
+            | flux_syntax::Expr::Match { .. }
+            | flux_syntax::Expr::Closure { .. } => {
+                format!("({})[{}]", expr_fmt(base), expr_fmt(index))
+            }
+            _ => format!("{}[{}]", expr_fmt(base), expr_fmt(index)),
+        },
         // `?` binds tighter than any operator: `(a + b)?` keeps its parentheses.
         flux_syntax::Expr::Try { expr, .. } => match expr.as_ref() {
             flux_syntax::Expr::Binary { .. }
@@ -811,6 +827,11 @@ fn match_pattern_fmt(pattern: &flux_syntax::MatchPattern) -> String {
     match pattern {
         flux_syntax::MatchPattern::Simple(v) => v.name.clone(),
         flux_syntax::MatchPattern::Literal(value) => expr_fmt(value),
+        flux_syntax::MatchPattern::Tuple {
+            variant,
+            nested: Some(inner),
+            ..
+        } => format!("{}({})", variant.name, match_pattern_fmt(inner)),
         flux_syntax::MatchPattern::Tuple {
             variant, bindings, ..
         } => {

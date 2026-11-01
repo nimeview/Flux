@@ -156,6 +156,10 @@ An `impl` must match its trait (**E020**): the trait must be declared, and the i
 
 `const N = 42` at module level declares an immutable source binding whose value is fixed at compile time.
 
+### Indexing
+
+`xs[i]` is the element of array `xs` at integer index `i`, counting from 0: `names[0]`, `grid[1][0]`, `rows[i].field`, `f(x)[0]`. An index outside `0..len(xs)`, negative ones included, is the runtime error `index out of bounds`. Indexing a non-array or using a non-integer index is a type error (**E005**). To read without the possibility of an error, use `get(xs, i)`, which returns an `Option`. To change an element, use `xs = set(xs, i, v)`, which updates the array in place when `xs` is a local nobody else holds.
+
 ### `if` and `match` as operands
 
 An `if … else` expression and a `match` are operands like any other value: `1 + if x > 0 { 1 } else { 2 }`, `10 + match x { 0 => 1, _ => 2 }`, `f(if c { a } else { b })`, `[match x { 1 => 7, _ => 8 }]`. An operator after one applies to its whole value: `match x { 1 => 3, _ => 4 } * 10`. The keywords end at a word boundary (`iffy` and `matches` are names). At the start of a statement, `if` is the `if` statement.
@@ -168,9 +172,22 @@ An `if … else` expression and a `match` are operands like any other value: `1 
 
 `match n { 0 => "zero", -1 => "minus one", _ => "other" }`, `match s { "y" => true, _ => false }`, and `true =>` / `false =>` compare the scrutinee with `==`. Allowed literals are Int (optionally negative), String without `{…}` interpolation, and Bool. A Float literal pattern is an error, because exact float equality is a trap. The literal must have the scrutinee's type. Literal arms never make a match exhaustive, so a `_` or binding arm is required.
 
+### Nested patterns
+
+A variant's payload may itself be a pattern: `Some(Num(n))`, `Some(LParen)`, `Ok(0)`, `Some(Some(_))`, to any depth. A name inside is a payload-free variant if one with that name exists (including `None`), and otherwise a binding. Bindings from every level are visible in the guard and the arm. Nested arms count toward exhaustiveness when, together, they cover the payload's type: `Some(A)`, `Some(B)`, `None` is exhaustive for `Option[AB]` with `enum AB { A, B }`. A nested arm with a guard does not count, just like a top-level one. `None` in a pattern is always `Option`'s variant, never a binding.
+
+```flux
+match get(toks, i) {
+    Some(Num(n)) => n,
+    Some(LParen) => parse_group(),
+    Some(_) => fail(),
+    None => end()
+}
+```
+
 ### Block match arms
 
-An arm may be a block: `Err(e) => { println(e)\n  0 }`. Its statements run in order, after the pattern binds, and the block's **final expression** is the arm's value. Allowed everywhere: `let`, assignment to a `let mut` local, and expression statements.
+An arm may be a block: `Err(e) => { println(e)\n  0 }`. Its statements run in order, after the pattern binds, and the block's **final expression** is the arm's value. A block that ends in a statement instead (an assignment, `if`, a loop; a `match` used for its effects) has the value `()`. Mixing such an arm with arms that have a value is a type mismatch. Allowed everywhere: `let`, assignment to a `let mut` local, and expression statements.
 
 Inside a function, an arm block may also contain `if`/`while`/`for` and `return`/`break`/`continue`. They act on the enclosing function or loop, as they would outside the `match`. An arm may also *be* one of these (`Err(e) => return Err(e)`), or a block may end with one instead of a value. Such an arm leaves and has no value: it does not take part in the `match`'s type, and a `match` whose arms all leave has type `Unit`. A `return` in an arm is checked against the function's declared return type. Derived values, `watch`, and `on` keep expression-only arms (control flow there is a compile error), and `emit` or assignments to module bindings or immutable locals are compile errors in any arm block.
 
@@ -226,9 +243,9 @@ Selective imports: `import io { println, read_line }`. Stdlib modules live under
 | Module | Symbols |
 |--------|---------|
 | `io` | `print`, `println`, `eprint`, `eprintln`, `args`, `read_line`, `read_file`, `write_file`, `append_file`, `file_exists` |
-| `collections` | `len`, `range`, `push`, `pop`, `get`, `map`, `filter`, `reduce` |
+| `collections` | `len`, `range`, `push`, `set`, `pop`, `get`, `map`, `filter`, `reduce` |
 | `math` | `abs`, `min`, `max`, `clamp`, `sqrt`, `floor`, `ceil`, `pow`, `assert`, `assert_eq` |
-| `str` | `str_len`, `str_split`, `str_join`, `str_contains`, `str_trim`, `str_starts_with`, `str_ends_with`, `str_replace`, `str_to_lower`, `str_to_upper`, `to_string`, `parse_int`, `parse_float` |
+| `str` | `str_len`, `str_split`, `str_chars`, `str_join`, `str_contains`, `str_trim`, `str_starts_with`, `str_ends_with`, `str_replace`, `str_to_lower`, `str_to_upper`, `to_string`, `parse_int`, `parse_float` |
 | `option` | `Some`, `None` |
 | `result` | `Ok`, `Err` |
 
@@ -241,6 +258,7 @@ Selective imports: `import io { println, read_line }`. Stdlib modules live under
 | `range` | `fn(Int, Int) -> [Int]` | `start..end-1` (step 1) |
 | `range` | `fn(Int, Int, Int) -> [Int]` | `start..end-1` with explicit step |
 | `push` | `fn([T], T) -> [T]` | Append element (returns new array) |
+| `set` | `fn([T], Int, T) -> [T]` | Replace element `i` (returns new array); `i` outside `0..len` is the runtime error `index out of bounds` |
 | `pop` | `fn([T]) -> [T]` | Remove last element |
 | `get` | `fn([T], Int) -> Option[T]` | `Some(xs[i])` when `0 <= i < len(xs)`, otherwise `None` (never an error); `i` may be any integer type |
 | `map` | `fn([T], fn(T) -> U) -> [U]` | Transform each element |
@@ -248,7 +266,8 @@ Selective imports: `import io { println, read_line }`. Stdlib modules live under
 | `reduce` | `fn([T], U, fn(U, T) -> U) -> U` | Fold to a single accumulator |
 | `abs`, `min`, `max`, `clamp`, `sqrt`, `floor`, `ceil`, `pow` | math | Numeric intrinsics (`Int`/`Float` overloads where applicable). Integer arguments of `min`/`max`/`clamp` promote like arithmetic operands; a value that does not fit the promoted width (`min(-1, 0u64)`) is `integer overflow` |
 | `str_len` | `fn(String) -> Int` | Length in Unicode scalar values |
-| `str_split` | `fn(String, String) -> [String]` | Split on separator |
+| `str_split` | `fn(String, String) -> [String]` | Split on separator (an empty separator also yields `""` at both ends) |
+| `str_chars` | `fn(String) -> [String]` | One string per character (Unicode scalar value) |
 | `str_join` | `fn([String], String) -> String` | Join with separator |
 | `str_contains` | `fn(String, String) -> Bool` | Substring check |
 | `str_trim` | `fn(String) -> String` | Trim whitespace |

@@ -20,7 +20,7 @@ pub const STD_MODULES: &[(&str, &[&str])] = &[
     (
         "collections",
         &[
-            "len", "range", "push", "pop", "get", "map", "filter", "reduce",
+            "len", "range", "push", "set", "pop", "get", "map", "filter", "reduce",
         ],
     ),
     (
@@ -43,6 +43,7 @@ pub const STD_MODULES: &[(&str, &[&str])] = &[
         &[
             "str_len",
             "str_split",
+            "str_chars",
             "str_join",
             "str_contains",
             "str_trim",

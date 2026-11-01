@@ -20,6 +20,7 @@ pub const BUILTIN_FNS: &[&str] = &[
     "len",
     "range",
     "push",
+    "set",
     "pop",
     "get",
     "map",
@@ -27,6 +28,7 @@ pub const BUILTIN_FNS: &[&str] = &[
     "reduce",
     "str_len",
     "str_split",
+    "str_chars",
     "str_contains",
     "str_trim",
     "str_join",
@@ -121,6 +123,20 @@ pub fn call_builtin_checked(
         }
         _ => {}
     }
+    // `set(xs, i, v)`: `xs` with element `i` replaced; `i` must be in range.
+    if name == "set" {
+        let (Some(Value::Array(items)), Some(i), Some(v)) =
+            (args.first(), int_arg(args.get(1)), args.get(2))
+        else {
+            return None;
+        };
+        let Some(i) = usize::try_from(i).ok().filter(|&i| i < items.len()) else {
+            return Some(Err(flux_value::ArithError::IndexOutOfBounds));
+        };
+        let mut items = items.to_vec();
+        items[i] = v.clone();
+        return Some(Ok(Value::array(items)));
+    }
     // Arrays stay within the collection limit, as `range` does.
     if name == "push" {
         if let Some(Value::Array(items)) = args.first() {
@@ -190,32 +206,19 @@ fn print_text(value: &Value) -> String {
 
 pub fn call_builtin(name: &str, args: &[Value]) -> Option<Value> {
     match name {
-        "print" => {
-            if let Some(v) = args.first() {
-                print!("{}", print_text(v));
+        "print" | "println" | "eprint" | "eprintln" => {
+            let mut text = args.first().map(print_text).unwrap_or_default();
+            if name.ends_with("ln") {
+                text.push('\n');
             }
-            Some(Value::Unit)
-        }
-        "println" => {
-            if let Some(v) = args.first() {
-                println!("{}", print_text(v));
+            // `print!` panics when the reader has gone away (`flux run app.fl |
+            // head`); a closed stream just drops the output instead.
+            use std::io::Write;
+            let _ = if name.starts_with('e') {
+                std::io::stderr().write_all(text.as_bytes())
             } else {
-                println!();
-            }
-            Some(Value::Unit)
-        }
-        "eprint" => {
-            if let Some(v) = args.first() {
-                eprint!("{}", print_text(v));
-            }
-            Some(Value::Unit)
-        }
-        "eprintln" => {
-            if let Some(v) = args.first() {
-                eprintln!("{}", print_text(v));
-            } else {
-                eprintln!();
-            }
+                std::io::stdout().write_all(text.as_bytes())
+            };
             Some(Value::Unit)
         }
         "args" => Some(Value::array(
@@ -271,6 +274,14 @@ pub fn call_builtin(name: &str, args: &[Value]) -> Option<Value> {
             };
             Some(Value::int_i64(n))
         }
+        // One string per character (Unicode scalar value); `str_split(s, "")`
+        // also yields empty strings at both ends.
+        "str_chars" => match args.first()? {
+            Value::String(s) => Some(Value::array(
+                s.chars().map(|c| Value::String(c.to_string())).collect(),
+            )),
+            _ => Some(Value::array(vec![])),
+        },
         "str_split" => {
             let s = match args.first()? {
                 Value::String(s) => s,

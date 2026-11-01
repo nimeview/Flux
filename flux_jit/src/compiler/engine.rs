@@ -25,6 +25,7 @@ pub(crate) struct HostFuncs {
     pub range: FuncId,
     pub emit: FuncId,
     pub string_concat: FuncId,
+    pub array_index: FuncId,
     pub value_eq: FuncId,
     pub make_enum: FuncId,
     pub enum_variant_eq: FuncId,
@@ -96,6 +97,9 @@ impl HostFuncs {
         let string_concat = module
             .declare_function("flux_jit_string_concat", Linkage::Import, &concat_sig)
             .expect("declare flux_jit_string_concat");
+        let array_index = module
+            .declare_function("flux_jit_array_index", Linkage::Import, &concat_sig)
+            .expect("declare flux_jit_array_index");
 
         let mut eq_sig = module.make_signature();
         for _ in 0..4 {
@@ -189,6 +193,7 @@ impl HostFuncs {
             range,
             emit,
             string_concat,
+            array_index,
             value_eq,
             make_enum,
             enum_variant_eq,
@@ -276,6 +281,10 @@ impl JitEngine {
         jit_builder.symbol(
             "flux_jit_string_concat",
             crate::host::flux_jit_string_concat as *const u8,
+        );
+        jit_builder.symbol(
+            "flux_jit_array_index",
+            crate::host::flux_jit_array_index as *const u8,
         );
         jit_builder.symbol(
             "flux_jit_value_eq",

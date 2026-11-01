@@ -60,6 +60,22 @@ impl Executor {
                         return RuntimeValue::Unit;
                     }
                 }
+                Inst::Index => {
+                    let index = stack_pop(stack, "Index index");
+                    let element = match (stack_pop(stack, "Index array"), index.as_int()) {
+                        (RuntimeValue::Array(items), Some(i)) => {
+                            usize::try_from(i).ok().and_then(|i| items.get(i).cloned())
+                        }
+                        _ => None,
+                    };
+                    match element {
+                        Some(v) => stack.push(v),
+                        None => {
+                            self.raise(flux_value::ArithError::IndexOutOfBounds);
+                            return RuntimeValue::Unit;
+                        }
+                    }
+                }
                 Inst::Try => match stack_pop(stack, "Try") {
                     RuntimeValue::Result(Ok(v)) | RuntimeValue::Option(Some(v)) => stack.push(*v),
                     // `Err(e)` / `None` is the function's result.
@@ -185,6 +201,26 @@ impl Executor {
                                     return RuntimeValue::Unit;
                                 }
                                 std::sync::Arc::make_mut(&mut items).push(value);
+                                stack.push(RuntimeValue::Array(items));
+                            }
+                            continue;
+                        }
+                    }
+                    // Builtin `set` on an array: replace in place (copy only if
+                    // shared), like `push`.
+                    if name == "set" && args.len() == 3 && !self.functions.contains_key(name) {
+                        if let [RuntimeValue::Array(_), _, _] = args.as_slice() {
+                            let value = args.pop().unwrap_or(RuntimeValue::Unit);
+                            let index = args.pop().and_then(|i| i.as_int());
+                            if let Some(RuntimeValue::Array(mut items)) = args.pop() {
+                                let Some(i) = index
+                                    .and_then(|i| usize::try_from(i).ok())
+                                    .filter(|&i| i < items.len())
+                                else {
+                                    self.raise(flux_value::ArithError::IndexOutOfBounds);
+                                    return RuntimeValue::Unit;
+                                };
+                                std::sync::Arc::make_mut(&mut items)[i] = value;
                                 stack.push(RuntimeValue::Array(items));
                             }
                             continue;

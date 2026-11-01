@@ -131,3 +131,39 @@ fn round_trips_if_and_match_operands() {
     );
     assert_eq!(format_source(&out).expect("reparse"), out);
 }
+
+#[test]
+fn round_trips_block_arms_without_a_value() {
+    let input = "fn f(x: Int) {\n    let mut n = 0\n    match x {\n        0 => {\n            n = 1\n        },\n        _ => {\n            if x > 5 {\n                n = 2\n            }\n        }\n    }\n}\n";
+    let out = format_source(input).expect("parse");
+    assert!(
+        !out.contains("0 => n = 1"),
+        "a statement arm must stay a block: {out}"
+    );
+    assert_eq!(format_source(&out).expect("reparse"), out);
+}
+
+#[test]
+fn round_trips_indexing() {
+    let input = "let a = xs[i + 1]\nlet b = grid[1][0]\nlet c = f(x)[0].name\nlet d = (if c { xs } else { ys })[0]\n";
+    let out = format_source(input).expect("parse");
+    for want in [
+        "xs[i + 1]",
+        "grid[1][0]",
+        "f(x)[0].name",
+        "(if c { xs } else { ys })[0]",
+    ] {
+        assert!(out.contains(want), "{want}: {out}");
+    }
+    assert_eq!(format_source(&out).expect("reparse"), out);
+}
+
+#[test]
+fn round_trips_nested_patterns() {
+    let input = "let a = match t { Some(Num(n)) => n, Some(LParen) => 0, Ok(0) => 1, Some(Some(_)) => 2, _ => 3 }\n";
+    let out = format_source(input).expect("parse");
+    for want in ["Some(Num(n))", "Some(LParen)", "Ok(0)", "Some(Some(_))"] {
+        assert!(out.contains(want), "{want}: {out}");
+    }
+    assert_eq!(format_source(&out).expect("reparse"), out);
+}

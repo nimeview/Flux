@@ -317,7 +317,11 @@ fn emit_expr(expr: &HirExpr, program: &HirProgram, code: &mut Vec<Inst>) {
                 } else {
                     then_code.push(Inst::Block(super::items::lower_block(&arm.body, program)));
                 }
-                emit_expr(&arm.expr, program, &mut then_code);
+                if arm.unit {
+                    then_code.push(Inst::Const(IrValue::Unit));
+                } else {
+                    emit_expr(&arm.expr, program, &mut then_code);
+                }
                 let mut cond_code = Vec::new();
                 emit_match_arm_cond(&temp, arm, program, &mut cond_code);
                 let else_branch = std::mem::take(&mut result);
@@ -336,6 +340,11 @@ fn emit_expr(expr: &HirExpr, program: &HirProgram, code: &mut Vec<Inst>) {
         HirExpr::Try { expr, .. } => {
             emit_expr(expr, program, code);
             code.push(Inst::Try);
+        }
+        HirExpr::Index { base, index, .. } => {
+            emit_expr(base, program, code);
+            emit_expr(index, program, code);
+            code.push(Inst::Index);
         }
         // The builtin by name: it needs no import, and the type checker
         // allows only values whose text form is defined.
