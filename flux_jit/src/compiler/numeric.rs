@@ -32,15 +32,17 @@ pub(crate) fn is_numeric_code(code: &[Inst], jit_fns: &HashSet<String>) -> bool 
             else_branch,
         } => is_numeric_code(then_branch, jit_fns) && is_numeric_code(else_branch, jit_fns),
         Inst::MakeArray(_) => true,
-        // Pattern matching currently lowers through VM-local bindings. Keep it
-        // on the reference VM until the JIT has equivalent branch-local scope.
+        // Pattern matching: locals are Cranelift variables, so a binding made
+        // in one branch is scoped like on the VM. Tags are compared on user
+        // enums; `Option`/`Result`/struct values never reach compiled code
+        // (the runtime falls back when an input has no tagged form).
         Inst::EnumTagEq(_)
         | Inst::VariantTagEq(_)
-        | Inst::VariantPayloadGet { .. }
-        | Inst::BindLocal(_)
-        | Inst::Take(_)
-        | Inst::Block(_)
-        | Inst::Try => false,
+        | Inst::VariantPayloadGet { field: None }
+        | Inst::BindLocal(_) => true,
+        // A struct-variant field (`Shape::Rect { w, h }`) has no lowering.
+        Inst::VariantPayloadGet { field: Some(_) } => false,
+        Inst::Take(_) | Inst::Block(_) | Inst::Try => false,
         Inst::MakeUserEnum { .. } => true,
         Inst::MakeUserStruct { .. } | Inst::FieldGet(_) => false,
     })

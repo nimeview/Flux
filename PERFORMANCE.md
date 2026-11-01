@@ -21,6 +21,7 @@ compilation is excluded. Criterion keeps per-run results in
 | `strings` | concatenation, `str_split`, `to_string` (2,000 lines) |
 | `collections` | `range`, `map`/`filter`/`reduce` with closures (20k elements) |
 | `structs_match` | `push` of enum/struct values, `match`, `get` (3,000 elements) |
+| `enum_match` | `match` on integers and on a user enum with payloads, in a loop (100k iterations) |
 | `reactive_events_1000` | 1,000 events through a source and 5 derived values |
 | `compile_inventory_totals` | parse → HIR → types → IR of `examples/general/inventory_totals.fl` |
 
@@ -87,6 +88,22 @@ What changed in the JIT. Before, loops and calls inside functions fell back to t
 The tests in `flux_cli/tests/jit.rs` (`jit_parity_locals_reassigned_in_loops_and_branches`, `jit_parity_calls_recursion_and_early_return`, `jit_parity_call_does_not_clobber_handler_param`) cover these cases. Errors inside compiled loops (overflow, division by zero) match the VM.
 
 Remaining: the VM still resolves locals by name, about 1.2 µs per `compute_loop` iteration. Slot-indexed locals would be the next VM step. `Value` is 72 bytes because of `UserStruct`/`UserEnum`. JIT event handling is about 25% slower than the VM in `reactive_events_1000`.
+
+## `match` in the JIT (2026-11-01)
+
+Turbo Boost off. A/B against the previous commit (7e9b2f9) in a temporary worktree, same session.
+
+| Workload | JIT before | JIT after |
+|----------|-----------|-----------|
+| enum_match (new) | 1.748 s (fell back to the VM) | **0.315 s** |
+| collections | 22.2 ms | 23.0 ms |
+| reactive_events_1000 | 17.1 ms | 17.5 ms |
+
+All other workloads, VM and JIT, stayed within noise (±4%). VM `enum_match`: 1.57 s before and after.
+
+- `BindLocal`, `EnumTagEq`/`VariantTagEq`, and `VariantPayloadGet` for tuple variants are now JIT-eligible. Their old exclusion predates locals becoming Cranelift variables, which scope a binding to its branch. Struct-variant fields stay on the VM.
+- Correctness fix in the same change: structs, `Option`, and `Result` have no tagged form, and compiled code received them as `()` (`pass(Some(3))` returned `()`). The runtime now runs an entry on the VM when an argument, event payload, or reactive node it reads has no tagged form. `collections` and `reactive_events` pay about 3% for that check, which is folded into building the slot buffer.
+- The differential test now has `match` at normal frequency and a user enum. All 141 programs that produce a value are compiled natively (before: 105 of 152).
 
 ## Findings
 

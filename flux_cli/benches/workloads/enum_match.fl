@@ -1,0 +1,33 @@
+// `match` on integers and on a user enum with payloads, in a loop.
+enum Op { Add(Int), Mul(Int), Nop }
+
+fn step(op: Op, acc: Int) -> Int {
+    match op {
+        Add(n) => acc + n,
+        Mul(n) => acc * n % 1000003,
+        Nop => acc
+    }
+}
+
+fn classify(n: Int) -> Int {
+    match n % 4 {
+        0 => 1,
+        1 => {
+            let k = n * 2
+            k % 7
+        },
+        _ => 3
+    }
+}
+
+fn run() -> Int {
+    let mut acc = 1
+    let mut i = 0
+    while i < 100000 {
+        acc = (acc + classify(i)) % 1000003
+        let op = match i % 3 { 0 => Add(i), 1 => Mul(3), _ => Nop }
+        acc = step(op, acc)
+        i = i + 1
+    }
+    acc
+}

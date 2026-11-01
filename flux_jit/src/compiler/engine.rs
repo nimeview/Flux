@@ -229,6 +229,10 @@ pub struct JitEngine {
     pub exprs: HashMap<String, CompiledExpr>,
     pub stmts: HashMap<String, CompiledExpr>,
     pub vm_fallback: HashSet<String>,
+    /// Reactive nodes each node/`watch`/`on` entry reads; see [`Self::reads`].
+    entry_reads: HashMap<String, HashSet<String>>,
+    /// Reactive nodes any function reads (a call may reach any of them).
+    fn_reads: HashSet<String>,
     fallback_reasons: HashMap<String, usize>,
     pub lazy_if_deps: HashMap<String, HashSet<String>>,
     /// `__on_N` → slot pair index for event param binding.
@@ -314,6 +318,8 @@ impl JitEngine {
             exprs: HashMap::new(),
             stmts: HashMap::new(),
             vm_fallback: HashSet::new(),
+            entry_reads: HashMap::new(),
+            fn_reads: HashSet::new(),
             fallback_reasons: HashMap::new(),
             lazy_if_deps: HashMap::new(),
             handler_param_slots: HashMap::new(),
@@ -328,6 +334,33 @@ impl JitEngine {
         for node in &program.nodes {
             engine.layout.alloc(&node.name);
         }
+        let is_node = |name: &String| engine.layout.name_to_idx.contains_key(name);
+        let mut fn_reads = HashSet::new();
+        for f in &program.functions {
+            loads_in_stmts(&f.body, &mut fn_reads);
+        }
+        fn_reads.retain(is_node);
+        let mut entry_reads = HashMap::new();
+        for node in &program.nodes {
+            let mut set = HashSet::new();
+            collect_lazy_if_loads_rec(&node.code, &mut set);
+            set.retain(is_node);
+            entry_reads.insert(node.name.clone(), set);
+        }
+        for (i, w) in program.watches.iter().enumerate() {
+            let mut set = HashSet::new();
+            loads_in_stmts(&w.body, &mut set);
+            set.retain(is_node);
+            entry_reads.insert(format!("__watch_{i}"), set);
+        }
+        for (i, h) in program.on_handlers.iter().enumerate() {
+            let mut set = HashSet::new();
+            loads_in_stmts(&h.body, &mut set);
+            set.retain(is_node);
+            entry_reads.insert(format!("__on_{i}"), set);
+        }
+        engine.fn_reads = fn_reads;
+        engine.entry_reads = entry_reads;
 
         let host_slots = engine.layout.len() as u32;
         engine.host_slots = host_slots;
@@ -513,6 +546,17 @@ impl JitEngine {
     /// nodes, call scratch, and the call-depth counter.
     pub fn slot_capacity_pairs(&self) -> u32 {
         self.host_slots + self.call_scratch_pairs + 1
+    }
+
+    /// Reactive nodes the compiled entry `key` (a node, function, `__watch_i`,
+    /// or `__on_i`) may read, including through calls. The runtime checks that
+    /// their values have a tagged form before running compiled code.
+    pub fn reads<'a>(&'a self, key: &str) -> impl Iterator<Item = &'a String> + 'a {
+        self.entry_reads
+            .get(key)
+            .into_iter()
+            .flatten()
+            .chain(self.fn_reads.iter())
     }
 
     /// Pair whose data word counts active calls (see `flux_value::MAX_CALL_DEPTH`).
@@ -734,6 +778,50 @@ fn collect_lazy_if_loads_rec(code: &[Inst], set: &mut HashSet<String>) {
             }
             Inst::ShortAnd(inner) | Inst::ShortOr(inner) => collect_lazy_if_loads_rec(inner, set),
             _ => {}
+        }
+    }
+}
+
+/// Every name `stmts` loads (including inside nested code and blocks).
+fn loads_in_stmts(stmts: &[IrStmt], set: &mut HashSet<String>) {
+    for stmt in stmts {
+        match stmt {
+            IrStmt::Assign { expr, .. } | IrStmt::Let { expr, .. } => loads_in_code(expr, set),
+            IrStmt::Expr { code } => loads_in_code(code, set),
+            IrStmt::Emit { arg, .. } | IrStmt::Return { expr: arg } => {
+                if let Some(code) = arg {
+                    loads_in_code(code, set);
+                }
+            }
+            IrStmt::If {
+                cond,
+                then_body,
+                else_body,
+            } => {
+                loads_in_code(cond, set);
+                loads_in_stmts(then_body, set);
+                if let Some(body) = else_body {
+                    loads_in_stmts(body, set);
+                }
+            }
+            IrStmt::While { cond, body } => {
+                loads_in_code(cond, set);
+                loads_in_stmts(body, set);
+            }
+            IrStmt::For { iter, body, .. } => {
+                loads_in_code(iter, set);
+                loads_in_stmts(body, set);
+            }
+            IrStmt::Break | IrStmt::Continue => {}
+        }
+    }
+}
+
+fn loads_in_code(code: &[Inst], set: &mut HashSet<String>) {
+    collect_lazy_if_loads_rec(code, set);
+    for inst in code {
+        if let Inst::Block(stmts) = inst {
+            loads_in_stmts(stmts, set);
         }
     }
 }

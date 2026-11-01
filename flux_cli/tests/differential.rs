@@ -1,6 +1,6 @@
 //! Differential VM/JIT check on generated programs: integer arithmetic (with
 //! division by zero and overflow), loops that reassign locals, `if`/`match`
-//! operands, calls, and recursion. The VM is the reference; the JIT must give
+//! operands, user enums with payloads, calls, and recursion. The VM is the reference; the JIT must give
 //! the same value or the same runtime error. Deterministic and bounded.
 
 use std::sync::{Mutex, MutexGuard, OnceLock};
@@ -68,8 +68,7 @@ impl Gen {
                 self.expr(d, vars, call),
                 self.expr(d, vars, call)
             ),
-            // Rare: a `match` makes the JIT fall back (it binds a temporary).
-            5 if self.pick(4) == 0 => format!(
+            5 => format!(
                 "(match {} {{ 0 => {}, 1 => {}, _ => {} }})",
                 self.expr(d, vars, call),
                 self.expr(d, vars, call),
@@ -79,6 +78,13 @@ impl Gen {
             6 if call.is_some() => {
                 format!("{}({})", call.unwrap_or("g"), self.expr(d, vars, call))
             }
+            // A user enum with payloads (built and matched in compiled code).
+            7 if call.is_some() => format!(
+                "(match mk({}) {{ A(v) => v, B => {}, C(v) => v - {} }})",
+                self.expr(d, vars, call),
+                self.expr(d, vars, call),
+                self.expr(d, vars, call)
+            ),
             _ => self.expr(0, vars, call),
         }
     }
@@ -92,7 +98,9 @@ impl Gen {
         let steps = self.pick(6);
         let (a, b) = (self.literal(), self.literal());
         format!(
-            "fn g(p: Int) -> Int {{ {g} }}\n\
+            "enum E {{ A(Int), B, C(Int) }}\n\
+fn mk(p: Int) -> E {{\n    if p % 3 == 0 {{\n        A(p)\n    }} else {{\n        if p % 3 == 1 {{\n            B\n        }} else {{\n            C(p)\n        }}\n    }}\n}}\n\
+fn g(p: Int) -> Int {{ {g} }}\n\
 fn h(n: Int) -> Int {{\n    if n <= 0 {{\n        0\n    }} else {{\n        (n % 7) + h(n - 1)\n    }}\n}}\n\
 fn f(a: Int, b: Int) -> Int {{\n    let mut x = {init}\n    let mut i = 0\n    while i < {steps} {{\n        if {cond} > 3 {{\n            x = {then_e}\n        }} else {{\n            x = {else_e}\n        }}\n        i = i + 1\n    }}\n    x + h(i)\n}}\n\
 let r = f({a}, {b})\n"
@@ -164,7 +172,7 @@ fn jit_matches_vm_on_generated_programs() {
     );
     // Meaningful only if both outcomes occur and the JIT compiles `f` itself.
     assert!(
-        values > 50 && errors > 10 && native > 80,
+        values > 50 && errors > 10 && native > 110,
         "values {values}, errors {errors}, natively compiled {native}"
     );
 }

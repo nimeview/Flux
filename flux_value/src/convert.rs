@@ -40,6 +40,23 @@ pub fn value_to_tagged(v: &Value) -> TaggedVal {
     }
 }
 
+/// Whether [`value_to_tagged`] keeps `v` intact. Structs, `Option`, and
+/// `Result` have no tagged form (they become `Unit`), so code that receives
+/// one must run on the VM.
+pub fn is_tag_representable(v: &Value) -> bool {
+    match v {
+        Value::Int { .. }
+        | Value::Float { .. }
+        | Value::Char(_)
+        | Value::Bool(_)
+        | Value::String(_)
+        | Value::Unit => true,
+        Value::Array(items) => items.iter().all(is_tag_representable),
+        Value::UserEnum { payload, .. } => payload.as_deref().is_none_or(is_tag_representable),
+        Value::UserStruct { .. } | Value::Option(_) | Value::Result(_) => false,
+    }
+}
+
 /// Decode a tagged slot value into a runtime value.
 pub fn tagged_to_value(tv: TaggedVal) -> Value {
     if let Some(width) = tag_int_width(tv.tag) {

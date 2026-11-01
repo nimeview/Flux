@@ -81,8 +81,13 @@ impl JitBackend {
         graph: &ReactiveGraph,
         depth: u64,
     ) -> Option<JitResult> {
+        // A struct, `Option`, or `Result` has no tagged form (it would arrive
+        // as `()`): the VM runs such a call.
+        if !args.iter().all(flux_value::is_tag_representable) {
+            return None;
+        }
         let _heap = flux_value::heap_scope();
-        let mut slots = build_slot_buffer(&self.engine, graph);
+        let mut slots = build_slot_buffer(&self.engine, graph, name)?;
         slots[self.engine.depth_pair() as usize * 2 + 1] = depth;
         for (i, arg) in args.iter().enumerate() {
             let tv = flux_value::value_to_tagged(arg);
@@ -101,9 +106,12 @@ impl JitBackend {
         graph: &ReactiveGraph,
         param: Option<&RuntimeValue>,
     ) -> Option<HandlerResult> {
+        if !param.is_none_or(flux_value::is_tag_representable) {
+            return None;
+        }
         // The returned slots hold tagged handles: the caller keeps a
         // `flux_value::heap_scope` open until it has read them.
-        let mut slots = build_slot_buffer(&self.engine, graph);
+        let mut slots = build_slot_buffer(&self.engine, graph, key)?;
         let param_tv = param.map(flux_value::value_to_tagged);
         slots = self.engine.build_stmt_slots(key, &slots, param_tv);
         flux_jit::take_emit_events();
@@ -147,27 +155,44 @@ impl JitBackend {
             return None;
         }
         let _heap = flux_value::heap_scope();
-        let slots = build_slot_buffer(&self.engine, graph);
+        let slots = build_slot_buffer(&self.engine, graph, name)?;
         self.engine.eval_expr_with(name, &slots).map(from_tagged)
     }
 }
 
 #[cfg(feature = "jit")]
-fn build_slot_buffer(engine: &flux_jit::JitEngine, graph: &ReactiveGraph) -> Vec<u64> {
+/// The slot buffer for compiled entry `key`, or `None` when a node it reads
+/// has no tagged form (a struct, `Option`, or `Result` would arrive as `()`):
+/// the VM runs the entry then. Such nodes are rare, so the read set is only
+/// consulted when one exists.
+fn build_slot_buffer(
+    engine: &flux_jit::JitEngine,
+    graph: &ReactiveGraph,
+    key: &str,
+) -> Option<Vec<u64>> {
     let mut flat = engine.layout.flat.clone();
     flat.resize(engine.slot_capacity_pairs() as usize * 2, 0);
+    let mut untagged: Vec<&String> = Vec::new();
     for (name, &id) in &graph.name_to_id {
         let Some(&idx) = engine.layout.name_to_idx.get(name) else {
             continue;
         };
-        let tv = flux_value::value_to_tagged(&graph.nodes[id.0 as usize].value);
+        let value = &graph.nodes[id.0 as usize].value;
+        if !flux_value::is_tag_representable(value) {
+            untagged.push(name);
+            continue;
+        }
+        let tv = flux_value::value_to_tagged(value);
         let base = idx as usize * 2;
         if base + 1 < flat.len() {
             flat[base] = tv.tag;
             flat[base + 1] = tv.data;
         }
     }
-    flat
+    if !untagged.is_empty() && engine.reads(key).any(|read| untagged.contains(&read)) {
+        return None;
+    }
+    Some(flat)
 }
 
 #[allow(clippy::large_enum_variant)]

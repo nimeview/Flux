@@ -18,6 +18,7 @@ const PURE: &[(&str, &str)] = &[
     ("strings", include_str!("workloads/strings.fl")),
     ("collections", include_str!("workloads/collections.fl")),
     ("structs_match", include_str!("workloads/structs_match.fl")),
+    ("enum_match", include_str!("workloads/enum_match.fl")),
 ];
 const REACTIVE: &str = include_str!("workloads/reactive_events.fl");
 const COMPILE_INPUT: &str = include_str!("../../examples/general/inventory_totals.fl");

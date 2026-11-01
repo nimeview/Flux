@@ -10,7 +10,7 @@ pub use arith::{
     binary, cast, compare, int_from_i128, int_to_i128, negate, promote_int, values_equal,
     ArithError, NumOp,
 };
-pub use convert::{tagged_to_value, value_to_tagged};
+pub use convert::{is_tag_representable, tagged_to_value, value_to_tagged};
 pub use display::render;
 pub use heap::{
     array_finish, array_get, array_len, array_push, clear_for_tests, concat_strings, get_array,

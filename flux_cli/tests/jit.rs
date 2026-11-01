@@ -105,9 +105,11 @@ fn jit_parity_enum_match() {
     let (path, contents) = read_program("ok/types/enum_match.fl");
     let jit = compile_with_mode(source_from(path, contents), ExecutionMode::Jit).unwrap();
     let stats = jit.executor.jit_stats().expect("jit stats");
+    // Locals are Cranelift variables, so match bindings compile natively.
     assert!(
-        stats.fallback_nodes.iter().any(|n| n == "code"),
-        "enum match must use the VM until JIT supports branch-local bindings"
+        !stats.fallback_nodes.iter().any(|n| n == "code"),
+        "enum match should be JIT-compiled, fallbacks: {:?}",
+        stats.fallback_nodes
     );
 }
 
@@ -119,8 +121,8 @@ fn jit_parity_enum_match_payload() {
     let jit = compile_with_mode(source_from(path, contents), ExecutionMode::Jit).unwrap();
     let stats = jit.executor.jit_stats().expect("jit stats");
     assert!(
-        stats.fallback_nodes.iter().any(|n| n == "result"),
-        "enum payload match must use the VM, fallbacks: {:?}",
+        !stats.fallback_nodes.iter().any(|n| n == "result"),
+        "enum payload match should be JIT-compiled, fallbacks: {:?}",
         stats.fallback_nodes
     );
 }
@@ -462,5 +464,40 @@ derived all = a + b + c + d + e + f\n";
             !stats.fallback_nodes.iter().any(|n| n == f),
             "`{f}` should be JIT-compiled: {stats:?}"
         );
+    }
+}
+
+#[test]
+fn jit_parity_values_without_a_tagged_form_run_on_the_vm() {
+    // Structs, `Option`, and `Result` have no tagged form; compiled code used
+    // to receive them as `()` and return `()` (e.g. `pass(Some(3))`).
+    let _guard = jit_test_lock();
+    reset_jit();
+    let src = "import option { Some, None }\nimport result { Ok, Err }\nimport collections { len }\n\
+struct P { x: Int }\nenum Box { Full(P), Empty }\n\
+fn pass(o: Option[Int]) -> Option[Int] { o }\n\
+fn passr(r: Result[Int, String]) -> Result[Int, String] { r }\n\
+fn passp(p: P) -> P { p }\n\
+fn pick(c: Int, a: Option[Int], b: Option[Int]) -> Option[Int] { if c > 0 { a } else { b } }\n\
+fn count(xs: [Option[Int]]) -> Int { len(xs) }\n\
+fn keep(b: Box) -> Box { b }\n\
+event Put(p: P)\nlet mut last = P { x: 0 }\non Put { p ->\n    last = p\n}\n\
+let mut maybe = Some(5)\nderived same = maybe\n\
+let r1 = pass(Some(3))\nlet r2 = passr(Err(\"bad\"))\nlet r3 = passp(P { x: 7 })\nlet r4 = pick(1, Some(1), None)\nlet r5 = count([Some(1), None])\nlet r6 = keep(Full(P { x: 2 }))\n";
+    let source = source_from("<untagged>", src);
+    let mut vm = compile_with_mode(source.clone(), ExecutionMode::Vm)
+        .unwrap_or_else(|e| panic!("VM compile failed: {:?}", e.diagnostics.errors));
+    let mut jit = compile_with_mode(source, ExecutionMode::Jit)
+        .unwrap_or_else(|e| panic!("JIT compile failed: {:?}", e.diagnostics.errors));
+    let payload = vm.executor.get_value("r3").expect("struct value");
+    vm.executor.emit("Put", payload.clone());
+    jit.executor.emit("Put", payload);
+    for name in ["r1", "r2", "r3", "r4", "r5", "r6", "last", "same"] {
+        let want = vm.executor.get_value(name);
+        assert!(
+            !matches!(want, None | Some(RuntimeValue::Unit)),
+            "VM `{name}`: {want:?}"
+        );
+        assert_eq!(jit.executor.get_value(name), want, "JIT `{name}`");
     }
 }
