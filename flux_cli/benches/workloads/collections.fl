@@ -1,0 +1,9 @@
+// Higher-order functions over a large array.
+import collections { range, map, filter, reduce }
+
+fn run() -> Int {
+    let xs = range(20000)
+    let squares = map(xs, |x| x * x % 1000)
+    let evens = filter(squares, |x| x % 2 == 0)
+    reduce(evens, 0, |acc, x| acc + x)
+}

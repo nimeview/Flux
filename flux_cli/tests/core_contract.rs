@@ -134,13 +134,13 @@ fn empty_array_takes_its_element_type_from_context() {
     let src = "import collections { push, len }\nfn names() -> [String] {\n  let mut xs: [String] = []\n  xs = push(xs, \"a\")\n  xs\n}\nfn none() -> [Int] { [] }\nfn count(xs: [String]) -> Int { len(xs) }\nlet a = names()\nlet b = len(none())\nlet c = count([])\nlet d = push([], 1.5)\n";
     assert_eq!(
         run_value(src, "a"),
-        RuntimeValue::Array(vec![RuntimeValue::String("a".into())])
+        RuntimeValue::array(vec![RuntimeValue::String("a".into())])
     );
     assert_eq!(run_value(src, "b"), RuntimeValue::int_i64(0));
     assert_eq!(run_value(src, "c"), RuntimeValue::int_i64(0));
     assert_eq!(
         run_value(src, "d"),
-        RuntimeValue::Array(vec![RuntimeValue::float_f64(1.5)])
+        RuntimeValue::array(vec![RuntimeValue::float_f64(1.5)])
     );
 }
 
@@ -171,7 +171,7 @@ fn closure_params_infer_from_typed_params_and_locals() {
     // types (they used to fall back to `Int`); the hint does not leak out.
     let src = "import collections { filter, map }\nimport str { str_len, str_split }\nlet nums = [1, 2, 3]\nfn non_empty(xs: [String]) -> [String] { filter(xs, |w| str_len(w) > 0) }\nfn shout(s: String) -> [String] {\n  let ws: [String] = str_split(s, \" \")\n  map(ws, |w| w + \"!\")\n}\nfn big(nums: [Float]) -> [Float] { filter(nums, |x| x > 1.0) }\nlet a = non_empty([\"a\", \"\", \"b\"])\nlet b = shout(\"hi there\")\nlet c = big([0.5, 2.5])\nlet d = filter(nums, |x| x > 1)\n";
     let strings = |xs: &[&str]| {
-        RuntimeValue::Array(
+        RuntimeValue::array(
             xs.iter()
                 .map(|s| RuntimeValue::String((*s).into()))
                 .collect(),
@@ -181,11 +181,11 @@ fn closure_params_infer_from_typed_params_and_locals() {
     assert_eq!(run_value(src, "b"), strings(&["hi!", "there!"]));
     assert_eq!(
         run_value(src, "c"),
-        RuntimeValue::Array(vec![RuntimeValue::float_f64(2.5)])
+        RuntimeValue::array(vec![RuntimeValue::float_f64(2.5)])
     );
     assert_eq!(
         run_value(src, "d"),
-        RuntimeValue::Array(vec![RuntimeValue::int_i64(2), RuntimeValue::int_i64(3)])
+        RuntimeValue::array(vec![RuntimeValue::int_i64(2), RuntimeValue::int_i64(3)])
     );
 }
 
@@ -615,4 +615,53 @@ fn a_line_starting_with_minus_is_an_error_not_a_subtraction() {
     assert_eq!(run_value(ok, "b"), RuntimeValue::int_i64(7));
     assert_eq!(run_value(ok, "c"), RuntimeValue::int_i64(-5));
     assert_eq!(run_value(ok, "d"), RuntimeValue::int_i64(-3));
+}
+
+#[test]
+fn struct_fields_and_enum_payloads_can_be_user_types() {
+    // Named field/payload types used to stay as empty `enum` placeholders.
+    let src = "struct In { v: Int }\nstruct Out { inner: In }\nenum Shape { Dot(In), Empty }\nfn deep(o: Out) -> Int { o.inner.v }\nfn weight(s: Shape) -> Int { match s { Dot(p) => p.v * 2, Empty => 0 } }\nlet a = deep(Out { inner: In { v: 3 } })\nlet b = weight(Dot(In { v: 5 }))\n";
+    for mode in [
+        flux_runtime::ExecutionMode::Vm,
+        flux_runtime::ExecutionMode::Jit,
+    ] {
+        let compiled = flux_cli::pipeline::compile_with_mode(source_from("<types>", src), mode)
+            .unwrap_or_else(|failure| panic!("{:?}", failure.diagnostics.errors));
+        assert_eq!(
+            compiled.executor.get_value("a"),
+            Some(RuntimeValue::int_i64(3)),
+            "{mode:?}"
+        );
+        assert_eq!(
+            compiled.executor.get_value("b"),
+            Some(RuntimeValue::int_i64(10)),
+            "{mode:?}"
+        );
+    }
+}
+
+#[test]
+fn push_keeps_value_semantics_when_appending_in_place() {
+    // `x = push(x, v)` appends in place; other holders must not see it.
+    let src = "import collections { push, len, range }\n\
+fn aliased() -> Int {\n    let mut xs = [1, 2]\n    let ys = xs\n    xs = push(xs, 3)\n    len(ys) * 10 + len(xs)\n}\n\
+fn reads_self() -> Int {\n    let mut xs: [Int] = []\n    for i in range(3) { xs = push(xs, len(xs) * 10) }\n    let mut t = 0\n    for x in xs { t = t + x }\n    t\n}\n\
+fn other_target() -> Int {\n    let xs = [1]\n    let mut ys = push(xs, 2)\n    ys = push(ys, 3)\n    len(xs) * 10 + len(ys)\n}\n\
+fn grow(xs: [Int]) -> Int {\n    let mut ys = xs\n    ys = push(ys, 1)\n    len(ys)\n}\n\
+fn caller() -> Int {\n    let xs = [5, 6]\n    let n = grow(xs)\n    len(xs) * 10 + n\n}\n\
+let a = aliased()\nlet b = reads_self()\nlet c = other_target()\nlet d = caller()\n";
+    for mode in [
+        flux_runtime::ExecutionMode::Vm,
+        flux_runtime::ExecutionMode::Jit,
+    ] {
+        let compiled = flux_cli::pipeline::compile_with_mode(source_from("<push>", src), mode)
+            .unwrap_or_else(|failure| panic!("{:?}", failure.diagnostics.errors));
+        for (name, want) in [("a", 23), ("b", 30), ("c", 13), ("d", 23)] {
+            assert_eq!(
+                compiled.executor.get_value(name),
+                Some(RuntimeValue::int_i64(want)),
+                "{name} {mode:?}"
+            );
+        }
+    }
 }

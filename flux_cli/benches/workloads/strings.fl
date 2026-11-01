@@ -1,0 +1,18 @@
+// Building, splitting, and measuring text.
+import str { str_split, str_len, to_string }
+
+import collections { len }
+
+fn run() -> Int {
+    let mut text = ""
+    let mut i = 0
+    while i < 2000 {
+        text = text + "line " + to_string(i) + " has some words\n"
+        i = i + 1
+    }
+    let mut total = 0
+    for line in str_split(text, "\n") {
+        total = total + len(str_split(line, " ")) + str_len(line)
+    }
+    total
+}

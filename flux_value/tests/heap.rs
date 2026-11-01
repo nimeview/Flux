@@ -43,7 +43,7 @@ fn value_tagged_roundtrip_enum_and_array() {
     };
     assert_eq!(tagged_to_value(value_to_tagged(&en)), en);
 
-    let arr = Value::Array(vec![Value::int_i64(1), Value::int_i64(2)]);
+    let arr = Value::array(vec![Value::int_i64(1), Value::int_i64(2)]);
     assert_eq!(tagged_to_value(value_to_tagged(&arr)), arr);
 }
 
@@ -78,7 +78,7 @@ fn scoped_allocations_are_freed_when_outermost_scope_ends() {
     let _guard = heap_test_lock();
     clear_for_tests();
     let outer = heap_scope();
-    let array = value_to_tagged(&Value::Array(vec![Value::int_i64(1)]));
+    let array = value_to_tagged(&Value::array(vec![Value::int_i64(1)]));
     let inner = heap_scope();
     let text = intern_string("scoped-only");
     drop(inner);

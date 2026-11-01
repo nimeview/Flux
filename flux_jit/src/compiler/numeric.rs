@@ -37,7 +37,8 @@ pub(crate) fn is_numeric_code(code: &[Inst], jit_fns: &HashSet<String>) -> bool 
         Inst::EnumTagEq(_)
         | Inst::VariantTagEq(_)
         | Inst::VariantPayloadGet { .. }
-        | Inst::BindLocal(_) => false,
+        | Inst::BindLocal(_)
+        | Inst::Take(_) => false,
         Inst::MakeUserEnum { .. } => true,
         Inst::MakeUserStruct { .. } | Inst::FieldGet(_) => false,
     })

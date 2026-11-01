@@ -71,6 +71,18 @@ impl TypeCheckContext {
             }
         }
 
+        // Field and payload types were resolved without the user types, so a
+        // named type is a placeholder `Enum { name, variants: [] }`; replace
+        // those with the registered struct/enum (bounded for recursive types).
+        let registered = ctx.user_types.clone();
+        for ty in ctx.user_types.values_mut() {
+            *ty = fill_user_types(ty, &registered, 4);
+        }
+        let registered = ctx.user_types.clone();
+        for ty in ctx.enum_payloads.values_mut() {
+            *ty = fill_user_types(ty, &registered, 4);
+        }
+
         ctx.trait_impls = program.trait_impls.clone();
         ctx.builtin_symbols = program
             .symbols
@@ -110,5 +122,38 @@ impl TypeCheckContext {
 
     pub fn is_effectful_function(&self, id: SymbolId) -> bool {
         self.effectful_functions.contains(&id)
+    }
+}
+
+/// `ty` with placeholder user-type names replaced by their registered types,
+/// `depth` levels deep (placeholders below that stay as they are).
+fn fill_user_types(ty: &Type, registered: &HashMap<String, Type>, depth: usize) -> Type {
+    if depth == 0 {
+        return ty.clone();
+    }
+    let next = |t: &Type| fill_user_types(t, registered, depth - 1);
+    match ty {
+        Type::Enum { name, variants } if variants.is_empty() => match registered.get(name) {
+            Some(real) => next(real),
+            None => ty.clone(),
+        },
+        Type::Struct { name, fields } => Type::Struct {
+            name: name.clone(),
+            fields: fields.iter().map(|(n, t)| (n.clone(), next(t))).collect(),
+        },
+        Type::Enum { name, variants } => Type::Enum {
+            name: name.clone(),
+            variants: variants
+                .iter()
+                .map(|(n, p)| (n.clone(), p.as_ref().map(next)))
+                .collect(),
+        },
+        Type::Array(t) => Type::Array(Box::new(next(t))),
+        Type::Option(t) => Type::Option(Box::new(next(t))),
+        Type::Result { ok, err } => Type::Result {
+            ok: Box::new(next(ok)),
+            err: Box::new(next(err)),
+        },
+        other => other.clone(),
     }
 }

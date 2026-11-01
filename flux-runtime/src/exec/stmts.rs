@@ -33,6 +33,9 @@ impl Executor {
     ) -> (RuntimeValue, FlowControl) {
         let mut last = RuntimeValue::Unit;
         for stmt in stmts {
+            // Release the previous statement's value first: holding it would
+            // keep an array shared and force copy-on-write to copy.
+            drop(std::mem::replace(&mut last, RuntimeValue::Unit));
             let result = self.run_stmt_flow(stmt, locals);
             if self.trap.is_some() {
                 return (RuntimeValue::Unit, FlowControl::Return);
@@ -157,6 +160,7 @@ impl Executor {
                     if !keep_going.as_bool().unwrap_or(false) {
                         break;
                     }
+                    drop(std::mem::replace(&mut last, RuntimeValue::Unit));
                     let result = self.run_stmts_flow(body, locals);
                     if self.trap.is_some() {
                         return TRAPPED;
@@ -191,11 +195,16 @@ impl Executor {
                     return TRAPPED;
                 }
                 let items: Vec<RuntimeValue> = match items {
-                    RuntimeValue::Array(items) => items,
+                    // The loop owns its elements; this copies only if the array
+                    // is still shared (e.g. a named local), never on a temporary.
+                    RuntimeValue::Array(items) => {
+                        std::sync::Arc::try_unwrap(items).unwrap_or_else(|shared| (*shared).clone())
+                    }
                     _ => vec![],
                 };
                 'for_loop: for item in items {
                     locals.insert(var.clone(), item);
+                    drop(std::mem::replace(&mut last, RuntimeValue::Unit));
                     let result = self.run_stmts_flow(body, locals);
                     if self.trap.is_some() {
                         return TRAPPED;

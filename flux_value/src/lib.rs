@@ -40,7 +40,9 @@ pub enum Value {
     Char(u32),
     Bool(bool),
     String(String),
-    Array(Vec<Value>),
+    /// Shared and copied on write: reading or passing an array is O(1);
+    /// mutation (`Arc::make_mut`) copies only if another value still holds it.
+    Array(std::sync::Arc<Vec<Value>>),
     UserStruct {
         type_name: String,
         fields: HashMap<String, Value>,
@@ -56,6 +58,10 @@ pub enum Value {
 }
 
 impl Value {
+    pub fn array(items: Vec<Value>) -> Self {
+        Self::Array(std::sync::Arc::new(items))
+    }
+
     pub fn int_i64(n: i64) -> Self {
         Self::Int {
             width: IntWidth::I64,

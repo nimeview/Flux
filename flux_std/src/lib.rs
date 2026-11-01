@@ -119,7 +119,7 @@ pub fn call_builtin_checked(
         let (start, end, step) = range_args(args)?;
         return Some(
             flux_value::int_range(start, end, step)
-                .map(|items| Value::Array(items.into_iter().map(Value::int_i64).collect())),
+                .map(|items| Value::array(items.into_iter().map(Value::int_i64).collect())),
         );
     }
     call_builtin(name, args).map(Ok)
@@ -204,7 +204,7 @@ pub fn call_builtin(name: &str, args: &[Value]) -> Option<Value> {
             }
             Some(Value::Unit)
         }
-        "args" => Some(Value::Array(
+        "args" => Some(Value::array(
             program_args().into_iter().map(Value::String).collect(),
         )),
         "len" => {
@@ -219,13 +219,13 @@ pub fn call_builtin(name: &str, args: &[Value]) -> Option<Value> {
         "range" => call_builtin_checked(name, args)?.ok(),
         "push" => {
             let arr = match args.first()? {
-                Value::Array(a) => a.clone(),
+                Value::Array(a) => a.to_vec(),
                 _ => vec![],
             };
             let val = args.get(1).cloned().unwrap_or(Value::Unit);
             let mut out = arr;
             out.push(val);
-            Some(Value::Array(out))
+            Some(Value::array(out))
         }
         // `get(xs, i)`: `Some(xs[i])` when `0 <= i < len(xs)`, otherwise `None`.
         "get" => {
@@ -239,11 +239,11 @@ pub fn call_builtin(name: &str, args: &[Value]) -> Option<Value> {
         }
         "pop" => {
             let mut arr = match args.first()? {
-                Value::Array(a) => a.clone(),
+                Value::Array(a) => a.to_vec(),
                 _ => vec![],
             };
             let last = arr.pop().unwrap_or(Value::Unit);
-            Some(Value::Array(vec![Value::Array(arr), last]))
+            Some(Value::array(vec![Value::array(arr), last]))
         }
         // `map`/`filter`/`reduce` are higher-order and need to invoke user functions
         // or closures, which this value-only builtin layer can't do. The VM
@@ -259,14 +259,14 @@ pub fn call_builtin(name: &str, args: &[Value]) -> Option<Value> {
         "str_split" => {
             let s = match args.first()? {
                 Value::String(s) => s,
-                _ => return Some(Value::Array(vec![])),
+                _ => return Some(Value::array(vec![])),
             };
             let sep = match args.get(1)? {
                 Value::String(s) => s.as_str(),
                 _ => " ",
             };
             let parts: Vec<Value> = s.split(sep).map(|p| Value::String(p.to_string())).collect();
-            Some(Value::Array(parts))
+            Some(Value::array(parts))
         }
         "str_contains" => {
             let (hay, needle) = match (args.first(), args.get(1)) {

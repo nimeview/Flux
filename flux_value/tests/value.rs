@@ -25,7 +25,7 @@ fn display_string_renders_nested_values() {
     assert_eq!(Value::int_i64(1).display_string(), "1");
     assert_eq!(Value::String("hi".into()).display_string(), "\"hi\"");
     assert_eq!(
-        Value::Array(vec![Value::int_i64(1), Value::Bool(false)]).display_string(),
+        Value::array(vec![Value::int_i64(1), Value::Bool(false)]).display_string(),
         "[1, false]"
     );
     assert_eq!(

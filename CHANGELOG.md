@@ -47,6 +47,9 @@ All notable changes to Flux are documented here.
 - Modules have their own namespaces: a module's private items, its own imports (including stdlib), and transitive path dependencies now work (previously only the selected `pub` items of directly imported modules were copied into the root's scope). `watch`/`on` in an imported module is now an error instead of being dropped silently. Type names remain program-global.
 - `flux.toml`: a registry/version dependency, a missing path dependency, or invalid TOML is an error instead of being ignored
 
+### Performance
+- Arrays are shared copy-on-write (`Arc`), so reading, indexing, or passing an array no longer copies it, and `xs = push(xs, v)` appends in place. Building and scanning an array is linear instead of quadratic: the `structs_match` benchmark went from 26.6 s to 0.12 s. Value semantics are unchanged (see `PERFORMANCE.md`).
+
 ### Fixed
 - **`if … else` statements silently dropped every statement in `else` / `else if` bodies** (parser); `fmt` now prints whole `else if` chains
 - Assigning a local inside a fn no longer turns a same-named module binding into a reactive source (E016); `else if` bodies are scanned for source reassignments

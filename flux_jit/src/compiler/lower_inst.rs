@@ -407,6 +407,8 @@ pub(crate) fn lower_insts(
                 let results = b.inst_results(call);
                 stack.push((results[0], results[1]));
             }
+            // Ineligible (see `numeric.rs`); the VM runs these.
+            Inst::Take(_) => return None,
             Inst::BindLocal(name) => {
                 let val = stack.pop()?;
                 locals.insert(name.clone(), val);

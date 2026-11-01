@@ -1,0 +1,18 @@
+// An event updates a source that feeds a chain of derived values.
+event Tick(n: Int)
+
+let mut base = 0
+
+let d1 = base * 2
+
+let d2 = d1 + 1
+
+let d3 = d2 * 3
+
+let d4 = d3 - base
+
+let d5 = d4 % 1000
+
+on Tick { n ->
+    base = base + n
+}

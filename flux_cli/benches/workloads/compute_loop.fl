@@ -1,0 +1,10 @@
+// Integer loop with locals and arithmetic.
+fn run() -> Int {
+    let mut acc = 0
+    let mut i = 0
+    while i < 200000 {
+        acc = acc + i % 7 * 3
+        i = i + 1
+    }
+    acc
+}

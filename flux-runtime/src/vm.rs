@@ -156,10 +156,12 @@ fn validate_stmt(
 fn validate_code(code: &[Inst], mut allowed: HashSet<String>, context: &str) -> Result<(), String> {
     for inst in code {
         match inst {
-            Inst::Load(name) if !allowed.contains(name) && !flux_std::is_builtin_fn(name) => {
+            Inst::Load(name) | Inst::Take(name)
+                if !allowed.contains(name) && !flux_std::is_builtin_fn(name) =>
+            {
                 return Err(format!("Load of undefined name `{name}` in {context}"));
             }
-            Inst::Load(_) => {}
+            Inst::Load(_) | Inst::Take(_) => {}
             Inst::BindLocal(name) => {
                 allowed.insert(name.clone());
             }

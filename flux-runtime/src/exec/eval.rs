@@ -34,6 +34,10 @@ impl Executor {
                     self.record_dep_load(name, locals);
                     stack.push(resolve_load(name, locals, &self.graph, &self.functions));
                 }
+                Inst::Take(name) => match locals.remove(name) {
+                    Some(v) => stack.push(v),
+                    None => stack.push(resolve_load(name, locals, &self.graph, &self.functions)),
+                },
                 Inst::Add | Inst::Sub | Inst::Mul | Inst::Div | Inst::Rem => {
                     let op = match inst {
                         Inst::Add => NumOp::Add,
@@ -135,6 +139,19 @@ impl Executor {
                         args.push(stack_pop(&mut stack, &format!("Call `{name}` arg {i}")));
                     }
                     args.reverse();
+                    // Builtin `push` on an array: append in place. `make_mut`
+                    // copies only if the array is still shared, so value
+                    // semantics are unchanged.
+                    if name == "push" && args.len() == 2 && !self.functions.contains_key(name) {
+                        if let [RuntimeValue::Array(_), _] = args.as_slice() {
+                            let value = args.pop().unwrap_or(RuntimeValue::Unit);
+                            if let Some(RuntimeValue::Array(mut items)) = args.pop() {
+                                std::sync::Arc::make_mut(&mut items).push(value);
+                                stack.push(RuntimeValue::Array(items));
+                            }
+                            continue;
+                        }
+                    }
                     let result = self.call_function(name, &args);
                     stack.push(result);
                 }
@@ -154,7 +171,7 @@ impl Executor {
                         items.push(stack_pop(&mut stack, &format!("MakeArray element {i}")));
                     }
                     items.reverse();
-                    stack.push(RuntimeValue::Array(items));
+                    stack.push(RuntimeValue::array(items));
                 }
                 Inst::EnumTagEq(variant) => {
                     let val = stack_pop_opt(&mut stack, &format!("EnumTagEq `{variant}`"));
@@ -268,10 +285,10 @@ impl Executor {
                         }
                     };
                     let mut result = Vec::with_capacity(arr.len());
-                    for item in arr {
-                        result.push(self.call_function(&fn_name, &[item]));
+                    for item in arr.iter() {
+                        result.push(self.call_function(&fn_name, std::slice::from_ref(item)));
                     }
-                    RuntimeValue::Array(result)
+                    RuntimeValue::array(result)
                 }
                 "filter" => {
                     let arr = match args.first() {
@@ -288,27 +305,28 @@ impl Executor {
                         Some(RuntimeValue::String(s)) => s.clone(),
                         _ => {
                             let filtered = arr
-                                .into_iter()
+                                .iter()
                                 .filter(|v| match v {
                                     RuntimeValue::Bool(b) => *b,
                                     v if v.as_int().is_some() => v.as_int().unwrap() != 0,
                                     _ => false,
                                 })
+                                .cloned()
                                 .collect();
-                            return RuntimeValue::Array(filtered);
+                            return RuntimeValue::array(filtered);
                         }
                     };
                     let mut result = Vec::new();
-                    for item in arr {
+                    for item in arr.iter() {
                         if self
-                            .call_function(&fn_name, std::slice::from_ref(&item))
+                            .call_function(&fn_name, std::slice::from_ref(item))
                             .as_bool()
                             .unwrap_or(false)
                         {
-                            result.push(item);
+                            result.push(item.clone());
                         }
                     }
-                    RuntimeValue::Array(result)
+                    RuntimeValue::array(result)
                 }
                 "reduce" => {
                     let arr = match args.first() {
@@ -336,8 +354,8 @@ impl Executor {
                     };
                     let init = args.get(1).cloned().unwrap_or(RuntimeValue::Unit);
                     let mut acc = init;
-                    for item in arr {
-                        acc = self.call_function(&fn_name, &[acc, item]);
+                    for item in arr.iter() {
+                        acc = self.call_function(&fn_name, &[acc, item.clone()]);
                     }
                     acc
                 }

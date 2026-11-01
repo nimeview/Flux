@@ -61,7 +61,7 @@ fn tasks_tracks_pending_and_completion() {
 fn sales_rollup_applies_tax_and_averages() {
     let compiled = compile_app("sales_rollup.fl");
     let floats =
-        |vs: &[f64]| RuntimeValue::Array(vs.iter().map(|n| RuntimeValue::float_f64(*n)).collect());
+        |vs: &[f64]| RuntimeValue::array(vs.iter().map(|n| RuntimeValue::float_f64(*n)).collect());
     assert_eq!(
         compiled.executor.get_value("taxed"),
         Some(floats(&[108.0, 216.0, 162.0, 324.0, 270.0]))

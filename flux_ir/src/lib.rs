@@ -66,6 +66,10 @@ pub enum IrValue {
 pub enum Inst {
     Const(IrValue),
     Load(String),
+    /// Moves a local out (it is unbound until reassigned). Only emitted for
+    /// `x = push(x, v)` when `v` does not read `x`, so the array is not
+    /// shared during the call and `push` can append in place.
+    Take(String),
     Add,
     Sub,
     Mul,

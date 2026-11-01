@@ -1,0 +1,31 @@
+// Structs, enums, match, and indexed access.
+import collections { range, get, len, push }
+
+struct Point {
+    x: Int,
+    y: Int
+}
+
+enum Shape {
+    Dot(Point),
+    Empty
+}
+
+fn weight(s: Shape) -> Int {
+    match s { Dot(p) => p.x * 2 + p.y, Empty => 0 }
+}
+
+fn run() -> Int {
+    let mut shapes: [Shape] = []
+    for i in range(3000) {
+        shapes = push(shapes, if i % 3 == 0 { Empty } else { Dot(Point { x: i, y: i % 5 }) })
+    }
+    let mut total = 0
+    let mut i = 0
+    while i < len(shapes) {
+        let w = match get(shapes, i) { Some(s) => weight(s), None => 0 }
+        total = total + w
+        i = i + 1
+    }
+    total
+}

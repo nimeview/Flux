@@ -60,7 +60,7 @@ pub fn tagged_to_value(tv: TaggedVal) -> Value {
         TAG_CHAR => Value::Char(tv.data as u32),
         TAG_BOOL => Value::Bool(tv.data != 0),
         TAG_ARRAY => get_array(tv.data)
-            .map(|elems| Value::Array(elems.into_iter().map(tagged_to_value).collect()))
+            .map(|elems| Value::array(elems.into_iter().map(tagged_to_value).collect()))
             .unwrap_or(Value::Unit),
         TAG_STRING => get_string(tv.data)
             .map(Value::String)

@@ -4,7 +4,7 @@ use std::collections::HashMap;
 
 use flux_hir::{HirBlock, HirElse, HirExpr, HirFn, HirIf, HirOn, HirProgram, HirStmt, HirWatch};
 
-use crate::{CompiledFunction, CompiledOnHandler, CompiledWatch, IrStmt, IrValue};
+use crate::{CompiledFunction, CompiledOnHandler, CompiledWatch, Inst, IrStmt, IrValue};
 
 use super::codegen::lower_expr;
 use super::reads::collect_block_reads;
@@ -58,10 +58,12 @@ fn lower_block(block: &HirBlock, program: &HirProgram) -> Vec<IrStmt> {
 
 fn lower_stmt(stmt: &HirStmt, program: &HirProgram) -> Option<IrStmt> {
     match stmt {
-        HirStmt::Assign(a) => Some(IrStmt::Assign {
-            target: runtime_symbol_name(program, &a.name)?,
-            expr: lower_expr(&a.value, program),
-        }),
+        HirStmt::Assign(a) => {
+            let target = runtime_symbol_name(program, &a.name)?;
+            let mut expr = lower_expr(&a.value, program);
+            take_for_push(&target, &mut expr);
+            Some(IrStmt::Assign { target, expr })
+        }
         HirStmt::Emit(e) => Some(IrStmt::Emit {
             event: program.names.get(&e.event)?.clone(),
             arg: e.args.first().map(|a| lower_expr(a, program)),
@@ -112,4 +114,32 @@ pub(super) fn const_expr(expr: &HirExpr) -> Option<IrValue> {
         HirExpr::String { value, .. } => Some(IrValue::String(value.clone())),
         _ => None,
     }
+}
+
+/// `x = push(x, v)` on a local lowers to `[Load x, <v>, Call push]`. When `<v>`
+/// does not touch `x`, loading `x` by move leaves the array unshared, so the
+/// VM's `push` appends in place instead of copying it (O(1) rather than O(n)).
+fn take_for_push(target: &str, code: &mut [Inst]) {
+    if !target.starts_with("\0flux_local_") {
+        return;
+    }
+    let [Inst::Load(first), value @ .., Inst::Call { name, argc: 2 }] = code else {
+        return;
+    };
+    if first != target || name != "push" || mentions_name(value, target) {
+        return;
+    }
+    code[0] = Inst::Take(target.to_string());
+}
+
+fn mentions_name(code: &[Inst], target: &str) -> bool {
+    code.iter().any(|inst| match inst {
+        Inst::Load(n) | Inst::Take(n) | Inst::BindLocal(n) => n == target,
+        Inst::ShortAnd(inner) | Inst::ShortOr(inner) => mentions_name(inner, target),
+        Inst::LazyIf {
+            then_branch,
+            else_branch,
+        } => mentions_name(then_branch, target) || mentions_name(else_branch, target),
+        _ => false,
+    })
 }

@@ -311,7 +311,7 @@ fn ok_map_basic() {
         )
     });
     let ints =
-        |vs: &[i64]| RuntimeValue::Array(vs.iter().map(|n| RuntimeValue::int_i64(*n)).collect());
+        |vs: &[i64]| RuntimeValue::array(vs.iter().map(|n| RuntimeValue::int_i64(*n)).collect());
     assert_eq!(
         compiled.executor.get_value("doubled"),
         Some(ints(&[2, 4, 6, 8, 10]))
@@ -337,7 +337,7 @@ fn ok_filter_basic() {
         )
     });
     let ints =
-        |vs: &[i64]| RuntimeValue::Array(vs.iter().map(|n| RuntimeValue::int_i64(*n)).collect());
+        |vs: &[i64]| RuntimeValue::array(vs.iter().map(|n| RuntimeValue::int_i64(*n)).collect());
     assert_eq!(
         compiled.executor.get_value("evens"),
         Some(ints(&[1, 2, 3, 4, 5, 6]))
@@ -366,7 +366,7 @@ fn ok_higher_order() {
         )
     });
     let ints =
-        |vs: &[i64]| RuntimeValue::Array(vs.iter().map(|n| RuntimeValue::int_i64(*n)).collect());
+        |vs: &[i64]| RuntimeValue::array(vs.iter().map(|n| RuntimeValue::int_i64(*n)).collect());
     assert_eq!(
         compiled.executor.get_value("squared"),
         Some(ints(&[1, 4, 9, 16, 25]))
