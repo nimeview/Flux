@@ -10,6 +10,7 @@
 
 mod decls;
 mod exprs;
+pub mod limits;
 mod stmts;
 mod types;
 
@@ -30,7 +31,45 @@ use stmts::{parse_if_stmt, parse_on, parse_watch};
 #[grammar = "flux.pest"]
 pub struct FluxParser;
 
+/// Native stack for the parser and the compiler passes after it: they recurse
+/// over the syntax tree, which `parser::limits` bounds, so this is a fixed,
+/// thread-independent budget (allocated on demand, not up front).
+pub const COMPILER_STACK: usize = 64 << 20;
+
 pub fn parse_program(
+    source_id: SourceId,
+    input: &str,
+    diagnostics: &mut DiagnosticBag,
+) -> Option<Program> {
+    if let Some((span, message)) = limits::lexical_nesting(source_id, input) {
+        diagnostics.push(FluxError::Parse {
+            message,
+            span: span_to_miette(span),
+            source_id,
+        });
+        return None;
+    }
+    stacker::grow(COMPILER_STACK, || {
+        let program = parse_program_unbounded(source_id, input, diagnostics)?;
+        if let Some(span) = limits::tree_depth_exceeds(&program) {
+            diagnostics.push(FluxError::Parse {
+                message: format!(
+                    "expression nested more than {} levels deep (for example, a very long \
+                     chain of operators); split it with `let` bindings",
+                    limits::MAX_TREE_DEPTH
+                ),
+                span: span_to_miette(span),
+                source_id,
+            });
+            // Dropping the tree recurses too: do it on this stack.
+            drop(program);
+            return None;
+        }
+        Some(program)
+    })
+}
+
+fn parse_program_unbounded(
     source_id: SourceId,
     input: &str,
     diagnostics: &mut DiagnosticBag,

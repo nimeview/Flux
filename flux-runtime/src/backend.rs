@@ -73,14 +73,17 @@ impl JitBackend {
         self.engine.lazy_if_deps_for(name).cloned()
     }
 
+    /// `depth`: calls already active, so nested JIT calls count from there.
     pub fn try_call_fn(
         &self,
         name: &str,
         args: &[RuntimeValue],
         graph: &ReactiveGraph,
+        depth: u64,
     ) -> Option<JitResult> {
         let _heap = flux_value::heap_scope();
         let mut slots = build_slot_buffer(&self.engine, graph);
+        slots[self.engine.depth_pair() as usize * 2 + 1] = depth;
         for (i, arg) in args.iter().enumerate() {
             let tv = flux_value::value_to_tagged(arg);
             let off = (self.engine.host_slot_count() as usize + i) * 2;
@@ -228,9 +231,10 @@ impl ActiveBackend {
         name: &str,
         args: &[RuntimeValue],
         graph: &ReactiveGraph,
+        depth: u64,
     ) -> Option<JitResult> {
         match self {
-            Self::Jit(b) => b.try_call_fn(name, args, graph),
+            Self::Jit(b) => b.try_call_fn(name, args, graph, depth),
             Self::Vm(_) => None,
         }
     }
@@ -241,6 +245,7 @@ impl ActiveBackend {
         _name: &str,
         _args: &[RuntimeValue],
         _graph: &ReactiveGraph,
+        _depth: u64,
     ) -> Option<JitResult> {
         None
     }

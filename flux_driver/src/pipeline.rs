@@ -488,24 +488,27 @@ fn lower_to_ir_resolved(
     project_root: Option<&Path>,
     diagnostics: &mut DiagnosticBag,
 ) -> Result<Artifacts, CompileFailed> {
-    let sources: Vec<SourceFile> = resolved.modules.iter().map(|m| m.source.clone()).collect();
-    let Some(hir) = lower_linked_program(resolved, diagnostics) else {
-        return Err(CompileFailed::new(
+    // HIR, type checking, and IR recurse over the tree; see `COMPILER_STACK`.
+    stacker::grow(flux_syntax::COMPILER_STACK, move || {
+        let sources: Vec<SourceFile> = resolved.modules.iter().map(|m| m.source.clone()).collect();
+        let Some(hir) = lower_linked_program(resolved, diagnostics) else {
+            return Err(CompileFailed::new(
+                source,
+                sources,
+                std::mem::take(diagnostics),
+            ));
+        };
+
+        finish_lower(
             source,
             sources,
-            std::mem::take(diagnostics),
-        ));
-    };
-
-    finish_lower(
-        source,
-        sources,
-        hir,
-        options,
-        cache_key,
-        project_root,
-        diagnostics,
-    )
+            hir,
+            options,
+            cache_key,
+            project_root,
+            diagnostics,
+        )
+    })
 }
 
 fn lower_to_ir(
@@ -516,24 +519,27 @@ fn lower_to_ir(
     project_root: Option<&Path>,
     diagnostics: &mut DiagnosticBag,
 ) -> Result<Artifacts, CompileFailed> {
-    let sources = vec![source.clone()];
-    let Some(hir) = lower_program(&ast, diagnostics) else {
-        return Err(CompileFailed::new(
+    // HIR, type checking, and IR recurse over the tree; see `COMPILER_STACK`.
+    stacker::grow(flux_syntax::COMPILER_STACK, move || {
+        let sources = vec![source.clone()];
+        let Some(hir) = lower_program(&ast, diagnostics) else {
+            return Err(CompileFailed::new(
+                source,
+                sources,
+                std::mem::take(diagnostics),
+            ));
+        };
+
+        finish_lower(
             source,
             sources,
-            std::mem::take(diagnostics),
-        ));
-    };
-
-    finish_lower(
-        source,
-        sources,
-        hir,
-        options,
-        cache_key,
-        project_root,
-        diagnostics,
-    )
+            hir,
+            options,
+            cache_key,
+            project_root,
+            diagnostics,
+        )
+    })
 }
 
 fn finish_lower(

@@ -269,6 +269,19 @@ Selective imports: `import io { println, read_line }`. Stdlib modules live under
 
 `map`/`filter`/`reduce` are parametric over the array's element type `T` (and accumulator `U` for `reduce`); the typechecker infers `T`/`U` from the argument expressions at each call site rather than from a single fixed signature.
 
+### Limits
+
+These limits keep extreme programs a language error rather than a native stack overflow (a process abort). They are the same on the VM and the JIT.
+
+| Limit | Value | Past it |
+|-------|-------|---------|
+| Nested function calls (recursion depth) | 10,000 active calls | runtime error `call depth limit exceeded (10000 nested calls)` (E018) |
+| Bracket nesting (`(`, `[`, `{`, string `{…}`) | 256 levels | parse error (E000) |
+| Consecutive unary `-`/`!` | 256 | parse error (E000) |
+| Syntax tree depth (e.g. one operator chain `1 + 1 + …`) | 1,000 levels | parse error (E000); split it with `let` |
+| Collection length (`range`, `push`, …) | 10,000,000 elements | runtime error `allocation limit exceeded` |
+| String built by `+` or interpolation | 100,000,000 bytes | runtime error `allocation limit exceeded` |
+
 ## 7. Diagnostics
 
 | Code | Meaning |
@@ -291,6 +304,9 @@ Selective imports: `import io { println, read_line }`. Stdlib modules live under
 | E019 | No method with that name for the receiver's type |
 | E020 | `impl` does not match its trait (unknown trait, missing, extra, or mismatched method) |
 | E021 | Invalid `?` (see §5, "The `?` operator") |
+| E022 | Importing a name the module declares without `pub` |
+
+A UTF-8 byte-order mark at the start of a file is ignored, like whitespace.
 
 ## 8. Tooling
 

@@ -9,6 +9,13 @@ use flux_syntax::{parse_program, Item, Stmt};
 /// same-line trailing, and end-of-file) are kept in place. A comment inside an
 /// item cannot be placed yet, so such input is rejected and left unchanged.
 pub fn format_source(input: &str) -> Result<String, DiagnosticBag> {
+    // Formatting recurses over the tree; see `flux_syntax::COMPILER_STACK`.
+    stacker::grow(flux_syntax::COMPILER_STACK, || {
+        format_source_unbounded(input)
+    })
+}
+
+fn format_source_unbounded(input: &str) -> Result<String, DiagnosticBag> {
     let mut diagnostics = DiagnosticBag::new();
     let Some(program) = parse_program(SourceId(0), input, &mut diagnostics) else {
         return Err(diagnostics);

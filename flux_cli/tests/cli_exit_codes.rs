@@ -101,3 +101,43 @@ fn valid_program_succeeds_check_and_run() {
     assert!(run.status.success(), "run: {}", stderr(&run));
     assert!(stdout(&run).contains("y = 2"), "run: {}", stdout(&run));
 }
+
+#[test]
+fn extreme_source_is_a_diagnostic_not_a_crash() {
+    // Each of these aborted the process (stack overflow), or panicked while
+    // rendering a snippet of a very long line.
+    let dir = tempfile::tempdir().unwrap();
+    let cases = [
+        (
+            "parens.fl",
+            format!("let x = {}1{}\n", "(".repeat(5000), ")".repeat(5000)),
+        ),
+        (
+            "chain.fl",
+            format!("const x = {}\n", vec!["1"; 100_000].join(" + ")),
+        ),
+        ("unary.fl", format!("let x = {}1\n", "-".repeat(5000))),
+    ];
+    for (name, src) in cases {
+        fs::write(dir.path().join(name), src).unwrap();
+        for cmd in ["check", "run", "fmt"] {
+            let output = flux(&[cmd, name], dir.path());
+            assert_eq!(
+                output.status.code(),
+                Some(1),
+                "{cmd} {name}: {}",
+                stderr(&output)
+            );
+            assert!(
+                stderr(&output).contains("parse error"),
+                "{cmd} {name}: {}",
+                stderr(&output)
+            );
+            assert!(
+                !stderr(&output).contains("panicked"),
+                "{cmd} {name}: {}",
+                stderr(&output)
+            );
+        }
+    }
+}

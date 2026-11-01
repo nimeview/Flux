@@ -4,7 +4,7 @@
 use flux_ir::Inst;
 
 use crate::graph::RuntimeValue;
-use crate::vm::{debug_assert_vm, resolve_load, stack_pop, stack_pop_opt};
+use crate::vm::{debug_assert_vm, is_bound, resolve_load, stack_pop, stack_pop_opt};
 
 use flux_value::NumOp;
 
@@ -43,6 +43,9 @@ impl Executor {
                     Some(v) => stack.push(v.clone()),
                     None => {
                         self.record_dep_load(name, locals);
+                        if !is_bound(name, locals, &self.graph, &self.functions) {
+                            return self.unbound(name);
+                        }
                         stack.push(resolve_load(name, locals, &self.graph, &self.functions));
                     }
                 },
@@ -67,6 +70,9 @@ impl Executor {
                 },
                 Inst::Take(name) => match locals.remove(name) {
                     Some(v) => stack.push(v),
+                    None if !is_bound(name, locals, &self.graph, &self.functions) => {
+                        return self.unbound(name);
+                    }
                     None => stack.push(resolve_load(name, locals, &self.graph, &self.functions)),
                 },
                 Inst::Add | Inst::Sub | Inst::Mul | Inst::Div | Inst::Rem => {
@@ -174,6 +180,10 @@ impl Executor {
                         if let [RuntimeValue::Array(_), _] = args.as_slice() {
                             let value = args.pop().unwrap_or(RuntimeValue::Unit);
                             if let Some(RuntimeValue::Array(mut items)) = args.pop() {
+                                if items.len() as u64 >= flux_value::MAX_COLLECTION_LEN {
+                                    self.raise(flux_value::ArithError::AllocationLimit);
+                                    return RuntimeValue::Unit;
+                                }
                                 std::sync::Arc::make_mut(&mut items).push(value);
                                 stack.push(RuntimeValue::Array(items));
                             }
@@ -283,6 +293,18 @@ impl Executor {
                 RuntimeValue::Unit
             }
         }
+    }
+
+    /// A name with no value at run time is a compiler bug: stop with an
+    /// internal error rather than continue with `()`.
+    fn unbound(&mut self, name: &str) -> RuntimeValue {
+        debug_assert_vm(false, &format!("unbound name `{name}` at runtime"));
+        self.raise(flux_value::ArithError::Internal);
+        if let Some(trap) = self.trap.as_mut() {
+            trap.detail
+                .get_or_insert_with(|| format!("unbound name `{}`", name.replace('\0', "")));
+        }
+        RuntimeValue::Unit
     }
 
     pub(crate) fn call_function(&mut self, name: &str, args: &[RuntimeValue]) -> RuntimeValue {
@@ -413,7 +435,32 @@ impl Executor {
             );
             return RuntimeValue::Unit;
         };
-        match self.backend.try_call_fn(name, args, &self.graph) {
+        // Deep recursion is a language error, not a native stack overflow.
+        if self.call_depth >= flux_value::MAX_CALL_DEPTH {
+            self.raise(flux_value::ArithError::CallDepthExceeded);
+            return RuntimeValue::Unit;
+        }
+        let func = std::sync::Arc::clone(func);
+        self.call_depth += 1;
+        // An interpreted call takes a few KB of native stack; grow it on the
+        // heap when it runs low, so the depth limit holds on any thread.
+        let result = stacker::maybe_grow(64 * 1024, 2 * 1024 * 1024, || {
+            self.run_user_fn(name, &func, args)
+        });
+        self.call_depth -= 1;
+        result
+    }
+
+    fn run_user_fn(
+        &mut self,
+        name: &str,
+        func: &flux_ir::CompiledFunction,
+        args: &[RuntimeValue],
+    ) -> RuntimeValue {
+        match self
+            .backend
+            .try_call_fn(name, args, &self.graph, self.call_depth)
+        {
             Some(Ok(result)) => return result,
             Some(Err(e)) => {
                 self.raise(e);
@@ -421,7 +468,6 @@ impl Executor {
             }
             None => {}
         }
-        let func = std::sync::Arc::clone(func);
         let mut locals = Locals::default();
         for (param, arg) in func.params.iter().zip(args.iter()) {
             locals.insert(param.clone(), arg.clone());

@@ -57,6 +57,11 @@ pub enum ArithError {
     AllocationLimit = 6,
     /// `assert`/`assert_eq` failed (details: `flux_std::take_failure_detail`).
     AssertionFailed = 7,
+    /// More than [`crate::MAX_CALL_DEPTH`] nested function calls.
+    CallDepthExceeded = 8,
+    /// A broken compiler invariant (e.g. an unbound name at run time); a bug
+    /// in Flux, reported instead of continuing with a made-up value.
+    Internal = 9,
 }
 
 impl ArithError {
@@ -68,6 +73,8 @@ impl ArithError {
             4 => Self::InvalidCast,
             6 => Self::AllocationLimit,
             7 => Self::AssertionFailed,
+            8 => Self::CallDepthExceeded,
+            9 => Self::Internal,
             _ => Self::InvalidOperands,
         }
     }
@@ -81,6 +88,8 @@ impl ArithError {
             Self::InvalidOperands => "invalid operands for arithmetic",
             Self::AllocationLimit => "allocation limit exceeded",
             Self::AssertionFailed => "assertion failed",
+            Self::CallDepthExceeded => "call depth limit exceeded (10000 nested calls)",
+            Self::Internal => "internal error (a bug in Flux; please report it)",
         }
     }
 }

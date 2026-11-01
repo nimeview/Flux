@@ -153,3 +153,53 @@ fn block_match_arm_must_end_with_an_expression() {
         FluxError::Parse { message, .. } if message.contains("must end with an expression")
     )));
 }
+
+/// Parse error messages, or `None` if `src` parses.
+fn parse_errors(src: &str) -> Option<Vec<String>> {
+    let mut diags = DiagnosticBag::new();
+    match parse_program(SourceId(0), src, &mut diags) {
+        Some(_) => None,
+        None => Some(diags.errors.iter().map(|e| e.to_string()).collect()),
+    }
+}
+
+#[test]
+fn nesting_limits_are_diagnostics_not_stack_overflows() {
+    use flux_syntax::limits::{MAX_BRACKET_NESTING, MAX_TREE_DEPTH, MAX_UNARY_RUN};
+    let parens = |n: usize| format!("let x = {}1{}\n", "(".repeat(n), ")".repeat(n));
+    assert!(parse_errors(&parens(MAX_BRACKET_NESTING - 1)).is_none());
+    let errs = parse_errors(&parens(MAX_BRACKET_NESTING + 1)).expect("too deep");
+    assert!(errs[0].contains("brackets nest more than 256"), "{errs:?}");
+    assert!(parse_errors(&parens(100_000)).is_some());
+
+    let arrays = format!("let x = {}1{}\n", "[".repeat(5000), "]".repeat(5000));
+    assert!(parse_errors(&arrays).is_some());
+    let interp = format!("let x = \"{}a{}\"\n", "{\"".repeat(400), "\"}".repeat(400));
+    assert!(parse_errors(&interp).is_some());
+
+    let unary = |n: usize| format!("let x = {}1\n", "-".repeat(n));
+    assert!(parse_errors(&unary(MAX_UNARY_RUN)).is_none());
+    let errs = parse_errors(&unary(MAX_UNARY_RUN + 1)).expect("too many");
+    assert!(errs[0].contains("`-`/`!` in a row"), "{errs:?}");
+
+    // Flat in the source, deep in the tree.
+    let chain = |n: usize| format!("let x = {}\n", vec!["1"; n].join(" + "));
+    assert!(parse_errors(&chain(MAX_TREE_DEPTH - 10)).is_none());
+    let errs = parse_errors(&chain(MAX_TREE_DEPTH + 10)).expect("too deep");
+    assert!(errs[0].contains("nested more than 1000 levels"), "{errs:?}");
+    assert!(parse_errors(&chain(50_000)).is_some());
+
+    // Brackets inside strings and comments do not count.
+    let text = format!(
+        "// {}\nlet x = \"{}\"\n",
+        "(".repeat(1000),
+        "\\{".repeat(1000)
+    );
+    assert!(parse_errors(&text).is_none());
+}
+
+#[test]
+fn a_byte_order_mark_is_whitespace() {
+    // Editors on Windows often start UTF-8 files with U+FEFF.
+    assert!(parse_errors("\u{FEFF}let x = 1\n").is_none());
+}

@@ -8,6 +8,8 @@ use flux_value::intern_string as heap_intern_string;
 #[derive(Debug, Clone, Default)]
 pub struct JitTables {
     pub strings: HashMap<String, u64>,
+    /// Slot pair holding the active call count (set by `JitEngine::new`).
+    pub depth_pair: u32,
 }
 
 fn intern_string(strings: &mut HashMap<String, u64>, s: &str) {
@@ -94,7 +96,10 @@ impl JitTables {
             walk_stmts(&mut strings, &handler.body);
         }
 
-        Self { strings }
+        Self {
+            strings,
+            depth_pair: 0,
+        }
     }
 
     pub fn string_id(&self, s: &str) -> Option<u64> {

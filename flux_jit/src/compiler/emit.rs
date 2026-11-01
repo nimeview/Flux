@@ -450,6 +450,52 @@ pub(super) fn emit_cmp_ordered(
 
 /// Return `(tag, data)` from the compiled function immediately if it is a
 /// runtime error, so nothing after the failing operation runs.
+/// Before a call between compiled functions: fail with
+/// `CallDepthExceeded` when `flux_value::MAX_CALL_DEPTH` calls are active
+/// (as the VM does), else count the call. Returns the depth before the call,
+/// which the caller stores back after it.
+pub(super) fn enter_call(
+    slots_ptr: Value,
+    depth_pair: u32,
+    ptr_ty: Type,
+    b: &mut FunctionBuilder<'_>,
+) -> Value {
+    let addr = slot_data_addr(slots_ptr, depth_pair, ptr_ty, b);
+    let depth = b.ins().load(types::I64, MemFlagsData::trusted(), addr, 0);
+    let limit = flux_value::MAX_CALL_DEPTH as i64;
+    let over = b
+        .ins()
+        .icmp_imm(IntCC::SignedGreaterThanOrEqual, depth, limit);
+    let fail_bb = b.create_block();
+    let ok_bb = b.create_block();
+    b.ins()
+        .brif(over, fail_bb, &[] as &[BlockArg], ok_bb, &[] as &[BlockArg]);
+    b.switch_to_block(fail_bb);
+    b.seal_block(fail_bb);
+    let tag = b.ins().iconst(types::I64, TAG_ERROR as i64);
+    let code = b
+        .ins()
+        .iconst(types::I64, flux_value::ArithError::CallDepthExceeded as i64);
+    b.ins().return_(&[tag, code]);
+    b.switch_to_block(ok_bb);
+    b.seal_block(ok_bb);
+    let next = b.ins().iadd_imm(depth, 1);
+    b.ins().store(MemFlagsData::trusted(), next, addr, 0);
+    depth
+}
+
+/// After the call: restore the depth `enter_call` returned.
+pub(super) fn leave_call(
+    slots_ptr: Value,
+    depth_pair: u32,
+    depth: Value,
+    ptr_ty: Type,
+    b: &mut FunctionBuilder<'_>,
+) {
+    let addr = slot_data_addr(slots_ptr, depth_pair, ptr_ty, b);
+    b.ins().store(MemFlagsData::trusted(), depth, addr, 0);
+}
+
 pub(super) fn abort_on_error(
     (tag, data): (Value, Value),
     b: &mut FunctionBuilder<'_>,

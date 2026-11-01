@@ -54,6 +54,19 @@ pub(crate) fn resolve_load(
     RuntimeValue::Unit
 }
 
+/// Whether `resolve_load` finds `name` (a local, binding, or function).
+pub(crate) fn is_bound(
+    name: &str,
+    locals: &crate::exec::Locals,
+    graph: &ReactiveGraph,
+    functions: &std::collections::HashMap<String, std::sync::Arc<CompiledFunction>>,
+) -> bool {
+    locals.contains_key(name)
+        || graph.get_by_name(name).is_some()
+        || functions.contains_key(name)
+        || flux_std::is_builtin_fn(name)
+}
+
 pub fn validate_program(program: &CompiledProgram) -> Result<(), String> {
     let graph_names: HashSet<String> = program.nodes.iter().map(|n| n.name.clone()).collect();
     let fn_names: HashSet<String> = program.functions.iter().map(|f| f.name.clone()).collect();

@@ -121,6 +121,14 @@ pub fn call_builtin_checked(
         }
         _ => {}
     }
+    // Arrays stay within the collection limit, as `range` does.
+    if name == "push" {
+        if let Some(Value::Array(items)) = args.first() {
+            if items.len() as u64 >= flux_value::MAX_COLLECTION_LEN {
+                return Some(Err(flux_value::ArithError::AllocationLimit));
+            }
+        }
+    }
     if name == "range" {
         let (start, end, step) = range_args(args)?;
         return Some(

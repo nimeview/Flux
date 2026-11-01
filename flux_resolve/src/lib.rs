@@ -514,6 +514,15 @@ fn bind_module_imports(
             }
         } else {
             for sym in &import.symbols {
+                if declares_private(&target_module.ast, sym) {
+                    diagnostics.push(FluxError::PrivateImport {
+                        module: import.path.clone(),
+                        name: sym.clone(),
+                        span: span_to_miette(import.span),
+                        source_id: import.span.source,
+                    });
+                    return None;
+                }
                 if !is_pub_export(&target_module.ast, sym) {
                     diagnostics.push(FluxError::UnknownExport {
                         module: import.path.clone(),
@@ -568,6 +577,25 @@ fn export_exists(program: &Program, name: &str) -> bool {
         .items
         .iter()
         .any(|item| export_name_if_pub(item).as_deref() == Some(name))
+}
+
+/// Whether `program` declares `name` without `pub`.
+fn declares_private(program: &Program, name: &str) -> bool {
+    program.items.iter().any(|item| {
+        let (pub_, declared) = match item {
+            Item::Fn(f) => (f.pub_, Some(f.name.name.as_str())),
+            Item::RFn(f) => (f.pub_, Some(f.name.name.as_str())),
+            Item::Struct(s) => (s.pub_, Some(s.name.name.as_str())),
+            Item::Enum(e) => (e.pub_, Some(e.name.name.as_str())),
+            Item::Trait(t) => (t.pub_, Some(t.name.name.as_str())),
+            Item::Event(e) => (e.pub_, Some(e.name.name.as_str())),
+            Item::Let(l) => (l.pub_, l.pattern.primary_name()),
+            Item::Derived(d) => (d.pub_, d.pattern.primary_name()),
+            Item::Const(c) => (c.pub_, Some(c.name.name.as_str())),
+            _ => (true, None),
+        };
+        !pub_ && declared == Some(name)
+    })
 }
 
 fn is_pub_export(program: &Program, name: &str) -> bool {

@@ -2,7 +2,7 @@ pub mod ast;
 pub mod parser;
 
 pub use ast::*;
-pub use parser::parse_program;
+pub use parser::{limits, parse_program, COMPILER_STACK};
 
 /// Standard Flux source file extension (without the leading dot).
 pub const MODULE_EXTENSION: &str = "fl";

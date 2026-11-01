@@ -1,4 +1,5 @@
-WHITESPACE = _{ " " | "\t" | "\r" | "\n" }
+// U+FEFF: a byte-order mark that some editors write at the start of a file.
+WHITESPACE = _{ " " | "\t" | "\r" | "\n" | "\u{FEFF}" }
 COMMENT = _{ "//" ~ (!"\n" ~ ANY)* }
 
 program = { SOI ~ item* ~ EOI }

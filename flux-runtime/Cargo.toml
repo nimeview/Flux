@@ -9,6 +9,7 @@ flux_std = { path = "../flux_std" }
 flux_value = { path = "../flux_value" }
 rustc-hash = "2.1"
 flux_jit = { path = "../flux_jit", optional = true }
+stacker = "0.1"
 
 [features]
 default = []

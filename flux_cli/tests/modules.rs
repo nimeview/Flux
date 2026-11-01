@@ -198,7 +198,7 @@ fn private_items_of_a_nested_import_stay_private() {
             ("helpers.fl", "fn hidden(x: Int) -> Int { x }\n"),
         ],
         ".",
-        "unknown export `hidden`",
+        "`hidden` in module `helpers` is private",
     );
 }
 

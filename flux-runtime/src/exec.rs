@@ -74,6 +74,8 @@ pub struct Executor {
     /// `return`/`break`/`continue` raised inside an expression (a match arm
     /// block), on its way to the enclosing statement.
     pending_flow: Option<(RuntimeValue, FlowControl)>,
+    /// Active user function calls (bounded by `flux_value::MAX_CALL_DEPTH`).
+    call_depth: u64,
 }
 
 impl Executor {
@@ -160,6 +162,7 @@ impl Executor {
             tracking_scope: None,
             stack_pool: Vec::new(),
             pending_flow: None,
+            call_depth: 0,
             trap: None,
         };
         // Initial values are assigned without propagation; derived values and

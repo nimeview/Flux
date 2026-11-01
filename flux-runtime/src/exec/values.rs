@@ -94,7 +94,7 @@ pub(super) fn arith_binop(stack: &mut Vec<RuntimeValue>, op: NumOp) -> Result<()
     let b = stack_pop(stack, "arithmetic rhs");
     let a = stack_pop(stack, "arithmetic lhs");
     if let (NumOp::Add, RuntimeValue::String(a), RuntimeValue::String(b)) = (op, &a, &b) {
-        stack.push(RuntimeValue::String(format!("{a}{b}")));
+        stack.push(RuntimeValue::String(flux_value::concat_strings(a, b)?));
         return Ok(());
     }
     stack.push(flux_value::binary(op, &a, &b)?);

@@ -355,14 +355,16 @@ pub(crate) fn lower_insts(
                     args.push(stack.pop()?);
                 }
                 args.reverse();
+                let depth = super::emit::enter_call(slots_ptr, tables.depth_pair, ptr_ty, b);
                 for (i, (tag, data)) in args.iter().enumerate() {
                     store_tagged(slots_ptr, host_slots + i as u32, *tag, *data, ptr_ty, b);
                 }
                 let func_ref = module.declare_func_in_func(*callee, b.func);
                 let call = b.ins().call(func_ref, &[slots_ptr]);
                 let results = b.inst_results(call);
-                // A callee that aborted returns its error value: propagate it.
                 let pair = (results[0], results[1]);
+                super::emit::leave_call(slots_ptr, tables.depth_pair, depth, ptr_ty, b);
+                // A callee that aborted returns its error value: propagate it.
                 stack.push(abort_on_error(pair, b));
             }
 

@@ -331,6 +331,29 @@ impl JitEngine {
 
         let host_slots = engine.layout.len() as u32;
         engine.host_slots = host_slots;
+        // Scratch pairs for call arguments and handler payloads, sized before
+        // compiling: the call-depth counter lives in the pair right after
+        // them, and compiled calls address it directly.
+        let scratch = program
+            .functions
+            .iter()
+            .map(|f| (f.params.len() as u32).max(max_call_argc_in_stmts(&f.body)))
+            .chain(program.nodes.iter().map(|n| max_call_argc_in_code(&n.code)))
+            .chain(
+                program
+                    .watches
+                    .iter()
+                    .map(|w| max_call_argc_in_stmts(&w.body)),
+            )
+            .chain(
+                program
+                    .on_handlers
+                    .iter()
+                    .map(|h| max_call_argc_in_stmts(&h.body).max(u32::from(h.param.is_some()))),
+            )
+            .max()
+            .unwrap_or(0);
+        engine.tables.depth_pair = host_slots + scratch;
         let mut call_scratch_pairs = 0u32;
         let mut jit_fn_ids: HashMap<String, FuncId> = HashMap::new();
         for func in &program.functions {
@@ -443,7 +466,11 @@ impl JitEngine {
             }
         }
 
-        engine.call_scratch_pairs = call_scratch_pairs;
+        debug_assert!(
+            call_scratch_pairs <= scratch,
+            "scratch pairs sized up front"
+        );
+        engine.call_scratch_pairs = scratch;
         engine.module.finalize_definitions().unwrap();
 
         let ids: Vec<(String, FuncId)> = engine
@@ -482,9 +509,15 @@ impl JitEngine {
         self.host_slots
     }
 
-    /// Total slot pairs (`[tag, data]`) required for a JIT call buffer.
+    /// Total slot pairs (`[tag, data]`) required for a JIT call buffer:
+    /// nodes, call scratch, and the call-depth counter.
     pub fn slot_capacity_pairs(&self) -> u32 {
-        self.host_slots + self.call_scratch_pairs
+        self.host_slots + self.call_scratch_pairs + 1
+    }
+
+    /// Pair whose data word counts active calls (see `flux_value::MAX_CALL_DEPTH`).
+    pub fn depth_pair(&self) -> u32 {
+        self.tables.depth_pair
     }
 
     pub fn eval_expr_with(&self, name: &str, slots: &[u64]) -> Option<TaggedVal> {

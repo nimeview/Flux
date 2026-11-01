@@ -126,10 +126,25 @@ fn take_for_push(target: &str, code: &mut [Inst]) {
     let [Inst::Load(first), value @ .., Inst::Call { name, argc: 2 }] = code else {
         return;
     };
-    if first != target || name != "push" || mentions_name(value, target) {
+    if first != target || name != "push" || mentions_name(value, target) || can_leave(value) {
         return;
     }
     code[0] = Inst::Take(target.to_string());
+}
+
+/// Whether `code` may leave before the assignment through `break`/`continue`
+/// in a match arm block; a moved-out local would then stay unbound in the
+/// loop. (`return`, `?`, and runtime errors end the function: no harm.)
+fn can_leave(code: &[Inst]) -> bool {
+    code.iter().any(|inst| match inst {
+        Inst::Block(_) => true,
+        Inst::ShortAnd(inner) | Inst::ShortOr(inner) => can_leave(inner),
+        Inst::LazyIf {
+            then_branch,
+            else_branch,
+        } => can_leave(then_branch) || can_leave(else_branch),
+        _ => false,
+    })
 }
 
 fn mentions_name(code: &[Inst], target: &str) -> bool {

@@ -141,11 +141,36 @@ fn render_diagnostic<D: miette::Diagnostic + Send + Sync + 'static>(
     Ok(())
 }
 
+/// Longest source line shown in a snippet; miette cannot lay out much longer
+/// lines (it panics), so such a diagnostic gets a `path:line:column` instead.
+const MAX_SNIPPET_LINE: usize = 1000;
+
 fn render_with<D: miette::Diagnostic + Send + Sync + 'static>(
     handler: &GraphicalReportHandler,
     source: &SourceFile,
     diagnostic: D,
 ) -> Result<String, ()> {
+    let offsets: Vec<usize> = diagnostic
+        .labels()
+        .map(|labels| labels.map(|l| l.offset()).collect())
+        .unwrap_or_default();
+    if let Some(&offset) = offsets
+        .iter()
+        .find(|&&o| line_around(&source.contents, o).len() > MAX_SNIPPET_LINE)
+    {
+        let mut output = String::new();
+        handler
+            .render_report(&mut output, &diagnostic)
+            .map_err(|e| eprintln!("{e:?}"))?;
+        let before = &source.contents[..offset.min(source.contents.len())];
+        let line = before.matches('\n').count() + 1;
+        let column = before.len() - before.rfind('\n').map_or(0, |i| i + 1) + 1;
+        output.push_str(&format!(
+            "  at {}:{line}:{column} (line too long to show)\n",
+            source.path
+        ));
+        return Ok(output);
+    }
     let report = Report::new(diagnostic).with_source_code(source.clone());
     let mut output = String::new();
     handler
@@ -154,4 +179,14 @@ fn render_with<D: miette::Diagnostic + Send + Sync + 'static>(
         .map_err(|e| eprintln!("{e:?}"))
         .map_err(|_| ())?;
     Ok(output)
+}
+
+/// The line of `contents` that contains byte `offset`.
+fn line_around(contents: &str, offset: usize) -> &str {
+    let offset = offset.min(contents.len());
+    let start = contents[..offset].rfind('\n').map_or(0, |i| i + 1);
+    let end = contents[offset..]
+        .find('\n')
+        .map_or(contents.len(), |i| offset + i);
+    &contents[start..end]
 }

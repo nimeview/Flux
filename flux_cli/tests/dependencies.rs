@@ -62,7 +62,7 @@ fn private_items_of_a_dependency_cannot_be_imported() {
     let out = flux(&["check"], &app);
     assert!(!out.status.success());
     assert!(
-        text(&out.stderr).contains("unknown export `hidden`"),
+        text(&out.stderr).contains("`hidden` in module `lib` is private"),
         "{}",
         text(&out.stderr)
     );

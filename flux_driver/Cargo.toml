@@ -14,6 +14,7 @@ flux_runtime = { path = "../flux-runtime" }
 flux_resolve = { path = "../flux_resolve" }
 sha2 = "0.10"
 bincode = "1.3"
+stacker = "0.1"
 
 [features]
 default = []

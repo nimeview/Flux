@@ -235,6 +235,26 @@ pub fn array_get(id: u64, index: u64) -> TaggedVal {
 /// are the runtime error [`ArithError::AllocationLimit`] instead of exhausting memory.
 pub const MAX_COLLECTION_LEN: u64 = 10_000_000;
 
+/// Most nested function calls a program may make; one more is the runtime
+/// error `call depth limit exceeded`, on the VM and the JIT alike (instead of
+/// overflowing the native stack). Keep the message in `ArithError` in sync.
+pub const MAX_CALL_DEPTH: u64 = 10_000;
+
+/// Longest string (in bytes) that `+` or interpolation may build; past it is
+/// [`ArithError::AllocationLimit`], like an over-long collection.
+pub const MAX_STRING_LEN: usize = 100_000_000;
+
+/// `a + b` for strings, within [`MAX_STRING_LEN`].
+pub fn concat_strings(a: &str, b: &str) -> Result<String, ArithError> {
+    if a.len() + b.len() > MAX_STRING_LEN {
+        return Err(ArithError::AllocationLimit);
+    }
+    let mut out = String::with_capacity(a.len() + b.len());
+    out.push_str(a);
+    out.push_str(b);
+    Ok(out)
+}
+
 /// The integers `start, start + step, …` strictly before `end` (after, for a
 /// negative step). A zero step is empty. Never overflows: lengths are computed in `i128`.
 pub fn int_range(start: i64, end: i64, step: i64) -> Result<Vec<i64>, ArithError> {

@@ -893,3 +893,103 @@ let r = f(1)\nlet r2 = f(0)\nlet r3 = g(1, 2)\n";
         }
     }
 }
+
+#[test]
+fn deep_recursion_is_a_runtime_error_at_the_same_depth_on_vm_and_jit() {
+    // The VM overflowed the native stack (process abort) near 2,800 calls,
+    // while the JIT went much deeper. Runs on a 2 MB test thread on purpose.
+    let program = |n: u64| {
+        format!(
+            "fn down(n: Int) -> Int {{\n    if n == 0 {{\n        0\n    }} else {{\n        1 + down(n - 1)\n    }}\n}}\nlet r = down({n})\n"
+        )
+    };
+    let limit = flux_value::MAX_CALL_DEPTH;
+    for mode in [
+        flux_runtime::ExecutionMode::Vm,
+        flux_runtime::ExecutionMode::Jit,
+    ] {
+        // `down(limit - 1)` makes exactly `limit` nested calls.
+        let ok =
+            flux_cli::pipeline::compile_with_mode(source_from("<deep>", program(limit - 1)), mode)
+                .unwrap_or_else(|failure| panic!("{mode:?}: {:?}", failure.diagnostics.errors));
+        assert_eq!(
+            ok.executor.get_value("r"),
+            Some(RuntimeValue::int_i64(limit as i64 - 1)),
+            "{mode:?}"
+        );
+        let failure = match flux_cli::pipeline::compile_with_mode(
+            source_from("<deep>", program(limit)),
+            mode,
+        ) {
+            Ok(_) => panic!("{mode:?}: one call past the limit succeeded"),
+            Err(failure) => failure,
+        };
+        assert!(
+            failure.diagnostics.errors.iter().any(|e| matches!(
+                e,
+                FluxError::Runtime { message, .. } if message.contains("call depth limit exceeded")
+            )),
+            "{mode:?}: {:?}",
+            failure.diagnostics.errors
+        );
+    }
+}
+
+#[test]
+fn in_place_push_keeps_the_array_when_an_arm_breaks_or_continues() {
+    // `xs = push(xs, v)` moves `xs` out before `v` runs; a `continue`/`break`
+    // in `v` skipped the assignment and left `xs` unbound (`len` gave 0).
+    let src = "import collections { push, len }\n\
+fn f() -> Int {\n    let mut xs: [Int] = []\n    let mut i = 0\n    while i < 5 {\n        i = i + 1\n        xs = push(xs, match i {\n            3 => continue,\n            5 => {\n                break\n            },\n            _ => i\n        })\n    }\n    len(xs)\n}\nlet r = f()\n";
+    for mode in [
+        flux_runtime::ExecutionMode::Vm,
+        flux_runtime::ExecutionMode::Jit,
+    ] {
+        let compiled = flux_cli::pipeline::compile_with_mode(source_from("<take>", src), mode)
+            .unwrap_or_else(|failure| panic!("{:?}", failure.diagnostics.errors));
+        assert_eq!(
+            compiled.executor.get_value("r"),
+            Some(RuntimeValue::int_i64(3)),
+            "{mode:?}"
+        );
+    }
+}
+
+fn assert_allocation_limit(src: &str) {
+    for mode in [
+        flux_runtime::ExecutionMode::Vm,
+        flux_runtime::ExecutionMode::Jit,
+    ] {
+        let failure =
+            match flux_cli::pipeline::compile_with_mode(source_from("<limits>", src), mode) {
+                Ok(_) => panic!("{mode:?}: no allocation limit"),
+                Err(failure) => failure,
+            };
+        assert!(
+            failure.diagnostics.errors.iter().any(|e| matches!(
+                e,
+                FluxError::Runtime { message, .. } if message.contains("allocation limit exceeded")
+            )),
+            "{mode:?}: {:?}",
+            failure.diagnostics.errors
+        );
+    }
+}
+
+#[test]
+fn string_building_stays_within_the_allocation_limit() {
+    // String `+` had no limit: a 1 GB string took the JIT over 20 s.
+    assert_allocation_limit(
+        "fn f() -> Int {\n    let mut s = \"x\"\n    let mut i = 0\n    while i < 40 {\n        s = s + s\n        i = i + 1\n    }\n    0\n}\nlet r = f()\n",
+    );
+}
+
+#[test]
+#[ignore = "pushes 10,000,000 elements (minutes in a debug build); run with --ignored"]
+fn push_stays_within_the_collection_limit() {
+    // `range` had the limit; `push` grew arrays without one.
+    assert_allocation_limit(&format!(
+        "import collections {{ push, len }}\nfn f() -> Int {{\n    let mut xs: [Int] = []\n    let mut i = 0\n    while i <= {} {{\n        xs = push(xs, i)\n        i = i + 1\n    }}\n    len(xs)\n}}\nlet r = f()\n",
+        flux_value::MAX_COLLECTION_LEN
+    ));
+}

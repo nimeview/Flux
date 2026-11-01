@@ -71,7 +71,10 @@ pub extern "C" fn flux_jit_string_concat(
     } else {
         String::new()
     };
-    TaggedVal::from_string_id(intern_string(&(a + &b)))
+    match flux_value::concat_strings(&a, &b) {
+        Ok(s) => TaggedVal::from_string_id(intern_string(&s)),
+        Err(e) => TaggedVal::error(e),
+    }
 }
 
 #[no_mangle]

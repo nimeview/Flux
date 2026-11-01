@@ -224,6 +224,16 @@ pub enum FluxError {
         source_id: SourceId,
     },
 
+    #[error("`{name}` in module `{module}` is private")]
+    #[diagnostic(code(flux::E022), help("mark it `pub` in `{module}` to import it"))]
+    PrivateImport {
+        name: String,
+        module: String,
+        #[label("not public")]
+        span: miette::SourceSpan,
+        source_id: SourceId,
+    },
+
     #[error("{message}")]
     #[diagnostic(code(flux::E020))]
     InvalidImpl {
@@ -257,11 +267,12 @@ impl FluxError {
             | Self::Runtime { source_id, .. }
             | Self::UnknownMethod { source_id, .. }
             | Self::InvalidImpl { source_id, .. }
-            | Self::InvalidTry { source_id, .. } => *source_id,
+            | Self::InvalidTry { source_id, .. }
+            | Self::PrivateImport { source_id, .. } => *source_id,
         }
     }
 
-    /// Stable diagnostic code (`E000`–`E021`).
+    /// Stable diagnostic code (`E000`–`E022`).
     pub fn code(&self) -> &'static str {
         match self {
             Self::Parse { .. } => "E000",
@@ -285,6 +296,7 @@ impl FluxError {
             Self::UnknownMethod { .. } => "E019",
             Self::InvalidImpl { .. } => "E020",
             Self::InvalidTry { .. } => "E021",
+            Self::PrivateImport { .. } => "E022",
         }
     }
 
@@ -312,6 +324,7 @@ impl FluxError {
             | Self::UnknownMethod { span, .. }
             | Self::InvalidImpl { span, .. }
             | Self::InvalidTry { span, .. }
+            | Self::PrivateImport { span, .. }
             | Self::DuplicateDefinition { span, .. } => *span,
         };
         crate::warning::span_from_miette(source_id, miette_span)
