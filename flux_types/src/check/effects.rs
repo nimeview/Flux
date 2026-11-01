@@ -151,9 +151,11 @@ fn scan_expr(
         HirExpr::Closure { fn_symbol, .. } => {
             calls.insert(*fn_symbol);
         }
-        HirExpr::Snap { expr, .. } | HirExpr::Unary { expr, .. } | HirExpr::Cast { expr, .. } => {
-            scan_expr(expr, program, builtin_symbols, calls, has_effect)
-        }
+        HirExpr::Snap { expr, .. }
+        | HirExpr::Unary { expr, .. }
+        | HirExpr::Cast { expr, .. }
+        | HirExpr::ToText { expr, .. }
+        | HirExpr::Try { expr, .. } => scan_expr(expr, program, builtin_symbols, calls, has_effect),
         HirExpr::Field { base, .. } => scan_expr(base, program, builtin_symbols, calls, has_effect),
         HirExpr::Binary { left, right, .. } => {
             scan_expr(left, program, builtin_symbols, calls, has_effect);

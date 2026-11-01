@@ -71,6 +71,9 @@ pub struct Executor {
     trap: Option<RuntimeError>,
     /// Operand stacks reused across expression evaluations.
     stack_pool: Vec<Vec<RuntimeValue>>,
+    /// `return`/`break`/`continue` raised inside an expression (a match arm
+    /// block), on its way to the enclosing statement.
+    pending_flow: Option<(RuntimeValue, FlowControl)>,
 }
 
 impl Executor {
@@ -156,6 +159,7 @@ impl Executor {
             backend,
             tracking_scope: None,
             stack_pool: Vec::new(),
+            pending_flow: None,
             trap: None,
         };
         // Initial values are assigned without propagation; derived values and
@@ -414,7 +418,14 @@ impl Executor {
             .get(name)
             .map(|&idx| self.program.nodes[idx].code.clone())
             .unwrap_or_default();
-        self.eval_expr(&code, &mut Locals::default())
+        let value = self.eval_expr(&code, &mut Locals::default());
+        // HIR allows control flow in match arms only inside functions.
+        debug_assert!(
+            self.pending_flow.is_none(),
+            "control flow escaped a derived value"
+        );
+        self.pending_flow = None;
+        value
     }
 
     fn derived_uses_lazy_if(&self, name: &str) -> bool {

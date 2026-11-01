@@ -85,7 +85,9 @@ pub fn parse_program(
         }
         if let Some(span) = invalid_arm_block(source_id, pair.clone()) {
             diagnostics.push(FluxError::Parse {
-                message: "a block match arm must end with an expression, which is its value".into(),
+                message: "a block match arm must end with an expression, which is its value, \
+                          or with `return`, `break`, or `continue`"
+                    .into(),
                 span: span_to_miette(span),
                 source_id,
             });
@@ -135,7 +137,12 @@ fn invalid_arm_block(source_id: SourceId, pair: pest::iterators::Pair<'_, Rule>)
             .next()
             .and_then(|stmts| stmts.into_inner().next_back())
             .and_then(|stmt| stmt.into_inner().next())
-            .is_some_and(|inner| inner.as_rule() == Rule::expr_stmt);
+            .is_some_and(|inner| {
+                matches!(
+                    inner.as_rule(),
+                    Rule::expr_stmt | Rule::return_stmt | Rule::break_stmt | Rule::continue_stmt
+                )
+            });
         if !ends_with_expr {
             return Some(span_of(source_id, &pair));
         }

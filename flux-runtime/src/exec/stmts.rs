@@ -20,6 +20,17 @@ impl Executor {
         }
     }
 
+    /// A statement cut short by its expression: a runtime error, or
+    /// `return`/`break`/`continue` from a match arm block inside it.
+    fn interrupted(&mut self) -> Option<StmtResult> {
+        if self.trap.is_some() {
+            return Some(TRAPPED);
+        }
+        self.pending_flow
+            .take()
+            .map(|(value, flow)| StmtResult { value, flow })
+    }
+
     pub(super) fn run_stmts_flow(
         &mut self,
         stmts: &[IrStmt],
@@ -57,8 +68,8 @@ impl Executor {
         match stmt {
             IrStmt::Assign { target, expr } => {
                 let value = self.eval_expr(expr, locals);
-                if self.trap.is_some() {
-                    return TRAPPED;
+                if let Some(stop) = self.interrupted() {
+                    return stop;
                 }
                 if self.is_source_binding(target) {
                     self.set_source(target, value.clone());
@@ -74,8 +85,8 @@ impl Executor {
             }
             IrStmt::Let { name, expr } => {
                 let value = self.eval_expr(expr, locals);
-                if self.trap.is_some() {
-                    return TRAPPED;
+                if let Some(stop) = self.interrupted() {
+                    return stop;
                 }
                 locals.insert(name.clone(), value.clone());
                 StmtResult {
@@ -88,8 +99,8 @@ impl Executor {
                     .as_ref()
                     .map(|c| self.eval_expr(c, locals))
                     .unwrap_or(RuntimeValue::Unit);
-                if self.trap.is_some() {
-                    return TRAPPED;
+                if let Some(stop) = self.interrupted() {
+                    return stop;
                 }
                 self.emit(event, payload);
                 StmtResult {
@@ -97,15 +108,24 @@ impl Executor {
                     flow: FlowControl::None,
                 }
             }
-            IrStmt::Expr { code } => StmtResult {
-                value: self.eval_expr(code, locals),
-                flow: FlowControl::None,
-            },
+            IrStmt::Expr { code } => {
+                let value = self.eval_expr(code, locals);
+                if let Some(stop) = self.interrupted() {
+                    return stop;
+                }
+                StmtResult {
+                    value,
+                    flow: FlowControl::None,
+                }
+            }
             IrStmt::Return { expr } => {
                 let value = expr
                     .as_ref()
                     .map(|c| self.eval_expr(c, locals))
                     .unwrap_or(RuntimeValue::Unit);
+                if let Some(stop) = self.interrupted() {
+                    return stop;
+                }
                 StmtResult {
                     value,
                     flow: FlowControl::Return,
@@ -126,8 +146,8 @@ impl Executor {
             } => {
                 let cond = self.eval_expr(cond, locals);
                 // A failed condition is not `false`: run neither branch.
-                if self.trap.is_some() {
-                    return TRAPPED;
+                if let Some(stop) = self.interrupted() {
+                    return stop;
                 }
                 if cond.as_bool().unwrap_or(false) {
                     self.run_stmts_flow(then_body, locals)
@@ -142,16 +162,16 @@ impl Executor {
                 let mut last = RuntimeValue::Unit;
                 loop {
                     let keep_going = self.eval_expr(cond, locals);
-                    if self.trap.is_some() {
-                        return TRAPPED;
+                    if let Some(stop) = self.interrupted() {
+                        return stop;
                     }
                     if !keep_going.as_bool().unwrap_or(false) {
                         break;
                     }
                     drop(std::mem::replace(&mut last, RuntimeValue::Unit));
                     let result = self.run_stmts_flow(body, locals);
-                    if self.trap.is_some() {
-                        return TRAPPED;
+                    if let Some(stop) = self.interrupted() {
+                        return stop;
                     }
                     match result {
                         (v, FlowControl::None) => last = v,
@@ -179,8 +199,8 @@ impl Executor {
             IrStmt::For { var, iter, body } => {
                 let mut last = RuntimeValue::Unit;
                 let items = self.eval_expr(iter, locals);
-                if self.trap.is_some() {
-                    return TRAPPED;
+                if let Some(stop) = self.interrupted() {
+                    return stop;
                 }
                 let items: Vec<RuntimeValue> = match items {
                     // The loop owns its elements; this copies only if the array
@@ -194,8 +214,8 @@ impl Executor {
                     locals.insert(var.clone(), item);
                     drop(std::mem::replace(&mut last, RuntimeValue::Unit));
                     let result = self.run_stmts_flow(body, locals);
-                    if self.trap.is_some() {
-                        return TRAPPED;
+                    if let Some(stop) = self.interrupted() {
+                        return stop;
                     }
                     match result {
                         (v, FlowControl::None) => last = v,

@@ -311,6 +311,10 @@ pub fn typecheck_program(
                     local.insert(p.name, resolve_hir_type(&ctx, &p.ty, diagnostics).unwrap());
                     immutable_locals.insert(p.name);
                 }
+                *ctx.fn_return.borrow_mut() = f
+                    .ret
+                    .as_ref()
+                    .map(|t| resolve_hir_type(&ctx, t, diagnostics).unwrap_or(Type::Error));
                 check_block(
                     &ctx,
                     &f.body,
@@ -353,6 +357,8 @@ pub fn typecheck_program(
                         });
                     }
                 }
+                // Bindings, `watch`, and `on` checked next are not this function.
+                *ctx.fn_return.borrow_mut() = None;
             }
             HirItem::Watch(w) => {
                 if let Some(target) = w.target {

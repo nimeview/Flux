@@ -300,6 +300,16 @@ pub enum HirExpr {
         ty: String,
         span: Span,
     },
+    /// `{expr}` in a string literal: the value as text, like `to_string`.
+    ToText {
+        expr: Box<HirExpr>,
+        span: Span,
+    },
+    /// `expr?` (only in functions with a `Result`/`Option` return type).
+    Try {
+        expr: Box<HirExpr>,
+        span: Span,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -311,10 +321,14 @@ pub struct HirMatchArm {
     /// A literal pattern (`0`, `"a"`, `true`): the arm matches when the
     /// scrutinee `==` it. `variant` is empty and there are no bindings.
     pub literal: Option<HirExpr>,
-    /// Block-arm statements run before `expr`: only `let`, assignment to a
-    /// local, and expression statements (empty for an expression arm).
+    /// Block-arm statements run before `expr` (empty for an expression arm).
+    /// Outside functions only `let`, assignment to a local, and expression
+    /// statements; inside a function also control flow.
     pub body: HirBlock,
     pub expr: HirExpr,
+    /// The arm ends in `return`/`break`/`continue` and has no value; `expr`
+    /// is a placeholder that never runs, and the arm adds no type to the match.
+    pub diverges: bool,
 }
 
 impl HirMatchArm {
@@ -387,7 +401,9 @@ impl HirExpr {
             | Self::StructLit { span, .. }
             | Self::EnumVariant { span, .. }
             | Self::Match { span, .. }
-            | Self::Cast { span, .. } => *span,
+            | Self::Cast { span, .. }
+            | Self::Try { span, .. }
+            | Self::ToText { span, .. } => *span,
         }
     }
 }

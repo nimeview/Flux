@@ -24,6 +24,9 @@ pub struct TypeCheckContext {
     pub(crate) const_bindings: std::collections::HashSet<String>,
     /// `recv.method(…)` call spans resolved to their impl function.
     pub(crate) method_calls: std::cell::RefCell<HashMap<flux_diagnostics::Span, SymbolId>>,
+    /// Declared return type of the function being checked, if it has one;
+    /// checks a `return` wherever it appears, including inside match arms.
+    pub(crate) fn_return: std::cell::RefCell<Option<Type>>,
 }
 
 impl TypeCheckContext {

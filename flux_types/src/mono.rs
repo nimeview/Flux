@@ -291,6 +291,12 @@ fn infer_mono_type(
             (then_ty == else_ty).then_some(then_ty)
         }
         HirExpr::Cast { ty, .. } => Some(normalize_mono_type(resolve_type_name(ty, program)?)),
+        HirExpr::ToText { .. } => Some(Type::String),
+        HirExpr::Try { expr, .. } => match infer_mono_type(expr, symbols, program)? {
+            Type::Result { ok, .. } => Some(*ok),
+            Type::Option(inner) => Some(*inner),
+            _ => None,
+        },
         HirExpr::StructLit { name, .. } => program.items.iter().find_map(|item| match item {
             HirItem::Struct(s) if program.names.get(&s.name).map(String::as_str) == Some(name) => {
                 Some(Type::Struct {
@@ -642,9 +648,11 @@ fn collect_if_local_declarations(
 
 fn collect_expr_local_declarations(expr: &HirExpr, out: &mut std::collections::HashSet<SymbolId>) {
     match expr {
-        HirExpr::Snap { expr, .. } | HirExpr::Unary { expr, .. } | HirExpr::Cast { expr, .. } => {
-            collect_expr_local_declarations(expr, out)
-        }
+        HirExpr::Snap { expr, .. }
+        | HirExpr::Unary { expr, .. }
+        | HirExpr::Cast { expr, .. }
+        | HirExpr::ToText { expr, .. }
+        | HirExpr::Try { expr, .. } => collect_expr_local_declarations(expr, out),
         HirExpr::Call { callee, args, .. } => {
             collect_expr_local_declarations(callee, out);
             for arg in args {
@@ -776,9 +784,11 @@ fn remap_if_symbols(if_stmt: &mut flux_hir::HirIf, remap: &HashMap<SymbolId, Sym
 fn remap_expr_symbols(expr: &mut HirExpr, remap: &HashMap<SymbolId, SymbolId>) {
     match expr {
         HirExpr::Ident { symbol, .. } => remap_id(symbol, remap),
-        HirExpr::Snap { expr, .. } | HirExpr::Unary { expr, .. } | HirExpr::Cast { expr, .. } => {
-            remap_expr_symbols(expr, remap)
-        }
+        HirExpr::Snap { expr, .. }
+        | HirExpr::Unary { expr, .. }
+        | HirExpr::Cast { expr, .. }
+        | HirExpr::ToText { expr, .. }
+        | HirExpr::Try { expr, .. } => remap_expr_symbols(expr, remap),
         HirExpr::Call { callee, args, .. } => {
             remap_expr_symbols(callee, remap);
             for arg in args {
@@ -1114,7 +1124,10 @@ fn walk_expr_calls(
             }
         }
         HirExpr::Field { base, .. } => walk_expr_calls(base, program, generic_fns, out),
-        HirExpr::Snap { expr: inner, .. } | HirExpr::Cast { expr: inner, .. } => {
+        HirExpr::Snap { expr: inner, .. }
+        | HirExpr::Cast { expr: inner, .. }
+        | HirExpr::ToText { expr: inner, .. }
+        | HirExpr::Try { expr: inner, .. } => {
             walk_expr_calls(inner, program, generic_fns, out);
         }
         HirExpr::Array { elems, .. } => {
@@ -1278,7 +1291,10 @@ fn collect_calls_in_expr(
             }
         }
         HirExpr::Field { base, .. } => collect_calls_in_expr(program, base, base_name, out),
-        HirExpr::Snap { expr: inner, .. } | HirExpr::Cast { expr: inner, .. } => {
+        HirExpr::Snap { expr: inner, .. }
+        | HirExpr::Cast { expr: inner, .. }
+        | HirExpr::ToText { expr: inner, .. }
+        | HirExpr::Try { expr: inner, .. } => {
             collect_calls_in_expr(program, inner, base_name, out);
         }
         HirExpr::Array { elems, .. } => {
@@ -1639,7 +1655,10 @@ fn rewrite_expr_matching_calls(
         HirExpr::Field { base, .. } => {
             rewrite_expr_matching_calls(base, from, to, match_types, symbol_types, program)
         }
-        HirExpr::Snap { expr: inner, .. } | HirExpr::Cast { expr: inner, .. } => {
+        HirExpr::Snap { expr: inner, .. }
+        | HirExpr::Cast { expr: inner, .. }
+        | HirExpr::ToText { expr: inner, .. }
+        | HirExpr::Try { expr: inner, .. } => {
             rewrite_expr_matching_calls(inner, from, to, match_types, symbol_types, program);
         }
         HirExpr::Array { elems, .. } => {

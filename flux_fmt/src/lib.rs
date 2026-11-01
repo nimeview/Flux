@@ -578,6 +578,13 @@ fn format_if_stmt(stmt: &flux_syntax::IfStmt, out: &mut String, level: usize) {
     }
 }
 
+/// An arm that is only `return …`/`break`/`continue`, on the arm's line.
+fn jump_fmt(stmt: &flux_syntax::Stmt) -> String {
+    let mut out = String::new();
+    format_stmt(stmt, &mut out, 0);
+    out.trim().to_string()
+}
+
 /// Multi-line `match` for when an arm is a block: arms one level in, block
 /// statements two levels in, relative to the enclosing statement.
 fn match_block_fmt(scrutinee: &flux_syntax::Expr, arms: &[flux_syntax::MatchArm]) -> String {
@@ -591,19 +598,23 @@ fn match_block_fmt(scrutinee: &flux_syntax::Expr, arms: &[flux_syntax::MatchArm]
             .unwrap_or_default();
         indent(&mut out, base + 1);
         out.push_str(&format!("{}{guard} => ", match_pattern_fmt(&arm.pattern)));
-        if arm.stmts.is_empty() {
-            out.push_str(&expr_fmt(&arm.expr));
-        } else {
-            out.push_str("{\n");
-            for stmt in &arm.stmts {
-                format_stmt(stmt, &mut out, base + 2);
+        match (&arm.expr, arm.stmts.as_slice()) {
+            (Some(value), []) => out.push_str(&expr_fmt(value)),
+            (None, [jump]) => out.push_str(&jump_fmt(jump)),
+            (value, stmts) => {
+                out.push_str("{\n");
+                for stmt in stmts {
+                    format_stmt(stmt, &mut out, base + 2);
+                }
+                if let Some(value) = value {
+                    LEVEL.with(|l| l.set(base + 2));
+                    indent(&mut out, base + 2);
+                    out.push_str(&expr_fmt(value));
+                    out.push('\n');
+                }
+                indent(&mut out, base + 1);
+                out.push('}');
             }
-            LEVEL.with(|l| l.set(base + 2));
-            indent(&mut out, base + 2);
-            out.push_str(&expr_fmt(&arm.expr));
-            out.push('\n');
-            indent(&mut out, base + 1);
-            out.push('}');
         }
         LEVEL.with(|l| l.set(base));
         out.push_str(if i + 1 < arms.len() { ",\n" } else { "\n" });
@@ -655,7 +666,9 @@ fn expr_fmt(expr: &flux_syntax::Expr) -> String {
             for part in parts {
                 match part {
                     flux_syntax::StringPart::Text(text) => out.push_str(&escape_text(text)),
-                    flux_syntax::StringPart::Ident(name) => out.push_str(&format!("{{{name}}}")),
+                    flux_syntax::StringPart::Expr(e) => {
+                        out.push_str(&format!("{{{}}}", expr_fmt(e)))
+                    }
                 }
             }
             out.push('"');
@@ -750,7 +763,7 @@ fn expr_fmt(expr: &flux_syntax::Expr) -> String {
                         "{}{} => {}",
                         match_pattern_fmt(&a.pattern),
                         guard,
-                        expr_fmt(&a.expr)
+                        a.expr.as_ref().map(expr_fmt).unwrap_or_default()
                     )
                 })
                 .collect::<Vec<_>>()
@@ -760,6 +773,16 @@ fn expr_fmt(expr: &flux_syntax::Expr) -> String {
         flux_syntax::Expr::Cast { expr, ty, .. } => {
             format!("{} as {ty}", expr_fmt(expr))
         }
+        // `?` binds tighter than any operator: `(a + b)?` keeps its parentheses.
+        flux_syntax::Expr::Try { expr, .. } => match expr.as_ref() {
+            flux_syntax::Expr::Binary { .. }
+            | flux_syntax::Expr::Unary { .. }
+            | flux_syntax::Expr::Cast { .. }
+            | flux_syntax::Expr::If { .. }
+            | flux_syntax::Expr::Match { .. }
+            | flux_syntax::Expr::Closure { .. } => format!("({})?", expr_fmt(expr)),
+            _ => format!("{}?", expr_fmt(expr)),
+        },
     }
 }
 

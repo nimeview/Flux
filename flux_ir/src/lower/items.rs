@@ -48,7 +48,7 @@ pub(super) fn lower_on(o: &HirOn, program: &HirProgram) -> CompiledOnHandler {
     }
 }
 
-fn lower_block(block: &HirBlock, program: &HirProgram) -> Vec<IrStmt> {
+pub(super) fn lower_block(block: &HirBlock, program: &HirProgram) -> Vec<IrStmt> {
     block
         .stmts
         .iter()

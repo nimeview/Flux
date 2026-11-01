@@ -97,7 +97,21 @@ fn infer_arm_body(
             HirStmt::Expr(e) => {
                 let _ = infer_expr(ctx, e, scope, names, source, diagnostics);
             }
-            _ => {}
+            // Control flow (allowed only inside functions).
+            other => {
+                let module = scope.clone();
+                super::super::stmt::check_stmt(
+                    ctx,
+                    other,
+                    scope,
+                    &module,
+                    names,
+                    false,
+                    source,
+                    diagnostics,
+                    &mut std::collections::HashSet::new(),
+                );
+            }
         }
     }
 }
@@ -428,6 +442,10 @@ pub(crate) fn infer_expr(
                     }
                 }
                 infer_arm_body(ctx, arm, &mut arm_scope, names, source, diagnostics);
+                // An arm that leaves (`return`/`break`/`continue`) has no value.
+                if arm.diverges {
+                    continue;
+                }
                 arm_types.push(infer_expr(
                     ctx,
                     &arm.expr,
@@ -462,7 +480,12 @@ pub(crate) fn infer_expr(
                 }
             }
             let Some(first) = arm_types.first().cloned() else {
-                return Some(Type::Error);
+                // Every arm leaves: the match produces no value.
+                return Some(if arms.is_empty() {
+                    Type::Error
+                } else {
+                    Type::Unit
+                });
             };
             let mut unified = unwrap_value_type(&first);
             for arm_ty in arm_types.iter().skip(1) {
@@ -636,6 +659,86 @@ pub(crate) fn infer_expr(
             Some(Type::Error)
         }
         HirExpr::Closure { fn_symbol, .. } => types.get(fn_symbol).cloned(),
+        HirExpr::ToText { expr, span } => {
+            let inner = infer_expr(ctx, expr, types, names, source, diagnostics)?;
+            let inner = unwrap_value_type(&inner);
+            let printable = inner.is_error()
+                || numeric_type(&inner).is_some()
+                || matches!(inner, Type::Bool | Type::Char | Type::String);
+            if !printable {
+                diagnostics.push(FluxError::TypeMismatch {
+                    expected: "a number, Bool, Char, or String inside `{…}`".into(),
+                    found: inner.display(),
+                    span: span_to_miette(*span),
+                    source_id: span.source,
+                });
+            }
+            Some(Type::String)
+        }
+        HirExpr::Try { expr, span } => {
+            let inner = infer_expr(ctx, expr, types, names, source, diagnostics)?;
+            let inner = unwrap_value_type(&inner);
+            if inner.is_error() {
+                return Some(Type::Error);
+            }
+            let fail = |message: String, diagnostics: &mut DiagnosticBag| {
+                diagnostics.push(FluxError::InvalidTry {
+                    message,
+                    span: span_to_miette(*span),
+                    source_id: span.source,
+                });
+                Some(Type::Error)
+            };
+            let Some(ret) = ctx.fn_return.borrow().clone() else {
+                return fail(
+                    "`?` is only allowed in a function with a declared `Result[…]` or \
+                     `Option[…]` return type"
+                        .into(),
+                    diagnostics,
+                );
+            };
+            // The error type must match exactly: `?` performs no conversion.
+            let same = |a: &Type, b: &Type| types_compatible(a, b) && types_compatible(b, a);
+            match (unwrap_value_type(&ret), inner) {
+                (Type::Result { err: want, .. }, Type::Result { ok, err }) => {
+                    if want.is_error() || err.is_error() || same(&want, &err) {
+                        Some(*ok)
+                    } else {
+                        fail(
+                            format!(
+                                "`?` on a `Result` with error type `{}` in a function returning \
+                                 error type `{}`; the error types must match",
+                                err.display(),
+                                want.display()
+                            ),
+                            diagnostics,
+                        )
+                    }
+                }
+                (Type::Option(_), Type::Option(inner)) => Some(*inner),
+                (ret @ (Type::Result { .. } | Type::Option(_)), inner) => fail(
+                    format!(
+                        "`?` on `{}` in a function returning `{}`; use `?` on {}",
+                        inner.display(),
+                        ret.display(),
+                        if matches!(ret, Type::Option(_)) {
+                            "an `Option`"
+                        } else {
+                            "a `Result`"
+                        }
+                    ),
+                    diagnostics,
+                ),
+                (ret, _) => fail(
+                    format!(
+                        "`?` needs the function to return `Result[…]` or `Option[…]`, \
+                         but it returns `{}`",
+                        ret.display()
+                    ),
+                    diagnostics,
+                ),
+            }
+        }
         HirExpr::Cast { expr, ty, span } => {
             let source_ty = infer_expr(ctx, expr, types, names, source, diagnostics)?;
             let target_ty = resolve_type_name(ty, *span)

@@ -307,7 +307,16 @@ fn emit_expr(expr: &HirExpr, program: &HirProgram, code: &mut Vec<Inst>) {
             for arm in arms.iter().rev() {
                 let mut then_code = Vec::new();
                 emit_match_bindings(&temp, arm, program, &mut then_code);
-                emit_arm_body(arm, program, &mut then_code);
+                if arm
+                    .body
+                    .stmts
+                    .iter()
+                    .all(|s| matches!(s, HirStmt::Let(_) | HirStmt::Assign(_) | HirStmt::Expr(_)))
+                {
+                    emit_arm_body(arm, program, &mut then_code);
+                } else {
+                    then_code.push(Inst::Block(super::items::lower_block(&arm.body, program)));
+                }
                 emit_expr(&arm.expr, program, &mut then_code);
                 let mut cond_code = Vec::new();
                 emit_match_arm_cond(&temp, arm, program, &mut cond_code);
@@ -323,6 +332,19 @@ fn emit_expr(expr: &HirExpr, program: &HirProgram, code: &mut Vec<Inst>) {
         HirExpr::Cast { expr, ty, .. } => {
             emit_expr(expr, program, code);
             code.push(Inst::Cast { ty: ty.clone() });
+        }
+        HirExpr::Try { expr, .. } => {
+            emit_expr(expr, program, code);
+            code.push(Inst::Try);
+        }
+        // The builtin by name: it needs no import, and the type checker
+        // allows only values whose text form is defined.
+        HirExpr::ToText { expr, .. } => {
+            emit_expr(expr, program, code);
+            code.push(Inst::Call {
+                name: "to_string".into(),
+                argc: 1,
+            });
         }
         HirExpr::Field { base, field, .. } => {
             emit_expr(base, program, code);

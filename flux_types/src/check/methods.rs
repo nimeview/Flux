@@ -95,7 +95,9 @@ fn expr(e: &mut HirExpr, calls: &Calls) {
         }
         HirExpr::Snap { expr: inner, .. }
         | HirExpr::Unary { expr: inner, .. }
-        | HirExpr::Cast { expr: inner, .. } => expr(inner, calls),
+        | HirExpr::Cast { expr: inner, .. }
+        | HirExpr::ToText { expr: inner, .. }
+        | HirExpr::Try { expr: inner, .. } => expr(inner, calls),
         HirExpr::Field { base, .. } => expr(base, calls),
         HirExpr::Binary { left, right, .. } => {
             expr(left, calls);

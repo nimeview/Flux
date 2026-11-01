@@ -344,8 +344,10 @@ fn block_match_arms_reject_statements_expressions_cannot_run() {
     let arm = |body: &str| {
         format!("event E\nlet mut m = 0\nfn f(n: Int) -> Int {{\n  let k = 1\n  match n {{\n    _ => {{\n      {body}\n      0\n    }}\n  }}\n}}\nlet a = f(1)\n")
     };
+    // Control flow is allowed in a function's arms (see
+    // `match_arm_control_flow_acts_on_the_enclosing_function`); effects and
+    // module or immutable assignments are not.
     for (body, needle) in [
-        ("for i in [1] { }", "`for`"),
         ("emit E", "`emit`"),
         ("m = 2", "assigning a module binding"),
         ("k = 2", "immutable local"),
@@ -694,5 +696,200 @@ fn pop_returns_the_array_without_its_last_element() {
             Some(RuntimeValue::int_i64(1)),
             "{mode:?}"
         );
+    }
+}
+
+#[test]
+fn match_arm_control_flow_acts_on_the_enclosing_function() {
+    let src = "import result { Ok, Err }\nimport str { parse_int }\n\
+fn add(a: String, b: String) -> Result[Int, String] {\n    let x = match parse_int(a) {\n        Ok(v) => v,\n        Err(e) => return Err(e)\n    }\n    let y = match parse_int(b) {\n        Ok(v) => v,\n        Err(e) => return Err(e)\n    }\n    Ok(x + y)\n}\n\
+fn ok_or(r: Result[Int, String], d: Int) -> Int {\n    match r {\n        Ok(v) => v,\n        Err(_) => d\n    }\n}\n\
+fn classify(x: Int) -> Int {\n    match x {\n        0 => {\n            let mut t = 1\n            t = t + 1\n            t\n        },\n        _ => {\n            if x < 0 {\n                return -1\n            }\n            x\n        }\n    }\n}\n\
+fn first_neg(xs: [Int]) -> Int {\n    let mut found = 0\n    let mut seen = 0\n    for x in xs {\n        let skip = match x {\n            0 => continue,\n            _ => false\n        }\n        seen = seen + 1\n        let stop = match x < 0 {\n            true => {\n                found = x\n                break\n            },\n            _ => false\n        }\n    }\n    found * 10 + seen\n}\n\
+fn names() -> Int {\n    let returned = 4\n    let breaker = 1\n    let continued = 2\n    breaker\n    continued\n    returned\n}\n\
+let a = ok_or(add(\"1\", \"2\"), 0)\nlet b = ok_or(add(\"1\", \"x\"), -9)\nlet c = classify(0) + classify(-4) * 100 + classify(5) * 1000\nlet d = first_neg([3, 0, 5, -2, -7])\nlet e = names()\n";
+    for mode in [
+        flux_runtime::ExecutionMode::Vm,
+        flux_runtime::ExecutionMode::Jit,
+    ] {
+        let compiled = flux_cli::pipeline::compile_with_mode(source_from("<arm-flow>", src), mode)
+            .unwrap_or_else(|failure| panic!("{:?}", failure.diagnostics.errors));
+        for (name, want) in [("a", 3), ("b", -9), ("c", 4902), ("d", -17), ("e", 4)] {
+            assert_eq!(
+                compiled.executor.get_value(name),
+                Some(RuntimeValue::int_i64(want)),
+                "{name} {mode:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn match_arm_control_flow_is_checked_and_limited_to_functions() {
+    let errors = |src: &str| match compile(source_from("<arm-flow>", src)) {
+        Ok(_) => panic!("compiled:\n{src}"),
+        Err(failure) => failure
+            .diagnostics
+            .errors
+            .iter()
+            .map(|e| e.to_string())
+            .collect::<Vec<_>>(),
+    };
+    // A `return` in an arm is checked against the function's return type.
+    let errs = errors(
+        "fn f(x: Int) -> Int {\n    let y = match x {\n        0 => return \"zero\",\n        _ => x\n    }\n    y\n}\nlet r = f(1)\n",
+    );
+    assert!(
+        errs.iter()
+            .any(|m| m == "type mismatch: expected `Int64`, found `String`"),
+        "{errs:?}"
+    );
+    // Reactive contexts keep expression-only arms.
+    let errs = errors(
+        "let mut a = 1\nderived d = match a {\n    1 => {\n        if a > 0 {\n            a = 2\n        }\n        3\n    },\n    _ => 0\n}\n",
+    );
+    assert!(
+        errs.iter().any(|m| m.contains("outside a function")),
+        "{errs:?}"
+    );
+}
+
+#[test]
+fn try_operator_unwraps_or_returns_from_the_function() {
+    let src = "import result { Ok, Err }\nimport option { Some, None }\nimport str { parse_int }\nimport collections { get }\n\
+fn add(a: String, b: String) -> Result[Int, String] {\n    Ok(parse_int(a)? + parse_int(b)?)\n}\n\
+fn second(xs: [Int]) -> Option[Int] {\n    let v = get(xs, 1)?\n    Some(v * 10)\n}\n\
+fn sum_all(items: [String]) -> Result[Int, String] {\n    let mut t = 0\n    for s in items {\n        t = t + parse_int(s)?\n    }\n    Ok(t)\n}\n\
+fn code(r: Result[Int, String]) -> Int {\n    match r {\n        Ok(v) => v,\n        Err(_) => -1\n    }\n}\n\
+fn or_zero(o: Option[Int]) -> Int {\n    match o {\n        Some(v) => v,\n        None => 0\n    }\n}\n\
+let a = code(add(\"2\", \"3\"))\nlet b = code(add(\"2\", \"x\"))\nlet c = or_zero(second([1, 2]))\nlet d = or_zero(second([1]))\nlet e = code(sum_all([\"1\", \"2\", \"3\"]))\nlet f = code(sum_all([\"1\", \"oops\", \"3\"]))\n";
+    for mode in [
+        flux_runtime::ExecutionMode::Vm,
+        flux_runtime::ExecutionMode::Jit,
+    ] {
+        let compiled = flux_cli::pipeline::compile_with_mode(source_from("<try>", src), mode)
+            .unwrap_or_else(|failure| panic!("{:?}", failure.diagnostics.errors));
+        for (name, want) in [
+            ("a", 5),
+            ("b", -1),
+            ("c", 20),
+            ("d", 0),
+            ("e", 6),
+            ("f", -1),
+        ] {
+            assert_eq!(
+                compiled.executor.get_value(name),
+                Some(RuntimeValue::int_i64(want)),
+                "{name} {mode:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn try_operator_misuse_is_e021() {
+    let prelude = "import result { Ok, Err }\nimport option { Some, None }\nimport str { parse_int }\nimport collections { get }\n";
+    for (body, needle) in [
+        (
+            "fn f(a: String) -> Int { parse_int(a)? }",
+            "but it returns `Int64`",
+        ),
+        (
+            "fn f(a: String) -> Option[Int] { Some(parse_int(a)?) }",
+            "use `?` on an `Option`",
+        ),
+        (
+            "fn f(xs: [Int]) -> Result[Int, Int] { Ok(get(xs, 0)?) }",
+            "use `?` on a `Result`",
+        ),
+        (
+            "fn f(a: String) -> Result[Int, Int] { Ok(parse_int(a)?) }",
+            "the error types must match",
+        ),
+        (
+            "fn f(a: String) { let x = parse_int(a)? }",
+            "only allowed in a function with a declared",
+        ),
+        (
+            "derived d = parse_int(\"1\")?",
+            "only allowed in a function with a declared",
+        ),
+    ] {
+        let src = format!("{prelude}{body}\n");
+        let failure = match compile(source_from("<try>", &src)) {
+            Ok(_) => panic!("compiled: {body}"),
+            Err(failure) => failure,
+        };
+        assert!(
+            failure
+                .diagnostics
+                .errors
+                .iter()
+                .any(|e| e.code() == "E021" && e.to_string().contains(needle)),
+            "{body}: {:?}",
+            failure.diagnostics.errors
+        );
+    }
+}
+
+#[test]
+fn interpolation_shows_any_printable_expression() {
+    let src = "struct P { x: Int, name: String }\nconst n = 3\nconst p = P { x: 4, name: \"pt\" }\nfn label(v: Int) -> String { \"v{v}\" }\n\
+let a = \"n={n}\"\nlet b = \"x={p.x} name={p.name}\"\nlet c = \"sum={n + 1}, half={n / 2.0}, ok={n > 2}\"\nlet d = \"call={label(7)} nested={\"<{n}>\"}\"\nlet e = \"braces \\{literal\\} and {  n  }\"\n";
+    for mode in [
+        flux_runtime::ExecutionMode::Vm,
+        flux_runtime::ExecutionMode::Jit,
+    ] {
+        let compiled = flux_cli::pipeline::compile_with_mode(source_from("<interp>", src), mode)
+            .unwrap_or_else(|failure| panic!("{:?}", failure.diagnostics.errors));
+        for (name, want) in [
+            ("a", "n=3"),
+            ("b", "x=4 name=pt"),
+            ("c", "sum=4, half=1.5, ok=true"),
+            ("d", "call=v7 nested=<3>"),
+            ("e", "braces {literal} and 3"),
+        ] {
+            assert_eq!(
+                compiled.executor.get_value(name),
+                Some(RuntimeValue::String(want.into())),
+                "{name} {mode:?}"
+            );
+        }
+    }
+    let failure = match compile(source_from(
+        "<interp>",
+        "struct P { x: Int }\nconst p = P { x: 4 }\nlet a = \"p={p}\"\n",
+    )) {
+        Ok(_) => panic!("a struct was interpolated"),
+        Err(failure) => failure,
+    };
+    assert!(
+        failure.diagnostics.errors.iter().any(|e| e
+            .to_string()
+            .contains("a number, Bool, Char, or String inside `{…}`")),
+        "{:?}",
+        failure.diagnostics.errors
+    );
+}
+
+#[test]
+fn if_and_match_are_operands() {
+    let src = "import collections { len }\n\
+fn f(x: Int) -> Int {\n    let a = 1 + if x > 0 { 1 } else { 2 }\n    let b = 10 + match x { 0 => 1, _ => 2 }\n    let c = (if x > 5 { 100 } else { 0 }) * 2 + len([match x { 1 => 7, _ => 8 }, 3])\n    let d = match x { 1 => 3, _ => 4 } * if x == 1 { 10 } else { 1 }\n    a + b + c + d\n}\n\
+fn g(iffy: Int, matches: Int) -> Int { iffy + matches }\n\
+let r = f(1)\nlet r2 = f(0)\nlet r3 = g(1, 2)\n";
+    for mode in [
+        flux_runtime::ExecutionMode::Vm,
+        flux_runtime::ExecutionMode::Jit,
+    ] {
+        let compiled = flux_cli::pipeline::compile_with_mode(source_from("<operands>", src), mode)
+            .unwrap_or_else(|failure| panic!("{:?}", failure.diagnostics.errors));
+        for (name, want) in [("r", 46), ("r2", 20), ("r3", 3)] {
+            assert_eq!(
+                compiled.executor.get_value(name),
+                Some(RuntimeValue::int_i64(want)),
+                "{name} {mode:?}"
+            );
+        }
     }
 }

@@ -149,7 +149,9 @@ fn check_derived_expr(
             }
         }
         HirExpr::Field { base, .. } => check_derived_expr(ctx, base, names, diagnostics),
-        HirExpr::Cast { expr, .. } => check_derived_expr(ctx, expr, names, diagnostics),
+        HirExpr::Cast { expr, .. } | HirExpr::ToText { expr, .. } | HirExpr::Try { expr, .. } => {
+            check_derived_expr(ctx, expr, names, diagnostics)
+        }
         HirExpr::Closure { fn_symbol, span } => {
             if ctx.is_effectful_function(*fn_symbol) {
                 diagnostics.push(FluxError::SideEffectInDerived {
@@ -359,7 +361,7 @@ pub(super) fn check_if(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn check_stmt(
+pub(super) fn check_stmt(
     ctx: &TypeCheckContext,
     stmt: &HirStmt,
     scope: &mut HashMap<SymbolId, Type>,
@@ -489,8 +491,23 @@ fn check_stmt(
             let _ = infer_expr(ctx, expr, scope, names, source, diagnostics);
         }
         HirStmt::Return(r) => {
-            if let Some(v) = &r.value {
-                let _ = infer_expr(ctx, v, scope, names, source, diagnostics);
+            let found = match &r.value {
+                Some(v) => infer_expr(ctx, v, scope, names, source, diagnostics),
+                None => Some(Type::Unit),
+            };
+            // Same check (and message) as `check_return_types`, which does not
+            // see returns inside match arm blocks; duplicates are dropped.
+            if let (Some(expected), Some(found)) = (ctx.fn_return.borrow().clone(), found) {
+                let (expected, found) = (unwrap_value_type(&expected), unwrap_value_type(&found));
+                if !expected.is_error() && !found.is_error() && !types_compatible(&expected, &found)
+                {
+                    diagnostics.push(FluxError::TypeMismatch {
+                        expected: expected.display(),
+                        found: found.display(),
+                        span: span_to_miette(r.span),
+                        source_id: r.span.source,
+                    });
+                }
             }
         }
         HirStmt::Break(_) | HirStmt::Continue(_) => {}

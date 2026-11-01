@@ -195,7 +195,9 @@ fn collect_uses_expr(expr: &HirExpr, used: &mut HashSet<SymbolId>) {
                 collect_uses_expr(&arm.expr, used);
             }
         }
-        HirExpr::Cast { expr, .. } => collect_uses_expr(expr, used),
+        HirExpr::Cast { expr, .. } | HirExpr::ToText { expr, .. } | HirExpr::Try { expr, .. } => {
+            collect_uses_expr(expr, used)
+        }
         HirExpr::Int { .. }
         | HirExpr::Float { .. }
         | HirExpr::Bool { .. }

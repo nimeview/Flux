@@ -103,6 +103,13 @@ impl SymbolTable {
         name
     }
 
+    /// Whether lowering is inside a function body (pure or reactive).
+    pub fn in_function(&self) -> bool {
+        self.scopes
+            .iter()
+            .any(|s| matches!(s.kind, ScopeKind::Function { .. }))
+    }
+
     pub fn current_context(&self) -> crate::CompileContext {
         self.scopes
             .iter()

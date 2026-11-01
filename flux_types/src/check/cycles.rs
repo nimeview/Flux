@@ -68,9 +68,11 @@ fn collect_refs(expr: &HirExpr, out: &mut HashSet<SymbolId>) {
         HirExpr::Ident { symbol, .. } => {
             out.insert(*symbol);
         }
-        HirExpr::Snap { expr, .. } | HirExpr::Unary { expr, .. } | HirExpr::Cast { expr, .. } => {
-            collect_refs(expr, out)
-        }
+        HirExpr::Snap { expr, .. }
+        | HirExpr::Unary { expr, .. }
+        | HirExpr::Cast { expr, .. }
+        | HirExpr::ToText { expr, .. }
+        | HirExpr::Try { expr, .. } => collect_refs(expr, out),
         HirExpr::Call { callee, args, .. } => {
             collect_refs(callee, out);
             for arg in args {

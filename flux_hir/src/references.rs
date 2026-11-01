@@ -237,7 +237,9 @@ fn collect_refs_expr(expr: &HirExpr, map: &mut HashMap<SymbolId, Vec<Span>>) {
                 collect_refs_expr(&arm.expr, map);
             }
         }
-        HirExpr::Cast { expr, .. } => collect_refs_expr(expr, map),
+        HirExpr::Cast { expr, .. } | HirExpr::ToText { expr, .. } | HirExpr::Try { expr, .. } => {
+            collect_refs_expr(expr, map)
+        }
         HirExpr::Int { .. }
         | HirExpr::Float { .. }
         | HirExpr::Bool { .. }

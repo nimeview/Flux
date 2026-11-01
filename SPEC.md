@@ -156,6 +156,10 @@ An `impl` must match its trait (**E020**): the trait must be declared, and the i
 
 `const N = 42` at module level declares an immutable source binding whose value is fixed at compile time.
 
+### `if` and `match` as operands
+
+An `if … else` expression and a `match` are operands like any other value: `1 + if x > 0 { 1 } else { 2 }`, `10 + match x { 0 => 1, _ => 2 }`, `f(if c { a } else { b })`, `[match x { 1 => 7, _ => 8 }]`. An operator after one applies to its whole value: `match x { 1 => 3, _ => 4 } * 10`. The keywords end at a word boundary (`iffy` and `matches` are names). At the start of a statement, `if` is the `if` statement.
+
 ### Match guards
 
 `match x { n if n > 0 => n, _ => 0 }` — patterns may include `if` guards evaluated after the pattern binds.
@@ -166,11 +170,39 @@ An `impl` must match its trait (**E020**): the trait must be declared, and the i
 
 ### Block match arms
 
-An arm may be a block: `Err(e) => { println(e)\n  0 }`. Its statements run in order, after the pattern binds, and the block's **final expression** is the arm's value. A block that does not end in an expression is a parse error. Allowed statements: `let`, assignment to a `let mut` local, and expression statements. `if`/`while`/`for`, `return`/`break`/`continue`, `emit`, and assignments to module bindings or immutable locals are compile errors in an arm block for now; move such logic into a function.
+An arm may be a block: `Err(e) => { println(e)\n  0 }`. Its statements run in order, after the pattern binds, and the block's **final expression** is the arm's value. Allowed everywhere: `let`, assignment to a `let mut` local, and expression statements.
+
+Inside a function, an arm block may also contain `if`/`while`/`for` and `return`/`break`/`continue`. They act on the enclosing function or loop, as they would outside the `match`. An arm may also *be* one of these (`Err(e) => return Err(e)`), or a block may end with one instead of a value. Such an arm leaves and has no value: it does not take part in the `match`'s type, and a `match` whose arms all leave has type `Unit`. A `return` in an arm is checked against the function's declared return type. Derived values, `watch`, and `on` keep expression-only arms (control flow there is a compile error), and `emit` or assignments to module bindings or immutable locals are compile errors in any arm block.
+
+```flux
+fn add(a: String, b: String) -> Result[Int, String] {
+    let x = match parse_int(a) {
+        Ok(v) => v,
+        Err(e) => return Err(e)
+    }
+    let y = match parse_int(b) {
+        Ok(v) => v,
+        Err(e) => return Err(e)
+    }
+    Ok(x + y)
+}
+```
+
+Keywords end at a word boundary: `returned`, `breaker`, and `continued` are ordinary names.
+
+### The `?` operator
+
+`expr?` unwraps an expected failure or passes it on. In a function declared `-> Result[T, E]`, `expr` must be a `Result[U, E]`: `Ok(v)?` is `v`, and `Err(e)?` returns `Err(e)` from the function. In a function declared `-> Option[T]`, `expr` must be an `Option[U]`: `Some(v)?` is `v`, and `None?` returns `None`. The error type must be exactly the function's `E`, since `?` performs no conversion. Any other use is **E021**: in a function without a declared `Result`/`Option` return type, on a value of the other kind, with a different error type, or outside a function (derived values, `watch`, `on`, module bindings). `?` binds tighter than every operator: `parse_int(a)? + 1`, `get_r(x)?.field`.
+
+```flux
+fn add(a: String, b: String) -> Result[Int, String] {
+    Ok(parse_int(a)? + parse_int(b)?)
+}
+```
 
 ### String interpolation
 
-`"Hello, {name}!"` desugars to string concatenation.
+`{…}` inside a string literal holds any expression: `"Hello, {name}!"`, `"x={p.x}"`, `"sum={a + b}"`, `"{label(7)}"`, even a nested string `"{"<{n}>"}"`. The value is shown as `to_string` (and `print`) would show it: numbers, `Bool`, `Char`, and `String` (a string's own text, without quotes). Any other type is a type error (**E005**). `\{` and `\}` write literal braces, and an empty `{}` is a parse error. No import is needed.
 
 ### Destructuring let
 
@@ -258,6 +290,7 @@ Selective imports: `import io { println, read_line }`. Stdlib modules live under
 | E018 | Runtime error (overflow, division by zero, failed assertion, …) |
 | E019 | No method with that name for the receiver's type |
 | E020 | `impl` does not match its trait (unknown trait, missing, extra, or mismatched method) |
+| E021 | Invalid `?` (see §5, "The `?` operator") |
 
 ## 8. Tooling
 

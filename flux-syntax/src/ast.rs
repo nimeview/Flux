@@ -343,6 +343,12 @@ pub enum Expr {
         ty: String,
         span: Span,
     },
+    /// `expr?`: unwraps `Ok`/`Some`, or returns the `Err`/`None` from the
+    /// enclosing function.
+    Try {
+        expr: Box<Expr>,
+        span: Span,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -372,7 +378,8 @@ pub enum MatchPattern {
 #[derive(Debug, Clone)]
 pub enum StringPart {
     Text(String),
-    Ident(String),
+    /// `{expr}` inside a string literal.
+    Expr(Expr),
 }
 
 #[derive(Debug, Clone)]
@@ -383,7 +390,9 @@ pub struct MatchArm {
     /// (empty for an expression arm).
     pub stmts: Vec<Stmt>,
     /// The arm's value: the expression, or a block arm's final expression.
-    pub expr: Expr,
+    /// `None` when the arm ends in `return`/`break`/`continue` (the last of
+    /// `stmts`) and so has no value.
+    pub expr: Option<Expr>,
     pub span: Span,
 }
 
@@ -495,7 +504,8 @@ impl Expr {
             | Self::Array { span, .. }
             | Self::StructLit { span, .. }
             | Self::Match { span, .. }
-            | Self::Cast { span, .. } => *span,
+            | Self::Cast { span, .. }
+            | Self::Try { span, .. } => *span,
         }
     }
 }

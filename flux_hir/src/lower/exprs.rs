@@ -306,6 +306,13 @@ pub(super) fn lower_expr(
                 span: *span,
             })
         }
+        Expr::Try { expr, span } => {
+            let inner = lower_expr(expr, symbols, scope, diagnostics, reads_reactive)?;
+            Some(HirExpr::Try {
+                expr: Box::new(inner),
+                span: *span,
+            })
+        }
     }
 }
 
@@ -476,16 +483,10 @@ fn lower_interpolated_string(
                 value: text.clone(),
                 span,
             },
-            flux_syntax::StringPart::Ident(name) => lower_expr(
-                &Expr::Ident {
-                    name: name.clone(),
-                    span,
-                },
-                symbols,
-                scope,
-                diagnostics,
-                reads_reactive,
-            )?,
+            flux_syntax::StringPart::Expr(e) => HirExpr::ToText {
+                expr: Box::new(lower_expr(e, symbols, scope, diagnostics, reads_reactive)?),
+                span: e.span(),
+            },
         };
         expr = Some(match expr {
             None => piece,

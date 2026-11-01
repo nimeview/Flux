@@ -89,9 +89,11 @@ stmt = {
   | expr_stmt
 }
 
-return_stmt = { "return" ~ expr? }
-break_stmt = { "break" }
-continue_stmt = { "continue" }
+// Keywords end at a word boundary: `breaker` is a name, not `break er`.
+return_stmt = { kw_return ~ expr? }
+kw_return = @{ "return" ~ kw_end }
+break_stmt = @{ "break" ~ kw_end }
+continue_stmt = @{ "continue" ~ kw_end }
 
 let_stmt = { "let" ~ mut_modifier? ~ let_pattern ~ type_ann? ~ "=" ~ expr }
 assign_stmt = { ident ~ "=" ~ expr }
@@ -105,10 +107,14 @@ while_stmt = { "while" ~ expr ~ block }
 for_stmt = { "for" ~ ident ~ kw_in ~ expr ~ block }
 
 // Expressions — precedence low → high
-expr = { match_expr | if_expr | or_expr }
+// `match`/`if` are reached as operands (see `primary_expr`).
+expr = { or_expr }
 
-match_expr = { "match" ~ or_expr ~ "{" ~ match_arm ~ ("," ~ match_arm)* ~ "}" }
-match_arm = { match_pattern ~ guard? ~ "=>" ~ (arm_block | expr) }
+match_expr = { kw_match ~ or_expr ~ "{" ~ match_arm ~ ("," ~ match_arm)* ~ "}" }
+kw_match = @{ "match" ~ kw_end }
+match_arm = { match_pattern ~ guard? ~ "=>" ~ (arm_block | arm_jump | expr) }
+// An arm that leaves instead of producing a value: `Err(e) => return Err(e)`.
+arm_jump = { return_stmt | break_stmt | continue_stmt }
 arm_block = { "{" ~ block_stmts ~ "}" }
 guard = { kw_if ~ expr }
 match_pattern = { lit_pat | tuple_pat | struct_pat | simple_pat }
@@ -119,7 +125,7 @@ simple_pat = { ident }
 tuple_pat = { ident ~ "(" ~ ident_list? ~ ")" }
 struct_pat = { ident ~ "{" ~ ident_list ~ "}" }
 
-if_expr = { "if" ~ or_expr ~ "{" ~ expr ~ "}" ~ "else" ~ "{" ~ expr ~ "}" }
+if_expr = { kw_if ~ or_expr ~ "{" ~ expr ~ "}" ~ kw_else ~ "{" ~ expr ~ "}" }
 
 or_expr = { and_expr ~ ("||" ~ and_expr)* }
 and_expr = { eq_expr ~ ("&&" ~ eq_expr)* }
@@ -137,13 +143,18 @@ cast_expr = { unary_expr ~ (kw_as ~ type_name)* }
 unary_expr = { unary_op ~ unary_expr | postfix_expr }
 unary_op = { "-" | "!" }
 
-postfix_expr = { primary_expr ~ (call_suffix | field_suffix)* }
+postfix_expr = { primary_expr ~ (call_suffix | field_suffix | try_suffix)* }
+// `expr?`: the `Ok`/`Some` value, or return the `Err`/`None` from the function.
+try_suffix = { "?" }
 call_suffix = { call_args }
 field_suffix = { "." ~ ident }
 call_args = { "(" ~ expr_list? ~ ")" }
 
+// `if`/`match` are operands too: `1 + if c { 1 } else { 2 }`.
 primary_expr = {
-    closure_expr
+    if_expr
+  | match_expr
+  | closure_expr
   | struct_lit
   | array_lit
   | float_lit
@@ -193,5 +204,6 @@ string_lit = ${ "\"" ~ string_content* ~ "\"" }
 string_content = _{ string_escape | string_char | interp_expr }
 string_escape = @{ "\\" ~ ANY }
 string_char = @{ !( "\"" | "{" | "\\" ) ~ ANY }
-interp_expr = { "{" ~ ident ~ "}" }
+// `{expr}`: any expression; whitespace is allowed inside the braces.
+interp_expr = !{ "{" ~ expr ~ "}" }
 bool_lit = @{ ("true" | "false") ~ kw_end }

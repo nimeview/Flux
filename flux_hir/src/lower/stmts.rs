@@ -181,13 +181,11 @@ pub(super) fn lower_match_arm(
         .as_ref()
         .and_then(|g| lower_expr(g, symbols, scope, diagnostics, reads_reactive));
     let mut body = Vec::new();
+    let in_function = symbols.in_function();
     for stmt in &arm.stmts {
-        if let Some(problem) = unsupported_in_arm_block(stmt, symbols) {
+        if let Some(problem) = unsupported_in_arm_block(stmt, symbols, in_function) {
             diagnostics.push(FluxError::Parse {
-                message: format!(
-                    "{problem} is not supported inside a match arm block yet; \
-                     move it into a function"
-                ),
+                message: format!("{problem} is not supported inside a match arm block"),
                 span: span_to_miette(arm.span),
                 source_id: arm.span.source,
             });
@@ -195,7 +193,14 @@ pub(super) fn lower_match_arm(
         }
         body.extend(lower_stmt(stmt, symbols, diagnostics).unwrap_or_default());
     }
-    let expr = lower_expr(&arm.expr, symbols, scope, diagnostics, reads_reactive)?;
+    let diverges = arm.expr.is_none();
+    let expr = match &arm.expr {
+        Some(value) => lower_expr(value, symbols, scope, diagnostics, reads_reactive)?,
+        None => HirExpr::Bool {
+            value: false,
+            span: arm.span,
+        },
+    };
     symbols.pop();
     Some(HirMatchArm {
         variant,
@@ -208,15 +213,32 @@ pub(super) fn lower_match_arm(
             span: arm.span,
         },
         expr,
+        diverges,
     })
 }
 
-/// Match arms evaluate as expressions, so a block arm may only hold
-/// statements an expression can perform: `let`, assigning a local, and
-/// expression statements. Returns what is not supported, if anything.
-fn unsupported_in_arm_block(stmt: &Stmt, symbols: &SymbolTable) -> Option<&'static str> {
+/// What a block arm may not contain, if anything. Everywhere: `let`,
+/// assigning a local, and expression statements. Inside a function also
+/// `if`/`while`/`for` and `return`/`break`/`continue`, which act on the
+/// enclosing function or loop. Reactive contexts (derived values, `watch`,
+/// `on`) keep the expression-only form, so arms cannot add effects there.
+fn unsupported_in_arm_block(
+    stmt: &Stmt,
+    symbols: &SymbolTable,
+    in_function: bool,
+) -> Option<&'static str> {
     match stmt {
         Stmt::Let(_) | Stmt::Expr(_) => None,
+        Stmt::Return(_)
+        | Stmt::Break(_)
+        | Stmt::Continue(_)
+        | Stmt::If(_)
+        | Stmt::While(_)
+        | Stmt::For(_)
+            if in_function =>
+        {
+            None
+        }
         Stmt::Assign(a) => match symbols.lookup(&a.name.name).map(|s| s.kind) {
             Some(SymbolKind::Local { mutable: true }) | None => None,
             Some(SymbolKind::Local { mutable: false } | SymbolKind::Param) => {
@@ -225,12 +247,12 @@ fn unsupported_in_arm_block(stmt: &Stmt, symbols: &SymbolTable) -> Option<&'stat
             Some(_) => Some("assigning a module binding"),
         },
         Stmt::Emit(_) => Some("`emit`"),
-        Stmt::Return(_) => Some("`return`"),
-        Stmt::Break(_) => Some("`break`"),
-        Stmt::Continue(_) => Some("`continue`"),
-        Stmt::If(_) => Some("an `if` statement (use an `if` expression)"),
-        Stmt::While(_) => Some("`while`"),
-        Stmt::For(_) => Some("`for`"),
+        Stmt::Return(_) => Some("`return` outside a function"),
+        Stmt::Break(_) => Some("`break` outside a function"),
+        Stmt::Continue(_) => Some("`continue` outside a function"),
+        Stmt::If(_) => Some("an `if` statement outside a function (use an `if` expression)"),
+        Stmt::While(_) => Some("`while` outside a function"),
+        Stmt::For(_) => Some("`for` outside a function"),
         Stmt::Watch(_) | Stmt::On(_) => Some("`watch`/`on`"),
     }
 }

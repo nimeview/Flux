@@ -165,6 +165,12 @@ fn validate_code(code: &[Inst], mut allowed: HashSet<String>, context: &str) -> 
             Inst::BindLocal(name) => {
                 allowed.insert(name.clone());
             }
+            // Its `let`s stay visible to the rest of the arm.
+            Inst::Block(stmts) => {
+                for stmt in stmts {
+                    validate_stmt(stmt, &mut allowed, context)?;
+                }
+            }
             Inst::ShortAnd(inner) | Inst::ShortOr(inner) => {
                 validate_code(inner, allowed.clone(), context)?;
             }

@@ -90,3 +90,44 @@ fn literal_match_patterns_round_trip() {
     let input = "let a = match n { 0 => \"zero\", -1 => \"neg\", \"s\" => \"str\", true => \"t\", _ => \"other\" }\n";
     assert_eq!(format_source(input).expect("format"), input);
 }
+
+#[test]
+fn round_trips_match_arms_that_leave() {
+    let input = "fn f(r: Result[Int, String]) -> Result[Int, String] {\n    let x = match r {\n        Ok(v) => v,\n        Err(e) => return Err(e)\n    }\n    let y = match x {\n        0 => {\n            let z = 1\n            return Ok(z)\n        },\n        _ => x\n    }\n    Ok(y)\n}\n";
+    let out = format_source(input).expect("parse");
+    assert!(out.contains("Err(e) => return Err(e)"), "{out}");
+    assert!(out.contains("return Ok(z)"), "{out}");
+    assert_eq!(format_source(&out).expect("reparse"), out);
+}
+
+#[test]
+fn round_trips_the_try_operator() {
+    let input = "fn f(a: String) -> Result[Int, String] {\n    let x = parse_int(a)?\n    let y = (parse_int(a)?) + 1\n    Ok(x + y + get_r(a)?.v)\n}\n";
+    let out = format_source(input).expect("parse");
+    assert!(out.contains("let x = parse_int(a)?"), "{out}");
+    assert!(out.contains("get_r(a)?.v"), "{out}");
+    assert_eq!(format_source(&out).expect("reparse"), out);
+}
+
+#[test]
+fn round_trips_interpolated_expressions() {
+    let input = "let s = \"x={p.x} sum={n + 1} call={f(2)} lit=\\{x\\}\"\n";
+    let out = format_source(input).expect("parse");
+    assert!(
+        out.contains("{p.x}") && out.contains("{n + 1}") && out.contains("{f(2)}"),
+        "{out}"
+    );
+    assert!(out.contains("\\{x\\}"), "{out}");
+    assert_eq!(format_source(&out).expect("reparse"), out);
+}
+
+#[test]
+fn round_trips_if_and_match_operands() {
+    let input = "fn f(x: Int) -> Int {\n    let a = 1 + if x > 0 { 1 } else { 2 }\n    let d = match x { 1 => 3, _ => 4 } * if x == 1 { 10 } else { 1 }\n    a + d\n}\n";
+    let out = format_source(input).expect("parse");
+    assert!(
+        out.contains("let a = 1 + if x > 0 { 1 } else { 2 }"),
+        "{out}"
+    );
+    assert_eq!(format_source(&out).expect("reparse"), out);
+}

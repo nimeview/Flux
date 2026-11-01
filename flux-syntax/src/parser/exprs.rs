@@ -13,7 +13,7 @@ pub(super) fn parse_expr(source_id: SourceId, pair: pest::iterators::Pair<'_, Ru
         Rule::expr => parse_expr(source_id, pair.into_inner().next().expect("expr inner")),
         Rule::match_expr => {
             let span = span_of(source_id, &pair);
-            let mut inner = pair.into_inner();
+            let mut inner = pair.into_inner().filter(|p| p.as_rule() != Rule::kw_match);
             let scrutinee = Box::new(parse_expr(
                 source_id,
                 inner.next().expect("match scrutinee"),
@@ -40,12 +40,21 @@ pub(super) fn parse_expr(source_id: SourceId, pair: pest::iterators::Pair<'_, Ru
                             }
                             Rule::expr => arm_expr = Some(parse_expr(source_id, child)),
                             Rule::arm_block => {
-                                // `parser::invalid_arm_block` guarantees a final expression.
+                                // `parser::invalid_arm_block` guarantees a final
+                                // expression or `return`/`break`/`continue`.
                                 let mut body = super::stmts::parse_block(source_id, child).stmts;
-                                if let Some(Stmt::Expr(tail)) = body.pop() {
-                                    arm_expr = Some(tail);
+                                if let Some(Stmt::Expr(_)) = body.last() {
+                                    if let Some(Stmt::Expr(tail)) = body.pop() {
+                                        arm_expr = Some(tail);
+                                    }
                                 }
                                 stmts = body;
+                            }
+                            Rule::arm_jump => {
+                                let jump = child.into_inner().next().expect("arm jump");
+                                stmts = super::stmts::parse_stmt(source_id, jump)
+                                    .into_iter()
+                                    .collect();
                             }
                             _ => {}
                         }
@@ -54,7 +63,7 @@ pub(super) fn parse_expr(source_id: SourceId, pair: pest::iterators::Pair<'_, Ru
                         pattern,
                         guard,
                         stmts,
-                        expr: arm_expr.expect("arm expr"),
+                        expr: arm_expr,
                         span: asp,
                     }
                 })
@@ -492,6 +501,12 @@ fn parse_postfix_expr(source_id: SourceId, pair: pest::iterators::Pair<'_, Rule>
                 field,
                 span,
             };
+        } else if suffix.as_rule() == Rule::try_suffix {
+            let span = merge_span(expr.span(), span_of(source_id, &suffix));
+            expr = Expr::Try {
+                expr: Box::new(expr),
+                span,
+            };
         }
     }
     expr
@@ -499,7 +514,9 @@ fn parse_postfix_expr(source_id: SourceId, pair: pest::iterators::Pair<'_, Rule>
 
 fn parse_if_expr(source_id: SourceId, pair: pest::iterators::Pair<'_, Rule>) -> Expr {
     let span = span_of(source_id, &pair);
-    let mut inner = pair.into_inner();
+    let mut inner = pair
+        .into_inner()
+        .filter(|p| !matches!(p.as_rule(), Rule::kw_if | Rule::kw_else));
     let cond = parse_expr(source_id, inner.next().expect("if cond"));
     let then_expr = parse_expr(source_id, inner.next().expect("if then"));
     let else_expr = parse_expr(source_id, inner.next().expect("if else"));
@@ -536,8 +553,8 @@ fn parse_string_lit(source_id: SourceId, pair: pest::iterators::Pair<'_, Rule>) 
                             parts.push(StringPart::Text(c.to_string()));
                         }
                         Rule::interp_expr => {
-                            let ident = piece.into_inner().next().expect("interp ident");
-                            parts.push(StringPart::Ident(ident.as_str().to_string()));
+                            let inner = piece.into_inner().next().expect("interp expr");
+                            parts.push(StringPart::Expr(parse_expr(source_id, inner)));
                         }
                         _ => {}
                     }
@@ -552,8 +569,8 @@ fn parse_string_lit(source_id: SourceId, pair: pest::iterators::Pair<'_, Rule>) 
                 parts.push(StringPart::Text(c.to_string()));
             }
             Rule::interp_expr => {
-                let ident = child.into_inner().next().expect("interp ident");
-                parts.push(StringPart::Ident(ident.as_str().to_string()));
+                let inner = child.into_inner().next().expect("interp expr");
+                parts.push(StringPart::Expr(parse_expr(source_id, inner)));
             }
             _ => {}
         }

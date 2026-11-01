@@ -213,6 +213,18 @@ pub enum FluxError {
     },
 
     #[error("{message}")]
+    #[diagnostic(
+        code(flux::E021),
+        help("`?` works in a function declared `-> Result[T, E]` on a `Result[U, E]` with the same `E`, or in `-> Option[T]` on an `Option[U]`")
+    )]
+    InvalidTry {
+        message: String,
+        #[label("here")]
+        span: miette::SourceSpan,
+        source_id: SourceId,
+    },
+
+    #[error("{message}")]
     #[diagnostic(code(flux::E020))]
     InvalidImpl {
         message: String,
@@ -244,11 +256,12 @@ impl FluxError {
             | Self::SideEffectInDerived { source_id, .. }
             | Self::Runtime { source_id, .. }
             | Self::UnknownMethod { source_id, .. }
-            | Self::InvalidImpl { source_id, .. } => *source_id,
+            | Self::InvalidImpl { source_id, .. }
+            | Self::InvalidTry { source_id, .. } => *source_id,
         }
     }
 
-    /// Stable diagnostic code (`E000`–`E020`).
+    /// Stable diagnostic code (`E000`–`E021`).
     pub fn code(&self) -> &'static str {
         match self {
             Self::Parse { .. } => "E000",
@@ -271,6 +284,7 @@ impl FluxError {
             Self::Runtime { .. } => "E018",
             Self::UnknownMethod { .. } => "E019",
             Self::InvalidImpl { .. } => "E020",
+            Self::InvalidTry { .. } => "E021",
         }
     }
 
@@ -297,6 +311,7 @@ impl FluxError {
             | Self::Runtime { span, .. }
             | Self::UnknownMethod { span, .. }
             | Self::InvalidImpl { span, .. }
+            | Self::InvalidTry { span, .. }
             | Self::DuplicateDefinition { span, .. } => *span,
         };
         crate::warning::span_from_miette(source_id, miette_span)

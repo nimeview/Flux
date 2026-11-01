@@ -91,7 +91,10 @@ fn stmts_to_block(source_id: SourceId, pair: pest::iterators::Pair<'_, Rule>, sp
     }
 }
 
-fn parse_stmt(source_id: SourceId, pair: pest::iterators::Pair<'_, Rule>) -> Option<Stmt> {
+pub(super) fn parse_stmt(
+    source_id: SourceId,
+    pair: pest::iterators::Pair<'_, Rule>,
+) -> Option<Stmt> {
     let pair = match pair.as_rule() {
         Rule::stmt => pair.into_inner().next()?,
         _ => pair,

@@ -139,7 +139,7 @@ fn block_match_arm_splits_statements_and_value() {
         panic!("expected match");
     };
     assert_eq!(arms[0].stmts.len(), 1);
-    assert!(matches!(&arms[0].expr, flux_syntax::Expr::Ident { name, .. } if name == "w"));
+    assert!(matches!(&arms[0].expr, Some(flux_syntax::Expr::Ident { name, .. }) if name == "w"));
     assert!(arms[1].stmts.is_empty());
 }
 

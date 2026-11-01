@@ -33,7 +33,7 @@ impl Executor {
         for inst in code {
             // A runtime error aborts evaluation; nested evaluations (calls,
             // short-circuit operands) surface here on the next instruction.
-            if self.trap.is_some() {
+            if self.trap.is_some() || self.pending_flow.is_some() {
                 return RuntimeValue::Unit;
             }
             match inst {
@@ -44,6 +44,25 @@ impl Executor {
                     None => {
                         self.record_dep_load(name, locals);
                         stack.push(resolve_load(name, locals, &self.graph, &self.functions));
+                    }
+                },
+                Inst::Block(stmts) => {
+                    let (value, flow) = self.run_stmts_flow(stmts, locals);
+                    if self.trap.is_some() {
+                        return RuntimeValue::Unit;
+                    }
+                    if flow != FlowControl::None {
+                        // Unwinds to the statement that holds this expression.
+                        self.pending_flow = Some((value, flow));
+                        return RuntimeValue::Unit;
+                    }
+                }
+                Inst::Try => match stack_pop(stack, "Try") {
+                    RuntimeValue::Result(Ok(v)) | RuntimeValue::Option(Some(v)) => stack.push(*v),
+                    // `Err(e)` / `None` is the function's result.
+                    failed => {
+                        self.pending_flow = Some((failed, FlowControl::Return));
+                        return RuntimeValue::Unit;
                     }
                 },
                 Inst::Take(name) => match locals.remove(name) {
