@@ -167,3 +167,14 @@ fn round_trips_nested_patterns() {
     }
     assert_eq!(format_source(&out).expect("reparse"), out);
 }
+
+#[test]
+fn round_trips_element_assignment() {
+    let input = "fn f() {\n    let mut g = [[0]]\n    g[0][0] = 1\n    xs[i + 1] = v\n}\n";
+    let out = format_source(input).expect("parse");
+    assert!(
+        out.contains("g[0][0] = 1") && out.contains("xs[i + 1] = v"),
+        "{out}"
+    );
+    assert_eq!(format_source(&out).expect("reparse"), out);
+}

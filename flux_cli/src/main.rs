@@ -91,6 +91,12 @@ enum Commands {
         #[arg(long)]
         check: bool,
     },
+    /// Create or update flux.lock for the project's path dependencies
+    Lock {
+        /// Only check that flux.lock is up to date (exit 1 if not); write nothing
+        #[arg(long)]
+        check: bool,
+    },
     /// Initialize a new Flux project with flux.toml
     Init {
         /// Project directory (default: current directory)
@@ -175,6 +181,10 @@ fn main() {
         },
         Commands::Repl { jit, vm } => repl::run(use_jit(jit, vm)).map_or(1, |_| 0),
         Commands::Fmt { file, write, check } => match fmt_file(&file, write, check) {
+            Ok(()) => 0,
+            Err(()) => 1,
+        },
+        Commands::Lock { check } => match lock_cmd(check) {
             Ok(()) => 0,
             Err(()) => 1,
         },
@@ -329,6 +339,33 @@ fn run_main(executor: &mut flux_runtime::Executor) -> i32 {
         Err(err) => {
             eprintln!("error: {err}");
             1
+        }
+    }
+}
+
+/// `flux lock [--check]` for the project around the current directory.
+fn lock_cmd(check: bool) -> Result<(), ()> {
+    let Some(root) = find_manifest().and_then(|m| m.parent().map(std::path::Path::to_path_buf))
+    else {
+        eprintln!("error: no flux.toml in this directory or its parents");
+        return Err(());
+    };
+    match flux_resolve::lockfile::sync_lock(&root, check) {
+        Ok(flux_resolve::lockfile::LockStatus::NoDependencies) => {
+            println!("no dependencies; no flux.lock needed");
+            Ok(())
+        }
+        Ok(flux_resolve::lockfile::LockStatus::UpToDate) => {
+            println!("flux.lock is up to date");
+            Ok(())
+        }
+        Ok(flux_resolve::lockfile::LockStatus::Written) => {
+            println!("wrote flux.lock");
+            Ok(())
+        }
+        Err(message) => {
+            eprintln!("error: {message}");
+            Err(())
         }
     }
 }

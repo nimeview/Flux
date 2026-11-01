@@ -1,12 +1,22 @@
 // Tokenizer and recursive-descent evaluator for `+`, `*`, and parentheses:
 // enums, `match`, `Result` with `?`, and string interpolation.
 import io { println }
+
 import str { str_chars, parse_int }
+
 import collections { len, get, push }
+
 import result { Ok, Err }
+
 import option { Some, None }
 
-enum Tok { Num(Int), Plus, Star, LParen, RParen }
+enum Tok {
+    Num(Int),
+    Plus,
+    Star,
+    LParen,
+    RParen
+}
 
 fn is_digit(c: String) -> Bool {
     c == "0" || c == "1" || c == "2" || c == "3" || c == "4" || c == "5" || c == "6" || c == "7" || c == "8" || c == "9"
@@ -43,19 +53,21 @@ fn tokenize(src: String) -> Result[[Tok], String] {
     Ok(toks)
 }
 
-struct Parsed { value: Int, next: Int }
+struct Parsed {
+    value: Int,
+    next: Int
+}
 
-fn tok_at(toks: [Tok], i: Int) -> Option[Tok] { get(toks, i) }
+fn tok_at(toks: [Tok], i: Int) -> Option[Tok] {
+    get(toks, i)
+}
 
 fn atom(toks: [Tok], i: Int) -> Result[Parsed, String] {
     match tok_at(toks, i) {
         Some(Num(n)) => Ok(Parsed { value: n, next: i + 1 }),
         Some(LParen) => {
             let inner = sum(toks, i + 1)?
-            match tok_at(toks, inner.next) {
-                Some(RParen) => Ok(Parsed { value: inner.value, next: inner.next + 1 }),
-                _ => Err("expected `)`")
-            }
+            match tok_at(toks, inner.next) { Some(RParen) => Ok(Parsed { value: inner.value, next: inner.next + 1 }), _ => Err("expected `)`") }
         },
         None => Err("unexpected end of input"),
         _ => Err("expected a number or `(` at token {i}")
@@ -100,10 +112,7 @@ fn eval(src: String) -> Result[Int, String] {
 }
 
 fn show(src: String) {
-    match eval(src) {
-        Ok(v) => println("{src} = {v}"),
-        Err(e) => println("{src}: error: {e}")
-    }
+    match eval(src) { Ok(v) => println("{src} = {v}"), Err(e) => println("{src}: error: {e}") }
 }
 
 fn main() -> Int {

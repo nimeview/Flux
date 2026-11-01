@@ -124,10 +124,19 @@ pub(super) fn parse_stmt(
             }))
         }
         Rule::assign_stmt => {
-            let mut inner = pair.into_inner();
+            let mut inner = pair.into_inner().peekable();
             let name = parse_ident(source_id, inner.next().expect("assign name"));
+            let mut indices = Vec::new();
+            while let Some(p) = inner.next_if(|p| p.as_rule() == Rule::assign_index) {
+                indices.push(parse_expr(source_id, p.into_inner().next().expect("index")));
+            }
             let value = parse_expr(source_id, inner.next().expect("assign value"));
-            Some(Stmt::Assign(AssignStmt { name, value, span }))
+            Some(Stmt::Assign(AssignStmt {
+                name,
+                indices,
+                value,
+                span,
+            }))
         }
         Rule::emit_stmt => {
             let mut inner = pair.into_inner();

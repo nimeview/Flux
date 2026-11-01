@@ -97,7 +97,9 @@ break_stmt = @{ "break" ~ kw_end }
 continue_stmt = @{ "continue" ~ kw_end }
 
 let_stmt = { "let" ~ mut_modifier? ~ let_pattern ~ type_ann? ~ "=" ~ expr }
-assign_stmt = { ident ~ "=" ~ expr }
+// `x = v`, or an element: `xs[i] = v`, `grid[i][j] = v`, `m[k] = v`.
+assign_stmt = { ident ~ assign_index* ~ "=" ~ expr }
+assign_index = { "[" ~ expr ~ "]" }
 emit_stmt = { "emit" ~ ident ~ emit_args? }
 emit_args = { "(" ~ expr_list? ~ ")" }
 expr_stmt = { expr }

@@ -484,7 +484,12 @@ fn format_stmt(stmt: &Stmt, out: &mut String, level: usize) {
         }
         Stmt::Assign(a) => {
             indent(out, level);
-            out.push_str(&format!("{} = {}\n", a.name.name, expr_fmt(&a.value)));
+            let path: String = a
+                .indices
+                .iter()
+                .map(|i| format!("[{}]", expr_fmt(i)))
+                .collect();
+            out.push_str(&format!("{}{path} = {}\n", a.name.name, expr_fmt(&a.value)));
         }
         Stmt::Return(r) => {
             indent(out, level);

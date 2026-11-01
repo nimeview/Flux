@@ -46,6 +46,9 @@ pub struct SymbolTable {
     pub pending_bindings: Vec<crate::nodes::HirItem>,
     /// Every `impl` seen, checked against its trait once all traits are lowered.
     pub pending_impls: Vec<flux_syntax::ImplDecl>,
+    /// Builtins the compiler uses without an import (e.g. `set` for
+    /// `xs[i] = v`); not visible to name lookup.
+    hidden_builtins: HashMap<String, SymbolId>,
     /// Module-level `const` binding names (immutable, no reassignment).
     pub const_bindings: std::collections::HashSet<String>,
     /// Best-effort element type of array-valued module bindings (by name), used to
@@ -87,6 +90,7 @@ impl SymbolTable {
             pending_fns: Vec::new(),
             pending_bindings: Vec::new(),
             pending_impls: Vec::new(),
+            hidden_builtins: HashMap::new(),
             const_bindings: std::collections::HashSet::new(),
             array_elem_hints: HashMap::new(),
             constants: std::collections::HashSet::new(),
@@ -154,6 +158,26 @@ impl SymbolTable {
         self.all_names.insert(id, name.to_string());
         self.all_symbols.insert(id, symbol.clone());
         Ok(id)
+    }
+
+    /// The builtin `name` for compiler-generated code, independent of imports
+    /// and of any user binding with the same name.
+    pub fn hidden_builtin(&mut self, name: &str, span: Span) -> SymbolId {
+        if let Some(&id) = self.hidden_builtins.get(name) {
+            return id;
+        }
+        let id = SymbolId(self.next_id);
+        self.next_id += 1;
+        let symbol = Symbol {
+            id,
+            name: name.to_string(),
+            kind: SymbolKind::Builtin,
+            span,
+        };
+        self.all_names.insert(id, name.to_string());
+        self.all_symbols.insert(id, symbol);
+        self.hidden_builtins.insert(name.to_string(), id);
+        id
     }
 
     pub fn lookup(&self, name: &str) -> Option<&Symbol> {

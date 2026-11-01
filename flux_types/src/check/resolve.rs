@@ -77,6 +77,20 @@ pub(super) fn resolve_hir_type(
                     ok: Box::new(resolve_hir_type(ctx, &args[0], diagnostics)?),
                     err: Box::new(resolve_hir_type(ctx, &args[1], diagnostics)?),
                 })
+            } else if name == "Map" && args.len() == 2 {
+                let key = resolve_hir_type(ctx, &args[0], diagnostics)?;
+                if !is_map_key(&key) {
+                    diagnostics.push(FluxError::TypeMismatch {
+                        expected: "a map key type (an integer type, String, Bool, or Char)".into(),
+                        found: key.display(),
+                        span: span_to_miette(*span),
+                        source_id: span.source,
+                    });
+                }
+                Some(Type::Map {
+                    key: Box::new(key),
+                    value: Box::new(resolve_hir_type(ctx, &args[1], diagnostics)?),
+                })
             } else {
                 resolve_type_name(name, *span).ok()
             }
@@ -136,10 +150,20 @@ pub(crate) fn resolve_hir_type_simple(ty: &HirType) -> Type {
                     ok: Box::new(resolve_hir_type_simple(&args[0])),
                     err: Box::new(resolve_hir_type_simple(&args[1])),
                 }
+            } else if name == "Map" && args.len() == 2 {
+                Type::Map {
+                    key: Box::new(resolve_hir_type_simple(&args[0])),
+                    value: Box::new(resolve_hir_type_simple(&args[1])),
+                }
             } else {
                 Type::Error
             }
         }
         _ => Type::Error,
     }
+}
+
+/// Whether values of `ty` can be map keys.
+pub(crate) fn is_map_key(ty: &Type) -> bool {
+    ty.is_error() || ty.is_integer() || matches!(ty, Type::String | Type::Bool | Type::Char)
 }

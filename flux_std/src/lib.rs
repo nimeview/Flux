@@ -9,6 +9,7 @@ pub use modules::{
     export_in_std_module, is_std_module, std_module_exports, std_module_name, STD_MODULES,
 };
 
+use flux_value::MapKey;
 pub use flux_value::Value;
 
 pub const BUILTIN_FNS: &[&str] = &[
@@ -21,6 +22,11 @@ pub const BUILTIN_FNS: &[&str] = &[
     "range",
     "push",
     "set",
+    "map_new",
+    "map_has",
+    "map_remove",
+    "map_keys",
+    "map_values",
     "pop",
     "get",
     "map",
@@ -122,6 +128,21 @@ pub fn call_builtin_checked(
             return Some(call_builtin(name, args).ok_or(flux_value::ArithError::Overflow));
         }
         _ => {}
+    }
+    // `set(m, k, v)` on a map inserts or replaces `k`.
+    if name == "set" {
+        if let (Some(Value::Map(entries)), Some(k), Some(v)) =
+            (args.first(), args.get(1), args.get(2))
+        {
+            let key = MapKey::of(k)?;
+            if !entries.contains_key(&key) && entries.len() as u64 >= flux_value::MAX_COLLECTION_LEN
+            {
+                return Some(Err(flux_value::ArithError::AllocationLimit));
+            }
+            let mut entries = (**entries).clone();
+            entries.insert(key, (k.clone(), v.clone()));
+            return Some(Ok(Value::Map(std::sync::Arc::new(entries))));
+        }
     }
     // `set(xs, i, v)`: `xs` with element `i` replaced; `i` must be in range.
     if name == "set" {
@@ -228,6 +249,7 @@ pub fn call_builtin(name: &str, args: &[Value]) -> Option<Value> {
             let n = match args.first()? {
                 Value::String(s) => s.chars().count() as i64,
                 Value::Array(a) => a.len() as i64,
+                Value::Map(m) => m.len() as i64,
                 _ => return Some(Value::int_i64(0)),
             };
             Some(Value::int_i64(n))
@@ -246,14 +268,49 @@ pub fn call_builtin(name: &str, args: &[Value]) -> Option<Value> {
         }
         // `get(xs, i)`: `Some(xs[i])` when `0 <= i < len(xs)`, otherwise `None`.
         "get" => {
-            let item = match (args.first()?, int_arg(args.get(1))) {
-                (Value::Array(items), Some(i)) => {
-                    usize::try_from(i).ok().and_then(|i| items.get(i)).cloned()
-                }
+            let item = match (args.first()?, args.get(1)) {
+                (Value::Map(entries), Some(k)) => MapKey::of(k)
+                    .and_then(|key| entries.get(&key))
+                    .map(|(_, v)| v.clone()),
+                (Value::Array(items), k) => int_arg(k)
+                    .and_then(|i| usize::try_from(i).ok())
+                    .and_then(|i| items.get(i))
+                    .cloned(),
                 _ => None,
             };
             Some(Value::Option(item.map(Box::new)))
         }
+        // `Map[K, V]` operations. Keys are ordered (integers by value, strings
+        // by code point), so `map_keys`/`map_values` are deterministic.
+        "map_new" => Some(Value::Map(Default::default())),
+        "map_has" => match (args.first()?, args.get(1)?) {
+            (Value::Map(entries), k) => Some(Value::Bool(
+                MapKey::of(k).is_some_and(|key| entries.contains_key(&key)),
+            )),
+            _ => Some(Value::Bool(false)),
+        },
+        "map_remove" => match (args.first()?, args.get(1)?) {
+            (Value::Map(entries), k) => {
+                let mut entries = (**entries).clone();
+                if let Some(key) = MapKey::of(k) {
+                    entries.remove(&key);
+                }
+                Some(Value::Map(std::sync::Arc::new(entries)))
+            }
+            _ => None,
+        },
+        "map_keys" => match args.first()? {
+            Value::Map(entries) => Some(Value::array(
+                entries.values().map(|(k, _)| k.clone()).collect(),
+            )),
+            _ => Some(Value::array(vec![])),
+        },
+        "map_values" => match args.first()? {
+            Value::Map(entries) => Some(Value::array(
+                entries.values().map(|(_, v)| v.clone()).collect(),
+            )),
+            _ => Some(Value::array(vec![])),
+        },
         "pop" => {
             let mut arr = match args.first()? {
                 Value::Array(a) => a.to_vec(),

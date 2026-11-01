@@ -35,6 +35,13 @@ pub fn render(value: &Value) -> String {
         Value::Option(Some(v)) => format!("Some({})", render(v)),
         Value::Result(Ok(v)) => format!("Ok({})", render(v)),
         Value::Result(Err(v)) => format!("Err({})", render(v)),
+        Value::Map(entries) => {
+            let parts: Vec<String> = entries
+                .values()
+                .map(|(k, v)| format!("{}: {}", render(k), render(v)))
+                .collect();
+            format!("{{{}}}", parts.join(", "))
+        }
     }
 }
 

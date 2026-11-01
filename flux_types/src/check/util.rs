@@ -92,6 +92,10 @@ pub(crate) fn refine_unknown(a: &Type, b: &Type) -> Type {
         (Type::Empty, other) => other.clone(),
         (Type::Array(x), Type::Array(y)) => Type::Array(Box::new(refine_unknown(x, y))),
         (Type::Option(x), Type::Option(y)) => Type::Option(Box::new(refine_unknown(x, y))),
+        (Type::Map { key: ak, value: av }, Type::Map { key: bk, value: bv }) => Type::Map {
+            key: Box::new(refine_unknown(ak, bk)),
+            value: Box::new(refine_unknown(av, bv)),
+        },
         (Type::Result { ok: ao, err: ae }, Type::Result { ok: bo, err: be }) => Type::Result {
             ok: Box::new(refine_unknown(ao, bo)),
             err: Box::new(refine_unknown(ae, be)),
@@ -130,6 +134,7 @@ pub(crate) fn mentions_empty(ty: &Type) -> bool {
         Type::Empty => true,
         Type::Array(e) | Type::Option(e) | Type::Cell(e) | Type::Read(e) => mentions_empty(e),
         Type::Result { ok, err } => mentions_empty(ok) || mentions_empty(err),
+        Type::Map { key, value } => mentions_empty(key) || mentions_empty(value),
         _ => false,
     }
 }
@@ -160,6 +165,9 @@ pub(crate) fn types_compatible(expected: &Type, found: &Type) -> bool {
         // fits any type in either direction; `refine_unknown` fills it in.
         (_, Type::Empty) | (Type::Empty, _) => true,
         (Type::Array(e), Type::Array(f)) => types_compatible(e, f),
+        (Type::Map { key: ek, value: ev }, Type::Map { key: fk, value: fv }) => {
+            types_compatible(ek, fk) && types_compatible(ev, fv)
+        }
         (
             Type::Result {
                 ok: e_ok,

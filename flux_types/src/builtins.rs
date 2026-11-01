@@ -34,6 +34,13 @@ pub fn builtin_fn_type(name: &str) -> Option<Type> {
             ],
             ret: Box::new(Type::Array(Box::new(Type::Var("T".into())))),
         }),
+        "map_new" => Some(Type::Func {
+            params: vec![],
+            ret: Box::new(Type::Map {
+                key: Box::new(Type::Var("K".into())),
+                value: Box::new(Type::Var("V".into())),
+            }),
+        }),
         "get" => Some(Type::Func {
             params: vec![Type::Array(Box::new(Type::Var("T".into()))), Type::Int],
             ret: Box::new(Type::Option(Box::new(Type::Var("T".into())))),

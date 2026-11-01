@@ -5,14 +5,47 @@ use flux_syntax::BinaryOp;
 
 use crate::types::Type;
 
-use super::super::util::{numeric_compatible, unwrap_value_type, widen_numeric};
+use super::super::util::{numeric_compatible, types_compatible, unwrap_value_type, widen_numeric};
 
-fn equality_supported(ty: &Type) -> bool {
-    match ty {
-        Type::Bool | Type::Char | Type::String | Type::Unit => true,
-        Type::Enum { variants, .. } => variants.iter().all(|(_, payload)| payload.is_none()),
+/// Whether `==` is defined on values of `ty`: primitives, and compound
+/// types (arrays, `Option`, `Result`, structs, enums) of equatable parts.
+pub(crate) fn equality_supported(ty: &Type) -> bool {
+    equatable(ty, 0)
+}
+
+fn equatable(ty: &Type, depth: u32) -> bool {
+    // Recursive user types (a list enum) are equatable if their known parts
+    // are; stop descending rather than loop.
+    if depth > 16 {
+        return true;
+    }
+    let d = depth + 1;
+    match unwrap_value_type(ty) {
+        t if t.is_error() || t.is_integer() || t.is_float() => true,
+        Type::Bool | Type::Char | Type::String | Type::Unit | Type::Empty | Type::Var(_) => true,
+        Type::Array(inner) | Type::Option(inner) => equatable(&inner, d),
+        Type::Result { ok, err }
+        | Type::Map {
+            key: ok,
+            value: err,
+        } => equatable(&ok, d) && equatable(&err, d),
+        Type::Struct { fields, .. } => fields.iter().all(|(_, t)| equatable(t, d)),
+        Type::Enum { variants, .. } => variants
+            .iter()
+            .all(|(_, payload)| payload.as_ref().is_none_or(|t| equatable(t, d))),
         _ => false,
     }
+}
+
+/// Whether `l == r` type-checks: numbers of any widths, or one equatable
+/// type on both sides (inference placeholders such as `Result<Int, _>` vs
+/// `Result<_, String>` unify).
+pub(crate) fn equality_allowed(l: &Type, r: &Type) -> bool {
+    let (l, r) = (unwrap_value_type(l), unwrap_value_type(r));
+    l.is_error()
+        || r.is_error()
+        || numeric_compatible(&l, &r)
+        || (types_compatible(&l, &r) && types_compatible(&r, &l) && equality_supported(&l))
 }
 
 pub(super) fn infer_binary(
@@ -55,8 +88,7 @@ pub(super) fn infer_binary(
             }
         }
         BinaryOp::Eq | BinaryOp::Ne => {
-            let non_numeric_comparable = l == r && equality_supported(&l);
-            if numeric_compatible(&l, &r) || non_numeric_comparable {
+            if equality_allowed(&l, &r) {
                 Some(Type::Bool)
             } else {
                 diagnostics.push(FluxError::TypeMismatch {

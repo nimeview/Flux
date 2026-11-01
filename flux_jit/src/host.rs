@@ -96,10 +96,18 @@ pub extern "C" fn flux_jit_value_eq(tag_a: u64, data_a: u64, tag_b: u64, data_b:
     }
     match tag_a {
         TAG_STRING => (get_string(data_a) == get_string(data_b)) as u64,
-        TAG_ENUM => match (get_enum(data_a), get_enum(data_b)) {
-            (Some((ta, va, pa)), Some((tb, vb, pb))) => (ta == tb && va == vb && pa == pb) as u64,
-            _ => 0,
-        },
+        // Arrays and enums compare by content, as on the VM, not by heap id.
+        flux_value::TAG_ARRAY | TAG_ENUM => {
+            let a = tagged_to_value(TaggedVal {
+                tag: tag_a,
+                data: data_a,
+            });
+            let b = tagged_to_value(TaggedVal {
+                tag: tag_b,
+                data: data_b,
+            });
+            flux_value::values_equal(&a, &b) as u64
+        }
         _ => (data_a == data_b) as u64,
     }
 }

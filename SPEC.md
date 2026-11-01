@@ -158,7 +158,29 @@ An `impl` must match its trait (**E020**): the trait must be declared, and the i
 
 ### Indexing
 
-`xs[i]` is the element of array `xs` at integer index `i`, counting from 0: `names[0]`, `grid[1][0]`, `rows[i].field`, `f(x)[0]`. An index outside `0..len(xs)`, negative ones included, is the runtime error `index out of bounds`. Indexing a non-array or using a non-integer index is a type error (**E005**). To read without the possibility of an error, use `get(xs, i)`, which returns an `Option`. To change an element, use `xs = set(xs, i, v)`, which updates the array in place when `xs` is a local nobody else holds.
+`xs[i]` is the element of array `xs` at integer index `i`, counting from 0: `names[0]`, `grid[1][0]`, `rows[i].field`, `f(x)[0]`. An index outside `0..len(xs)`, negative ones included, is the runtime error `index out of bounds`. Indexing a non-array or using a non-integer index is a type error (**E005**). To read without the possibility of an error, use `get(xs, i)`, which returns an `Option`.
+
+**Element assignment.** `xs[i] = v`, `grid[i][j] = v`, and `m[k] = v` assign an element of a `let mut` local (or a source in a handler). They mean `xs = set(xs, i, v)`, and nested ones `grid = set(grid, i, set(grid[i], j, v))`, so the out-of-range and type rules of `set` apply. The array or map is updated in place when nobody else holds it, and a copy someone else holds keeps its old contents. In a nested assignment the index expressions are evaluated more than once.
+
+### Maps
+
+`Map[K, V]` maps keys to values. The key type `K` is an integer type, `String`, `Bool`, or `Char` (anything else is **E005**). A map is empty when created with `map_new()`; its type comes from an annotation (`let mut m: Map[String, Int] = map_new()`) or from the first `set`. Entries are kept in key order (integers by value, strings by code point), which makes `map_keys`, `map_values`, iteration over them, and the display form `{"a": 1, "b": 2}` deterministic.
+
+| Operation | Result |
+|-----------|--------|
+| `m[k]` | the value; a missing key is the runtime error `key not found` |
+| `get(m, k)` | `Some(v)` or `None` |
+| `set(m, k, v)`, `m[k] = v` | `m` with `k` set to `v` |
+| `len(m)` | number of entries |
+| `map_has(m, k)` | `Bool` |
+| `map_remove(m, k)` | `m` without `k` |
+| `map_keys(m)`, `map_values(m)` | arrays, in key order |
+
+Maps are equal when they have the same keys with equal values. The JIT has no form for maps, so code that receives or builds one runs on the VM. A map holds at most 10,000,000 entries.
+
+### Equality
+
+`==` and `!=` (and `assert_eq`) compare two values of the same type when that type is equatable: numbers (any widths, by value, Float by IEEE 754), `Bool`, `Char`, `String`, `()`, and arrays, `Option`, `Result`, structs, and enums whose parts are equatable. Compound values are equal when their parts are, by the same rules: `[0.0 / 0.0] == [0.0 / 0.0]` is `false`, and `Some([1]) == Some([1])` is `true`. Comparing functions, or values of different types, is a type error (**E005**).
 
 ### `if` and `match` as operands
 
@@ -219,7 +241,7 @@ fn add(a: String, b: String) -> Result[Int, String] {
 
 ### String interpolation
 
-`{…}` inside a string literal holds any expression: `"Hello, {name}!"`, `"x={p.x}"`, `"sum={a + b}"`, `"{label(7)}"`, even a nested string `"{"<{n}>"}"`. The value is shown as `to_string` (and `print`) would show it: numbers, `Bool`, `Char`, and `String` (a string's own text, without quotes). Any other type is a type error (**E005**). `\{` and `\}` write literal braces, and an empty `{}` is a parse error. No import is needed.
+`{…}` inside a string literal holds any expression: `"Hello, {name}!"`, `"x={p.x}"`, `"sum={a + b}"`, `"{label(7)}"`, even a nested string `"{"<{n}>"}"`. The value is shown as `to_string` (and `print`) would show it: a string's own text without quotes, and any other value in its display form (`[1, 2]`, `Some(3)`, `P { x: 1 }`, `{"a": 1}`). A function has no text form, so interpolating one is a type error (**E005**). `\{` and `\}` write literal braces, and an empty `{}` is a parse error. No import is needed.
 
 ### Destructuring let
 
@@ -243,8 +265,9 @@ Selective imports: `import io { println, read_line }`. Stdlib modules live under
 | Module | Symbols |
 |--------|---------|
 | `io` | `print`, `println`, `eprint`, `eprintln`, `args`, `read_line`, `read_file`, `write_file`, `append_file`, `file_exists` |
-| `collections` | `len`, `range`, `push`, `set`, `pop`, `get`, `map`, `filter`, `reduce` |
+| `collections` | `len`, `range`, `push`, `set`, `pop`, `get`, `map`, `filter`, `reduce`, `map_new`, `map_has`, `map_remove`, `map_keys`, `map_values` |
 | `math` | `abs`, `min`, `max`, `clamp`, `sqrt`, `floor`, `ceil`, `pow`, `assert`, `assert_eq` |
+| `testing` | `assert`, `assert_eq` (the same functions as in `math`) |
 | `str` | `str_len`, `str_split`, `str_chars`, `str_join`, `str_contains`, `str_trim`, `str_starts_with`, `str_ends_with`, `str_replace`, `str_to_lower`, `str_to_upper`, `to_string`, `parse_int`, `parse_float` |
 | `option` | `Some`, `None` |
 | `result` | `Ok`, `Err` |
@@ -335,6 +358,7 @@ A UTF-8 byte-order mark at the start of a file is ignored, like whitespace.
 | `flux repl [--jit]` | Interactive shell |
 | `flux check file.fl` | Type-check only |
 | `flux test [filter] [--jit]` | Run every `fn test_*()` in the project (see below) |
+| `flux lock [--check]` | Create or update `flux.lock` for path dependencies; `--check` only reports whether it is up to date (exit 1 if not) |
 | `--locked` (on `run`, `check`, `test`) | Require `flux.lock` to match the dependency tree; never write it (§9) |
 | `flux fmt file.fl [--write] [--check]` | Format source (`--check` fails if reformat needed) |
 | `flux migrate [--write] path` | Migrate v1 top-level bindings to v2 `let` / `let mut` |

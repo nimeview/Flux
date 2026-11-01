@@ -54,7 +54,32 @@ pub enum Value {
     },
     Option(Option<Box<Value>>),
     Result(Result<Box<Value>, Box<Value>>),
+    /// `Map[K, V]`, ordered by key; each entry keeps the key's own value
+    /// (with its integer width). Shared and copied on write, like arrays.
+    Map(std::sync::Arc<std::collections::BTreeMap<MapKey, (Value, Value)>>),
     Unit,
+}
+
+/// A map key: integers (any width, by value), `String`, `Bool`, or `Char`.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub enum MapKey {
+    Bool(bool),
+    Int(i128),
+    Char(u32),
+    String(String),
+}
+
+impl MapKey {
+    /// The key for `v`, or `None` for a value that cannot be a key.
+    pub fn of(v: &Value) -> Option<MapKey> {
+        match v {
+            Value::Bool(b) => Some(MapKey::Bool(*b)),
+            Value::Int { width, bits } => Some(MapKey::Int(int_to_i128(*width, *bits))),
+            Value::Char(c) => Some(MapKey::Char(*c)),
+            Value::String(s) => Some(MapKey::String(s.clone())),
+            _ => None,
+        }
+    }
 }
 
 impl Value {
@@ -124,6 +149,7 @@ impl Value {
             Self::UserEnum { .. } => "Enum",
             Self::Option(_) => "Option",
             Self::Result(_) => "Result",
+            Self::Map(_) => "Map",
             Self::Unit => "Unit",
         }
     }

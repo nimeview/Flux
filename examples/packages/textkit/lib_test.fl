@@ -1,0 +1,23 @@
+import testing { assert, assert_eq }
+
+import collections { len }
+
+import option { Some, None }
+
+import result { Ok, Err }
+
+import lib { parse, lookup, describe }
+
+fn test_parses_entries() {
+    match parse("a = 1\n# c\nb = x=y\n") {
+        Ok(es) => {
+            assert_eq(len(es), 2)
+            assert_eq(lookup(es, "b"), Some("x=y"))
+        },
+        Err(e) => assert_eq(describe(e), "")
+    }
+}
+
+fn test_reports_duplicates() {
+    match parse("a = 1\na = 2\n") { Ok(_) => assert(false), Err(e) => assert_eq(describe(e), "duplicate key `a`") }
+}

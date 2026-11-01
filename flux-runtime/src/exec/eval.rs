@@ -62,7 +62,21 @@ impl Executor {
                 }
                 Inst::Index => {
                     let index = stack_pop(stack, "Index index");
-                    let element = match (stack_pop(stack, "Index array"), index.as_int()) {
+                    let base = stack_pop(stack, "Index array");
+                    if let RuntimeValue::Map(entries) = &base {
+                        let found = flux_value::MapKey::of(&index)
+                            .and_then(|key| entries.get(&key))
+                            .map(|(_, v)| v.clone());
+                        match found {
+                            Some(v) => stack.push(v),
+                            None => {
+                                self.raise(flux_value::ArithError::KeyNotFound);
+                                return RuntimeValue::Unit;
+                            }
+                        }
+                        continue;
+                    }
+                    let element = match (base, index.as_int()) {
                         (RuntimeValue::Array(items), Some(i)) => {
                             usize::try_from(i).ok().and_then(|i| items.get(i).cloned())
                         }
@@ -209,6 +223,24 @@ impl Executor {
                     // Builtin `set` on an array: replace in place (copy only if
                     // shared), like `push`.
                     if name == "set" && args.len() == 3 && !self.functions.contains_key(name) {
+                        if let [RuntimeValue::Map(_), _, _] = args.as_slice() {
+                            let value = args.pop().unwrap_or(RuntimeValue::Unit);
+                            let key_value = args.pop().unwrap_or(RuntimeValue::Unit);
+                            if let (Some(RuntimeValue::Map(mut entries)), Some(key)) =
+                                (args.pop(), flux_value::MapKey::of(&key_value))
+                            {
+                                if !entries.contains_key(&key)
+                                    && entries.len() as u64 >= flux_value::MAX_COLLECTION_LEN
+                                {
+                                    self.raise(flux_value::ArithError::AllocationLimit);
+                                    return RuntimeValue::Unit;
+                                }
+                                std::sync::Arc::make_mut(&mut entries)
+                                    .insert(key, (key_value, value));
+                                stack.push(RuntimeValue::Map(entries));
+                            }
+                            continue;
+                        }
                         if let [RuntimeValue::Array(_), _, _] = args.as_slice() {
                             let value = args.pop().unwrap_or(RuntimeValue::Unit);
                             let index = args.pop().and_then(|i| i.as_int());

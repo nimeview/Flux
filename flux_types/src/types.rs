@@ -27,6 +27,11 @@ pub enum Type {
     Read(Box<Type>),
     Array(Box<Type>),
     Option(Box<Type>),
+    /// `Map[K, V]`; `K` is an integer type, `String`, `Bool`, or `Char`.
+    Map {
+        key: Box<Type>,
+        value: Box<Type>,
+    },
     Result {
         ok: Box<Type>,
         err: Box<Type>,
@@ -101,6 +106,7 @@ impl Type {
             Type::Read(inner) => format!("Read<{}>", inner.display()),
             Type::Array(inner) => format!("[{}]", inner.display()),
             Type::Option(inner) => format!("Option<{}>", inner.display()),
+            Type::Map { key, value } => format!("Map<{}, {}>", key.display(), value.display()),
             Type::Result { ok, err } => {
                 format!("Result<{}, {}>", ok.display(), err.display())
             }

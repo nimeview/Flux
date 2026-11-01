@@ -1,0 +1,73 @@
+// textkit: a small `key = value` config parser (with an internal module).
+import str { str_split, str_trim, str_join, parse_int }
+
+import collections { len, push, get }
+
+import option { Some, None }
+
+import result { Ok, Err }
+
+import strings { is_comment }
+
+pub struct Entry {
+    key: String,
+    value: String
+}
+
+pub enum ConfigError {
+    Malformed(Int),
+    Duplicate(String)
+}
+
+pub fn describe(e: ConfigError) -> String {
+    match e { Malformed(line) => "line {line}: expected `key = value`", Duplicate(key) => "duplicate key `{key}`" }
+}
+
+fn find(entries: [Entry], key: String) -> Option[Entry] {
+    for e in entries {
+        if e.key == key {
+            return Some(e)
+        }
+    }
+    None
+}
+
+pub fn parse(text: String) -> Result[[Entry], ConfigError] {
+    let lines = str_split(text, "\n")
+    let mut entries: [Entry] = []
+    let mut i = 0
+    while i < len(lines) {
+        let line = lines[i]
+        i = i + 1
+        if is_comment(line) {
+            continue
+        }
+        let parts = str_split(line, "=")
+        if len(parts) < 2 {
+            return Err(Malformed(i))
+        }
+        let key = str_trim(parts[0])
+        let mut rest: [String] = []
+        let mut j = 1
+        while j < len(parts) {
+            rest = push(rest, parts[j])
+            j = j + 1
+        }
+        let value = str_trim(str_join(rest, "="))
+        match find(entries, key) {
+            Some(_) => return Err(Duplicate(key)),
+            None => {
+                entries = push(entries, Entry { key: key, value: value })
+            }
+        }
+    }
+    Ok(entries)
+}
+
+pub fn lookup(entries: [Entry], key: String) -> Option[String] {
+    match find(entries, key) { Some(e) => Some(e.value), None => None }
+}
+
+pub fn lookup_int(entries: [Entry], key: String, default: Int) -> Result[Int, String] {
+    match lookup(entries, key) { Some(v) => parse_int(v), None => Ok(default) }
+}

@@ -72,5 +72,5 @@ fn lib_template(name: &str) -> String {
 }
 
 fn lib_test_template() -> String {
-    "// Run with `flux test`.\nimport math { assert_eq }\n\nimport lib { greet }\n\nfn test_greet() {\n    assert_eq(greet(\"flux\"), \"hello, flux!\")\n}\n".to_string()
+    "// Run with `flux test`.\nimport testing { assert_eq }\n\nimport lib { greet }\n\nfn test_greet() {\n    assert_eq(greet(\"flux\"), \"hello, flux!\")\n}\n".to_string()
 }

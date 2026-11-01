@@ -17,17 +17,22 @@ pub fn read_line() -> Value {
     }
 }
 
+/// The `Err` text of a failed file operation names the file.
+fn io_error(path: &str, e: std::io::Error) -> Value {
+    err_string(format!("{path}: {e}"))
+}
+
 pub fn read_file(path: &str) -> Value {
     match fs::read_to_string(path) {
         Ok(contents) => ok_string(contents),
-        Err(e) => err_string(e.to_string()),
+        Err(e) => io_error(path, e),
     }
 }
 
 pub fn write_file(path: &str, contents: &str) -> Value {
     match fs::write(path, contents) {
         Ok(()) => ok_unit(),
-        Err(e) => err_string(e.to_string()),
+        Err(e) => io_error(path, e),
     }
 }
 
@@ -35,9 +40,9 @@ pub fn append_file(path: &str, contents: &str) -> Value {
     match fs::OpenOptions::new().create(true).append(true).open(path) {
         Ok(mut file) => match file.write_all(contents.as_bytes()) {
             Ok(()) => ok_unit(),
-            Err(e) => err_string(e.to_string()),
+            Err(e) => io_error(path, e),
         },
-        Err(e) => err_string(e.to_string()),
+        Err(e) => io_error(path, e),
     }
 }
 

@@ -1,0 +1,7 @@
+// Internal helpers (not re-exported).
+import str { str_trim, str_starts_with }
+
+pub fn is_comment(line: String) -> Bool {
+    let t = str_trim(line)
+    t == "" || str_starts_with(t, "#")
+}

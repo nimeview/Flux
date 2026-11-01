@@ -65,6 +65,10 @@ fn example_sources_are_formatted() {
         "shapes_app/main.fl",
         "geometry/lib.fl",
         "geometry/geometry_test.fl",
+        "textkit/lib.fl",
+        "textkit/strings.fl",
+        "textkit/lib_test.fl",
+        "config_app/main.fl",
     ] {
         let out = flux(&["fmt", "--check", file], &packages());
         assert!(
@@ -72,5 +76,58 @@ fn example_sources_are_formatted() {
             "{file} is not fmt-clean: {}",
             text(&out.stderr)
         );
+    }
+}
+
+#[test]
+fn textkit_library_tests_pass() {
+    let out = flux(&["test"], &packages().join("textkit"));
+    assert!(
+        out.status.success(),
+        "{}{}",
+        text(&out.stdout),
+        text(&out.stderr)
+    );
+    assert!(
+        text(&out.stdout).contains("2 passed; 0 failed"),
+        "{}",
+        text(&out.stdout)
+    );
+}
+
+#[test]
+fn config_app_reads_a_config_through_its_dependency() {
+    // A library with an internal module, user types, `Result` errors, and
+    // `?`, consumed by an app through a locked path dependency.
+    let app = packages().join("config_app");
+    for engine in ["--vm", "--jit"] {
+        let out = flux(&["run", "--locked", engine, "--", "app.conf"], &app);
+        assert_eq!(
+            out.status.code(),
+            Some(0),
+            "{engine}: {}",
+            text(&out.stderr)
+        );
+        assert_eq!(
+            text(&out.stdout),
+            "api listens on 9000 (3 entries)\n",
+            "{engine}"
+        );
+        let out = flux(&["run", "--locked", engine, "--", "missing.conf"], &app);
+        assert_eq!(out.status.code(), Some(1), "{engine}");
+        assert!(
+            text(&out.stderr).contains("error: missing.conf: No such file or directory"),
+            "{engine}: {}",
+            text(&out.stderr)
+        );
+    }
+}
+
+#[test]
+fn flux_lock_check_reports_up_to_date_locks() {
+    for app in ["shapes_app", "config_app"] {
+        let out = flux(&["lock", "--check"], &packages().join(app));
+        assert!(out.status.success(), "{app}: {}", text(&out.stderr));
+        assert_eq!(text(&out.stdout), "flux.lock is up to date\n", "{app}");
     }
 }

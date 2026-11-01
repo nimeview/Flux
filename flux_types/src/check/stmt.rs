@@ -410,7 +410,9 @@ pub(super) fn check_stmt(
         }
         HirStmt::Assign(HirAssign { name, value, span }) => {
             if let Some(local_name) = names.get(name) {
-                if ctx.const_bindings.contains(local_name) {
+                // Only the module `const` itself: a local of the same name
+                // (`let mut x` in a function, beside `const x`) is assignable.
+                if ctx.const_bindings.contains(local_name) && module.contains_key(name) {
                     diagnostics.push(FluxError::AssignToImmutableLocal {
                         name: local_name.clone(),
                         span: span_to_miette(*span),
@@ -616,6 +618,18 @@ pub(super) fn reject_empty_array_binding(
     let ty = default_unknown_variants(&ty);
     if !mentions_empty(&ty) {
         return ty;
+    }
+    if matches!(unwrap_value_type(&ty), Type::Map { .. }) {
+        diagnostics.push(FluxError::TypeMismatch {
+            expected: "a type annotation, e.g. `let m: Map[String, Int] = map_new()`".into(),
+            found: "an empty map with no key or value type".into(),
+            span: span_to_miette(span),
+            source_id: span.source,
+        });
+        return Type::Map {
+            key: Box::new(Type::Error),
+            value: Box::new(Type::Error),
+        };
     }
     diagnostics.push(FluxError::TypeMismatch {
         expected: "an element type annotation, e.g. `let xs: [String] = []`".into(),

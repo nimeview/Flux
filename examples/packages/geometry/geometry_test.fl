@@ -1,4 +1,4 @@
-import math { assert, assert_eq }
+import testing { assert, assert_eq }
 
 import lib { Point, distance, perimeter }
 

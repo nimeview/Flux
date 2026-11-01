@@ -36,7 +36,9 @@ pub fn value_to_tagged(v: &Value) -> TaggedVal {
             TaggedVal::from_enum_id(store_enum(type_name, variant, p))
         }
         Value::Unit => TaggedVal::UNIT,
-        Value::UserStruct { .. } | Value::Option(_) | Value::Result(_) => TaggedVal::UNIT,
+        Value::UserStruct { .. } | Value::Option(_) | Value::Result(_) | Value::Map(_) => {
+            TaggedVal::UNIT
+        }
     }
 }
 
@@ -53,7 +55,7 @@ pub fn is_tag_representable(v: &Value) -> bool {
         | Value::Unit => true,
         Value::Array(items) => items.iter().all(is_tag_representable),
         Value::UserEnum { payload, .. } => payload.as_deref().is_none_or(is_tag_representable),
-        Value::UserStruct { .. } | Value::Option(_) | Value::Result(_) => false,
+        Value::UserStruct { .. } | Value::Option(_) | Value::Result(_) | Value::Map(_) => false,
     }
 }
 

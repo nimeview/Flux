@@ -858,15 +858,15 @@ let a = \"n={n}\"\nlet b = \"x={p.x} name={p.name}\"\nlet c = \"sum={n + 1}, hal
     }
     let failure = match compile(source_from(
         "<interp>",
-        "struct P { x: Int }\nconst p = P { x: 4 }\nlet a = \"p={p}\"\n",
+        "fn f(x: Int) -> Int { x }\nlet a = \"f={f}\"\n",
     )) {
-        Ok(_) => panic!("a struct was interpolated"),
+        Ok(_) => panic!("a function was interpolated"),
         Err(failure) => failure,
     };
     assert!(
         failure.diagnostics.errors.iter().any(|e| e
             .to_string()
-            .contains("a number, Bool, Char, or String inside `{…}`")),
+            .contains("a value with a text form inside `{…}` (not a function)")),
         "{:?}",
         failure.diagnostics.errors
     );
@@ -1114,7 +1114,7 @@ let a = sum(range(1000))\nlet b = grid()\nlet c = last([\"a\", \"b\", \"c\"])\n"
     assert!(
         messages
             .iter()
-            .any(|m| m.contains("expected `an array to index`, found `Int64`")),
+            .any(|m| m.contains("expected `an array or map to index`, found `Int64`")),
         "{messages:?}"
     );
     assert!(
@@ -1189,4 +1189,218 @@ fn none_pattern_matches_only_none() {
             "{mode:?}"
         );
     }
+}
+
+#[test]
+fn equality_is_structural_for_compound_values() {
+    // `==` only accepted primitives (not even `A == A` when the enum had a
+    // payload variant); the JIT compared arrays by heap id.
+    let src = "import option { Some, None }\nimport result { Ok, Err }\nimport collections { push }\n\
+struct P { x: Int }\nenum E { A, C(Int) }\n\
+fn same(a: [Int], b: [Int]) -> Bool { a == b }\n\
+fn build(n: Int) -> [Int] {\n    let mut xs: [Int] = []\n    let mut i = 0\n    while i < n {\n        xs = push(xs, i)\n        i = i + 1\n    }\n    xs\n}\n\
+let r1 = Some(1) == Some(1)\nlet r2 = [1, 2] != [1, 3]\nlet r3 = P { x: 1 } == P { x: 1 }\nlet r4 = A == A\nlet r5 = C(1) == C(2)\n\
+let r6 = Ok(1) == Err(\"e\")\nlet r7 = [0.0 / 0.0] == [0.0 / 0.0]\nlet r8 = [0.0] == [0.0 - 0.0]\nlet r9 = same(build(3), [0, 1, 2])\n";
+    let want = [true, true, true, true, false, false, false, true, true];
+    for mode in [
+        flux_runtime::ExecutionMode::Vm,
+        flux_runtime::ExecutionMode::Jit,
+    ] {
+        let compiled = flux_cli::pipeline::compile_with_mode(source_from("<eq>", src), mode)
+            .unwrap_or_else(|failure| panic!("{:?}", failure.diagnostics.errors));
+        for (i, want) in want.iter().enumerate() {
+            let name = format!("r{}", i + 1);
+            assert_eq!(
+                compiled.executor.get_value(&name),
+                Some(RuntimeValue::Bool(*want)),
+                "{name} {mode:?}"
+            );
+        }
+    }
+    let failure = match compile(source_from(
+        "<eq>",
+        "fn f(x: Int) -> Int { x }\nlet r = f == f\n",
+    )) {
+        Ok(_) => panic!("functions compared"),
+        Err(failure) => failure,
+    };
+    assert!(
+        failure
+            .diagnostics
+            .errors
+            .iter()
+            .any(|e| e.to_string().contains("compatible equality types")),
+        "{:?}",
+        failure.diagnostics.errors
+    );
+}
+
+#[test]
+fn maps_store_look_up_and_order_by_key() {
+    let src = "import str { str_split }\nimport collections { len, get, set, map_new, map_has, map_remove, map_keys, map_values }\nimport option { Some, None }\n\
+fn count(text: String) -> Map[String, Int] {\n    let mut m: Map[String, Int] = map_new()\n    for w in str_split(text, \" \") {\n        let n = match get(m, w) { Some(n) => n, None => 0 }\n        m = set(m, w, n + 1)\n    }\n    m\n}\n\
+const m = count(\"b a c a b a\")\n\
+let shown = \"{m}\"\nlet a = m[\"a\"]\nlet n = len(m)\nlet has_z = map_has(m, \"z\")\nlet keys = map_keys(m)\nlet total = len(map_values(m))\nlet smaller = len(map_remove(m, \"a\"))\nlet still = len(m)\n\
+let ints = \"{set(set(map_new(), 3, \"three\"), -1, \"minus\")}\"\n\
+let same = set(set(map_new(), 1, 2), 3, 4) == set(set(map_new(), 3, 4), 1, 2)\n";
+    for mode in [
+        flux_runtime::ExecutionMode::Vm,
+        flux_runtime::ExecutionMode::Jit,
+    ] {
+        let compiled = flux_cli::pipeline::compile_with_mode(source_from("<map>", src), mode)
+            .unwrap_or_else(|failure| panic!("{:?}", failure.diagnostics.errors));
+        let get = |name: &str| compiled.executor.get_value(name);
+        let s = |v: &str| Some(RuntimeValue::String(v.into()));
+        let i = |v: i64| Some(RuntimeValue::int_i64(v));
+        assert_eq!(
+            get("shown"),
+            s("{\"a\": 3, \"b\": 2, \"c\": 1}"),
+            "{mode:?}"
+        );
+        assert_eq!(get("a"), i(3), "{mode:?}");
+        assert_eq!(get("n"), i(3), "{mode:?}");
+        assert_eq!(get("has_z"), Some(RuntimeValue::Bool(false)), "{mode:?}");
+        assert_eq!(
+            get("keys"),
+            Some(RuntimeValue::array(
+                ["a", "b", "c"]
+                    .iter()
+                    .map(|k| RuntimeValue::String((*k).into()))
+                    .collect()
+            )),
+            "{mode:?}"
+        );
+        assert_eq!(get("total"), i(3), "{mode:?}");
+        assert_eq!(get("smaller"), i(2), "{mode:?}");
+        assert_eq!(get("still"), i(3), "{mode:?}");
+        assert_eq!(get("ints"), s("{-1: \"minus\", 3: \"three\"}"), "{mode:?}");
+        assert_eq!(get("same"), Some(RuntimeValue::Bool(true)), "{mode:?}");
+        let failure = match flux_cli::pipeline::compile_with_mode(
+            source_from("<map>", "import collections { set, map_new }\nconst m = set(map_new(), \"a\", 1)\nlet r = m[\"b\"]\n"),
+            mode,
+        ) {
+            Ok(_) => panic!("{mode:?}: a missing key was found"),
+            Err(failure) => failure,
+        };
+        assert!(
+            failure.diagnostics.errors.iter().any(|e| matches!(
+                e,
+                FluxError::Runtime { message, .. } if message.contains("key not found")
+            )),
+            "{mode:?}: {:?}",
+            failure.diagnostics.errors
+        );
+    }
+    let failure = match compile(source_from(
+        "<map>",
+        "import collections { map_new }\nlet a = map_new()\nlet b: Map[Float, Int] = map_new()\n",
+    )) {
+        Ok(_) => panic!("ill-typed maps compiled"),
+        Err(failure) => failure,
+    };
+    let messages: Vec<String> = failure
+        .diagnostics
+        .errors
+        .iter()
+        .map(|e| e.to_string())
+        .collect();
+    assert!(
+        messages
+            .iter()
+            .any(|m| m.contains("let m: Map[String, Int] = map_new()")),
+        "{messages:?}"
+    );
+    assert!(
+        messages.iter().any(|m| m.contains("a map key type")),
+        "{messages:?}"
+    );
+}
+
+#[test]
+fn element_assignment_updates_arrays_and_maps() {
+    let src = "import collections { range, len, map_new }\n\
+fn arrays() -> String {\n    let mut xs = [1, 2, 3]\n    let ys = xs\n    xs[0] = 10\n    xs[len(xs) - 1] = xs[0] + 5\n    let mut grid = [[0, 0], [0, 0]]\n    grid[1][0] = 7\n    \"{xs} {ys} {grid}\"\n}\n\
+fn maps() -> String {\n    let mut m: Map[String, [Int]] = map_new()\n    m[\"a\"] = [1]\n    m[\"a\"] = [2, 3]\n    m[\"b\"] = []\n    \"{m}\"\n}\n\
+fn fill(n: Int) -> Int {\n    let mut big = range(n)\n    let mut i = 0\n    while i < len(big) {\n        big[i] = i * 2\n        i = i + 1\n    }\n    big[n - 1]\n}\n\
+let a = arrays()\nlet b = maps()\nlet c = fill(100000)\n";
+    for mode in [
+        flux_runtime::ExecutionMode::Vm,
+        flux_runtime::ExecutionMode::Jit,
+    ] {
+        let compiled = flux_cli::pipeline::compile_with_mode(source_from("<assign>", src), mode)
+            .unwrap_or_else(|failure| panic!("{:?}", failure.diagnostics.errors));
+        assert_eq!(
+            compiled.executor.get_value("a"),
+            Some(RuntimeValue::String(
+                "[10, 2, 15] [1, 2, 3] [[0, 0], [7, 0]]".into()
+            )),
+            "{mode:?}"
+        );
+        assert_eq!(
+            compiled.executor.get_value("b"),
+            Some(RuntimeValue::String("{\"a\": [2, 3], \"b\": []}".into())),
+            "{mode:?}"
+        );
+        assert_eq!(
+            compiled.executor.get_value("c"),
+            Some(RuntimeValue::int_i64(199998)),
+            "{mode:?}"
+        );
+    }
+    let failure = match compile(source_from(
+        "<assign>",
+        "import collections { map_new }\nfn f() -> Int {\n    let xs = [1]\n    xs[0] = 2\n    let mut m: Map[String, Int] = map_new()\n    m[1] = 2\n    let mut ys = [1]\n    ys[0] = \"s\"\n    0\n}\n",
+    )) {
+        Ok(_) => panic!("ill-typed element assignments compiled"),
+        Err(failure) => failure,
+    };
+    let messages: Vec<String> = failure
+        .diagnostics
+        .errors
+        .iter()
+        .map(|e| e.to_string())
+        .collect();
+    for want in [
+        "cannot assign to immutable local `xs`",
+        "type mismatch: expected `String`, found `Int64`",
+        "type mismatch: expected `Int64`, found `String`",
+    ] {
+        assert!(
+            messages.iter().any(|m| m.contains(want)),
+            "{want}: {messages:?}"
+        );
+    }
+}
+
+#[test]
+fn testing_module_exports_assertions() {
+    let src = "import testing { assert, assert_eq }\nfn test_it() {\n    assert(true)\n    assert_eq([1, 2], [1, 2])\n}\n";
+    compile(source_from("<testing>", src))
+        .unwrap_or_else(|failure| panic!("{:?}", failure.diagnostics.errors));
+}
+
+#[test]
+fn a_local_may_shadow_a_module_const_and_be_assigned() {
+    // The const check went by name, so `let mut x` beside `const x` could not
+    // be reassigned ("cannot assign to immutable local").
+    let src = "const x = 5\nfn f() -> Int {\n    let mut x = 1\n    x = 2\n    x\n}\nlet r = f()\n";
+    let compiled = compile(source_from("<shadow>", src))
+        .unwrap_or_else(|failure| panic!("{:?}", failure.diagnostics.errors));
+    assert_eq!(
+        compiled.executor.get_value("r"),
+        Some(RuntimeValue::int_i64(2))
+    );
+    // The const itself stays immutable.
+    let failure = match compile(source_from(
+        "<shadow>",
+        "const x = 5\nfn f() -> Int {\n    x = 6\n    1\n}\nlet r = f()\n",
+    )) {
+        Ok(_) => panic!("a const was reassigned"),
+        Err(failure) => failure,
+    };
+    assert!(failure
+        .diagnostics
+        .errors
+        .iter()
+        .any(|e| matches!(e, FluxError::AssignToImmutableLocal { .. })));
 }

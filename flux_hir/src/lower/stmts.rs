@@ -444,11 +444,48 @@ fn lower_stmt(
             span,
             ..
         }) => lower_local_decl(pattern, ty, value, *span, *mutable, symbols, diagnostics),
-        Stmt::Assign(AssignStmt { name, value, span }) => {
+        Stmt::Assign(AssignStmt {
+            name,
+            indices,
+            value,
+            span,
+        }) => {
             let sym = resolve_name(&name.name, *span, symbols, diagnostics)?;
             let mut reads_reactive = false;
             let scope = tracking_scope(ctx);
-            let value = lower_expr(value, symbols, scope, diagnostics, &mut reads_reactive)?;
+            let mut value = lower_expr(value, symbols, scope, diagnostics, &mut reads_reactive)?;
+            if !indices.is_empty() {
+                // `x[i][j] = v` is `x = set(x, i, set(x[i], j, v))`: the
+                // builtin `set` (arrays and maps), whose `x = set(x, …)` form
+                // updates in place.
+                let indices = indices
+                    .iter()
+                    .map(|i| lower_expr(i, symbols, scope, diagnostics, &mut reads_reactive))
+                    .collect::<Option<Vec<_>>>()?;
+                let set_fn = symbols.hidden_builtin("set", *span);
+                let mut containers = vec![HirExpr::Ident {
+                    symbol: sym,
+                    span: name.span,
+                }];
+                for index in &indices[..indices.len() - 1] {
+                    let outer = containers.last().cloned()?;
+                    containers.push(HirExpr::Index {
+                        base: Box::new(outer),
+                        index: Box::new(index.clone()),
+                        span: *span,
+                    });
+                }
+                for (container, index) in containers.into_iter().zip(indices).rev() {
+                    value = HirExpr::Call {
+                        callee: Box::new(HirExpr::Ident {
+                            symbol: set_fn,
+                            span: *span,
+                        }),
+                        args: vec![container, index, value],
+                        span: *span,
+                    };
+                }
+            }
             let _ = reads_reactive;
             Some(vec![HirStmt::Assign(HirAssign {
                 name: sym,

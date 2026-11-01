@@ -1,29 +1,42 @@
 // A reactive shopping cart: events, derived values, and a watch, driven
 // from `main`.
 import io { println }
+
 import collections { len, push, reduce, map, filter }
 
-struct Item { name: String, price: Int, qty: Int }
+struct Item {
+    name: String,
+    price: Int,
+    qty: Int
+}
 
 event Add(item: Item)
+
 event Clear
+
 event Discount(pct: Int)
 
 let mut items: [Item] = []
+
 let mut discount = 0
 
 derived count = len(items)
+
 derived subtotal = reduce(map(items, |i| i.price * i.qty), 0, |a, b| a + b)
+
 derived total = subtotal - subtotal * discount / 100
+
 derived expensive = len(filter(items, |i| i.price > 100))
 
 on Add { item ->
     items = push(items, item)
 }
+
 on Clear {
     items = []
     discount = 0
 }
+
 on Discount { pct ->
     discount = if pct > 50 { 50 } else { pct }
 }
@@ -36,7 +49,7 @@ fn main() -> Int {
     emit Add(Item { name: "pen", price: 3, qty: 4 })
     emit Add(Item { name: "lamp", price: 150, qty: 1 })
     emit Discount(80)
-    emit Clear
+    emit Clear()
     emit Add(Item { name: "book", price: 20, qty: 2 })
     0
 }

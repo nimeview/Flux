@@ -1,0 +1,34 @@
+// config_app: reads a config through the local `textkit` package.
+// Run: flux run --locked -- app.conf
+import io { println, eprintln, read_file, args }
+
+import collections { get, len }
+
+import option { Some, None }
+
+import result { Ok, Err }
+
+import textkit { Entry, parse, lookup, lookup_int, describe }
+
+fn run(path: String) -> Result[Int, String] {
+    let text = read_file(path)?
+    let entries = match parse(text) {
+        Ok(es) => es,
+        Err(e) => return Err(describe(e))
+    }
+    let name = match lookup(entries, "name") { Some(n) => n, None => "anonymous" }
+    let port = lookup_int(entries, "port", 8080)?
+    println("{name} listens on {port} ({len(entries)} entries)")
+    Ok(0)
+}
+
+fn main() -> Int {
+    let path = match get(args(), 0) { Some(p) => p, None => "app.conf" }
+    match run(path) {
+        Ok(code) => code,
+        Err(e) => {
+            eprintln("error: {e}")
+            1
+        }
+    }
+}

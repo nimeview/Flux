@@ -60,6 +60,9 @@ pub(super) fn infer_builtin_call(
             Some((2, 2))
         }
         "clamp" | "str_replace" | "set" => Some((3, 3)),
+        "map_new" => Some((0, 0)),
+        "map_has" | "map_remove" => Some((2, 2)),
+        "map_keys" | "map_values" => Some((1, 1)),
         "read_line" | "None" | "args" => Some((0, 0)),
         "len" | "Some" | "Ok" | "Err" | "pop" | "str_len" | "str_trim" | "str_chars"
         | "to_string" | "parse_int" | "parse_float" | "str_to_lower" | "str_to_upper" | "abs"
@@ -103,9 +106,9 @@ pub(super) fn infer_builtin_call(
             if let Some(arg) = args.first() {
                 let got = infer_expr(ctx, arg, types, names, source, diagnostics)?;
                 let inner = unwrap_value_type(&got);
-                if !matches!(inner, Type::Array(_) | Type::String) {
+                if !matches!(inner, Type::Array(_) | Type::String | Type::Map { .. }) {
                     diagnostics.push(FluxError::TypeMismatch {
-                        expected: "Array or String".into(),
+                        expected: "Array, String, or Map".into(),
                         found: got.display(),
                         span: span_to_miette(arg.span()),
                         source_id: arg.span().source,
@@ -217,6 +220,57 @@ pub(super) fn infer_builtin_call(
                 }
             }
             Some(Type::Array(Box::new(elem_ty)))
+        }
+        // On a map: `set(m, k, v)` / `get(m, k)`; otherwise the array forms.
+        "set" | "get" if first_is_map(ctx, args, types, names, source) => {
+            let (key_ty, value_ty) =
+                infer_map_arg(ctx, args.first(), types, names, source, diagnostics);
+            let got_key = check_arg(ctx, args.get(1), &key_ty, types, names, source, diagnostics);
+            if name == "set" {
+                let got_value = check_arg(
+                    ctx,
+                    args.get(2),
+                    &value_ty,
+                    types,
+                    names,
+                    source,
+                    diagnostics,
+                );
+                // `set(map_new(), k, v)` fixes the unknown key/value types,
+                // as `push([], x)` does for an array.
+                Some(Type::Map {
+                    key: Box::new(super::super::util::refine_unknown(&key_ty, &got_key)),
+                    value: Box::new(super::super::util::refine_unknown(&value_ty, &got_value)),
+                })
+            } else {
+                Some(Type::Option(Box::new(value_ty)))
+            }
+        }
+        "map_new" => Some(Type::Map {
+            key: Box::new(Type::Empty),
+            value: Box::new(Type::Empty),
+        }),
+        "map_has" | "map_remove" => {
+            let (key_ty, value_ty) =
+                infer_map_arg(ctx, args.first(), types, names, source, diagnostics);
+            let _ = check_arg(ctx, args.get(1), &key_ty, types, names, source, diagnostics);
+            Some(if name == "map_has" {
+                Type::Bool
+            } else {
+                Type::Map {
+                    key: Box::new(key_ty),
+                    value: Box::new(value_ty),
+                }
+            })
+        }
+        "map_keys" | "map_values" => {
+            let (key_ty, value_ty) =
+                infer_map_arg(ctx, args.first(), types, names, source, diagnostics);
+            Some(Type::Array(Box::new(if name == "map_keys" {
+                key_ty
+            } else {
+                value_ty
+            })))
         }
         "set" => {
             let elem_ty = infer_array_elem(ctx, args.first(), types, names, source, diagnostics);
@@ -556,19 +610,8 @@ pub(super) fn infer_builtin_call(
                 let right = infer_expr(ctx, &args[1], types, names, source, diagnostics)?;
                 let left = unwrap_value_type(&left);
                 let right = unwrap_value_type(&right);
-                let same_comparable_type = left == right
-                    && match &left {
-                        Type::Bool | Type::Char | Type::String | Type::Unit => true,
-                        Type::Enum { variants, .. } => {
-                            variants.iter().all(|(_, payload)| payload.is_none())
-                        }
-                        _ => false,
-                    };
-                let comparable = left.is_error()
-                    || right.is_error()
-                    || super::super::util::numeric_compatible(&left, &right)
-                    || same_comparable_type;
-                if !comparable {
+                // The same rule as `==`.
+                if !super::ops::equality_allowed(&left, &right) {
                     diagnostics.push(FluxError::TypeMismatch {
                         expected: "compatible equality types".into(),
                         found: format!("{} and {}", left.display(), right.display()),
@@ -634,4 +677,73 @@ pub(super) fn infer_builtin_call(
             Some(Type::Error)
         }
     }
+}
+
+/// Whether the first argument is a map (without reporting anything).
+fn first_is_map(
+    ctx: &TypeCheckContext,
+    args: &[HirExpr],
+    types: &HashMap<SymbolId, Type>,
+    names: &HashMap<SymbolId, String>,
+    source: SourceId,
+) -> bool {
+    let mut quiet = DiagnosticBag::new();
+    args.first()
+        .and_then(|a| infer_expr(ctx, a, types, names, source, &mut quiet))
+        .is_some_and(|t| matches!(unwrap_value_type(&t), Type::Map { .. }))
+}
+
+/// Key and value types of a `Map` argument (an error elsewhere).
+fn infer_map_arg(
+    ctx: &TypeCheckContext,
+    arg: Option<&HirExpr>,
+    types: &HashMap<SymbolId, Type>,
+    names: &HashMap<SymbolId, String>,
+    source: SourceId,
+    diagnostics: &mut DiagnosticBag,
+) -> (Type, Type) {
+    let Some(arg) = arg else {
+        return (Type::Error, Type::Error);
+    };
+    match infer_expr(ctx, arg, types, names, source, diagnostics).map(|t| unwrap_value_type(&t)) {
+        Some(Type::Map { key, value }) => (*key, *value),
+        Some(other) => {
+            if !other.is_error() {
+                diagnostics.push(FluxError::TypeMismatch {
+                    expected: "Map".into(),
+                    found: other.display(),
+                    span: span_to_miette(arg.span()),
+                    source_id: arg.span().source,
+                });
+            }
+            (Type::Error, Type::Error)
+        }
+        None => (Type::Error, Type::Error),
+    }
+}
+
+/// Type-check `arg` against `expected` (a map key or value); its type.
+fn check_arg(
+    ctx: &TypeCheckContext,
+    arg: Option<&HirExpr>,
+    expected: &Type,
+    types: &HashMap<SymbolId, Type>,
+    names: &HashMap<SymbolId, String>,
+    source: SourceId,
+    diagnostics: &mut DiagnosticBag,
+) -> Type {
+    let Some(arg) = arg else { return Type::Error };
+    let Some(got) = infer_expr(ctx, arg, types, names, source, diagnostics) else {
+        return Type::Error;
+    };
+    let got = unwrap_value_type(&got);
+    if !expected.is_error() && !got.is_error() && !types_compatible(expected, &got) {
+        diagnostics.push(FluxError::TypeMismatch {
+            expected: expected.display(),
+            found: got.display(),
+            span: span_to_miette(arg.span()),
+            source_id: arg.span().source,
+        });
+    }
+    got
 }

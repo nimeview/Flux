@@ -732,6 +732,18 @@ pub(crate) fn infer_expr(
             let base_ty = infer_expr(ctx, base, types, names, source, diagnostics)?;
             let index_ty = infer_expr(ctx, index, types, names, source, diagnostics)?;
             let index_ty = unwrap_value_type(&index_ty);
+            // `m[k]`: the key must have the map's key type.
+            if let Type::Map { key, value } = unwrap_value_type(&base_ty) {
+                if !index_ty.is_error() && !key.is_error() && !types_compatible(&key, &index_ty) {
+                    diagnostics.push(FluxError::TypeMismatch {
+                        expected: key.display(),
+                        found: index_ty.display(),
+                        span: span_to_miette(index.span()),
+                        source_id: index.span().source,
+                    });
+                }
+                return Some(*value);
+            }
             if !index_ty.is_error() && !index_ty.is_integer() {
                 diagnostics.push(FluxError::TypeMismatch {
                     expected: "an integer index".into(),
@@ -745,7 +757,7 @@ pub(crate) fn infer_expr(
                 Type::Error => Some(Type::Error),
                 other => {
                     diagnostics.push(FluxError::TypeMismatch {
-                        expected: "an array to index".into(),
+                        expected: "an array or map to index".into(),
                         found: other.display(),
                         span: span_to_miette(*span),
                         source_id: span.source,
@@ -757,12 +769,11 @@ pub(crate) fn infer_expr(
         HirExpr::ToText { expr, span } => {
             let inner = infer_expr(ctx, expr, types, names, source, diagnostics)?;
             let inner = unwrap_value_type(&inner);
-            let printable = inner.is_error()
-                || numeric_type(&inner).is_some()
-                || matches!(inner, Type::Bool | Type::Char | Type::String);
+            // Shown as `to_string` shows it; a function has no text form.
+            let printable = !matches!(inner, Type::Func { .. });
             if !printable {
                 diagnostics.push(FluxError::TypeMismatch {
-                    expected: "a number, Bool, Char, or String inside `{…}`".into(),
+                    expected: "a value with a text form inside `{…}` (not a function)".into(),
                     found: inner.display(),
                     span: span_to_miette(*span),
                     source_id: span.source,

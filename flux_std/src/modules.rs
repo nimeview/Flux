@@ -20,7 +20,20 @@ pub const STD_MODULES: &[(&str, &[&str])] = &[
     (
         "collections",
         &[
-            "len", "range", "push", "set", "pop", "get", "map", "filter", "reduce",
+            "len",
+            "range",
+            "push",
+            "set",
+            "pop",
+            "get",
+            "map",
+            "filter",
+            "reduce",
+            "map_new",
+            "map_has",
+            "map_remove",
+            "map_keys",
+            "map_values",
         ],
     ),
     (
@@ -58,6 +71,8 @@ pub const STD_MODULES: &[(&str, &[&str])] = &[
         ],
     ),
     ("option", &["Some", "None"]),
+    // Also exported by `math` (where they first lived).
+    ("testing", &["assert", "assert_eq"]),
     ("result", &["Ok", "Err"]),
 ];
 

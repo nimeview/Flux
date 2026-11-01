@@ -64,6 +64,8 @@ pub enum ArithError {
     Internal = 9,
     /// An array index outside `0..len` (`xs[i]`, `set(xs, i, v)`).
     IndexOutOfBounds = 10,
+    /// `m[k]` for a key the map does not have.
+    KeyNotFound = 11,
 }
 
 impl ArithError {
@@ -78,6 +80,7 @@ impl ArithError {
             8 => Self::CallDepthExceeded,
             9 => Self::Internal,
             10 => Self::IndexOutOfBounds,
+            11 => Self::KeyNotFound,
             _ => Self::InvalidOperands,
         }
     }
@@ -94,6 +97,7 @@ impl ArithError {
             Self::CallDepthExceeded => "call depth limit exceeded (10000 nested calls)",
             Self::Internal => "internal error (a bug in Flux; please report it)",
             Self::IndexOutOfBounds => "index out of bounds",
+            Self::KeyNotFound => "key not found",
         }
     }
 }
@@ -270,9 +274,59 @@ pub fn compare(a: &Value, b: &Value) -> Option<Ordering> {
 
 /// Language equality (`==`): numeric values compare by value across widths,
 /// floats follow IEEE (`NaN != NaN`, `0.0 == -0.0`), everything else structurally.
+///
+/// Compound values (arrays, `Option`, `Result`, structs, enums) are equal
+/// when their parts are, by these same rules: a nested `NaN` is unequal too.
 pub fn values_equal(a: &Value, b: &Value) -> bool {
-    match (num(a), num(b)) {
-        (Some(_), Some(_)) => compare(a, b) == Some(Ordering::Equal),
+    if let (Some(_), Some(_)) = (num(a), num(b)) {
+        return compare(a, b) == Some(Ordering::Equal);
+    }
+    let both = |x: Option<&Value>, y: Option<&Value>| match (x, y) {
+        (Some(x), Some(y)) => values_equal(x, y),
+        (None, None) => true,
+        _ => false,
+    };
+    match (a, b) {
+        (Value::Array(x), Value::Array(y)) => {
+            x.len() == y.len() && x.iter().zip(y.iter()).all(|(x, y)| values_equal(x, y))
+        }
+        (Value::Option(x), Value::Option(y)) => both(x.as_deref(), y.as_deref()),
+        (Value::Result(Ok(x)), Value::Result(Ok(y)))
+        | (Value::Result(Err(x)), Value::Result(Err(y))) => values_equal(x, y),
+        (Value::Result(_), Value::Result(_)) => false,
+        (
+            Value::UserStruct {
+                type_name: ta,
+                fields: fa,
+            },
+            Value::UserStruct {
+                type_name: tb,
+                fields: fb,
+            },
+        ) => {
+            ta == tb
+                && fa.len() == fb.len()
+                && fa
+                    .iter()
+                    .all(|(k, v)| fb.get(k).is_some_and(|w| values_equal(v, w)))
+        }
+        (
+            Value::UserEnum {
+                type_name: ta,
+                variant: va,
+                payload: pa,
+            },
+            Value::UserEnum {
+                type_name: tb,
+                variant: vb,
+                payload: pb,
+            },
+        ) => ta == tb && va == vb && both(pa.as_deref(), pb.as_deref()),
+        (Value::Map(x), Value::Map(y)) => {
+            x.len() == y.len()
+                && x.iter()
+                    .all(|(k, (_, v))| y.get(k).is_some_and(|(_, w)| values_equal(v, w)))
+        }
         _ => a == b,
     }
 }

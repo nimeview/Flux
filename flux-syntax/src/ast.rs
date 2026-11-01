@@ -224,6 +224,9 @@ pub struct LetStmt {
 #[derive(Debug, Clone)]
 pub struct AssignStmt {
     pub name: Ident,
+    /// `name[i]…[j] = value`: the element path, outermost first (empty for a
+    /// plain assignment).
+    pub indices: Vec<Expr>,
     pub value: Expr,
     pub span: Span,
 }
