@@ -198,6 +198,28 @@ pub enum FluxError {
         span: miette::SourceSpan,
         source_id: SourceId,
     },
+
+    #[error("no method `{method}` for type `{ty}`")]
+    #[diagnostic(
+        code(flux::E019),
+        help("methods come from `impl Trait for {ty}`; add one that defines `{method}`")
+    )]
+    UnknownMethod {
+        method: String,
+        ty: String,
+        #[label("method not found")]
+        span: miette::SourceSpan,
+        source_id: SourceId,
+    },
+
+    #[error("{message}")]
+    #[diagnostic(code(flux::E020))]
+    InvalidImpl {
+        message: String,
+        #[label("in this impl")]
+        span: miette::SourceSpan,
+        source_id: SourceId,
+    },
 }
 
 impl FluxError {
@@ -220,11 +242,13 @@ impl FluxError {
             | Self::UnknownExport { source_id, .. }
             | Self::ImmutableLetReadsReactive { source_id, .. }
             | Self::SideEffectInDerived { source_id, .. }
-            | Self::Runtime { source_id, .. } => *source_id,
+            | Self::Runtime { source_id, .. }
+            | Self::UnknownMethod { source_id, .. }
+            | Self::InvalidImpl { source_id, .. } => *source_id,
         }
     }
 
-    /// Stable diagnostic code (`E000`–`E018`).
+    /// Stable diagnostic code (`E000`–`E020`).
     pub fn code(&self) -> &'static str {
         match self {
             Self::Parse { .. } => "E000",
@@ -245,6 +269,8 @@ impl FluxError {
             Self::ImmutableLetReadsReactive { .. } => "E016",
             Self::SideEffectInDerived { .. } => "E017",
             Self::Runtime { .. } => "E018",
+            Self::UnknownMethod { .. } => "E019",
+            Self::InvalidImpl { .. } => "E020",
         }
     }
 
@@ -269,6 +295,8 @@ impl FluxError {
             | Self::ImmutableLetReadsReactive { span, .. }
             | Self::SideEffectInDerived { span, .. }
             | Self::Runtime { span, .. }
+            | Self::UnknownMethod { span, .. }
+            | Self::InvalidImpl { span, .. }
             | Self::DuplicateDefinition { span, .. } => *span,
         };
         crate::warning::span_from_miette(source_id, miette_span)
@@ -291,8 +319,17 @@ impl DiagnosticBag {
         Self::default()
     }
 
+    /// Adds `error` unless the same error at the same place was already
+    /// reported (the checker may infer one expression more than once).
     pub fn push(&mut self, error: FluxError) {
-        self.errors.push(error);
+        let key = (error.code(), error.to_string(), error.label_span());
+        let duplicate = self
+            .errors
+            .iter()
+            .any(|e| (e.code(), e.to_string(), e.label_span()) == key);
+        if !duplicate {
+            self.errors.push(error);
+        }
     }
 
     pub fn push_warning(&mut self, warning: crate::FluxWarning) {

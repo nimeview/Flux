@@ -337,20 +337,21 @@ impl JitEngine {
             call_scratch_pairs = call_scratch_pairs
                 .max(func.params.len() as u32)
                 .max(max_call_argc_in_stmts(&func.body));
-            if !func_is_numeric(&func.body, &HashSet::new()) {
+            // A body may call functions compiled before it, and itself.
+            let mut callable: HashSet<String> = jit_fn_ids.keys().cloned().collect();
+            callable.insert(func.name.clone());
+            if !func_is_numeric(&func.body, &callable) {
                 engine.note_fallback(&func.name, "non_numeric_fn_body");
                 continue;
             }
             let label = format!("fn_{}", func.name);
-            let mut ext_layout = engine.layout.name_to_idx.clone();
-            for (i, p) in func.params.iter().enumerate() {
-                ext_layout.insert(p.clone(), host_slots + i as u32);
-            }
             match engine.compile_fn_stmts(
                 &label,
                 &func.body,
-                &ext_layout,
+                &engine.layout.name_to_idx.clone(),
                 host_slots,
+                &func.params,
+                Some(&func.name),
                 &jit_fn_ids,
                 &host_funcs,
             ) {
@@ -406,6 +407,8 @@ impl JitEngine {
                 &watch.body,
                 &engine.layout.name_to_idx.clone(),
                 host_slots,
+                &[],
+                None,
                 &jit_fn_ids,
                 &host_funcs,
             ) {
@@ -419,20 +422,20 @@ impl JitEngine {
             }
             let label = format!("stmt___on_{i}");
             let key = format!("__on_{i}");
-            let mut ext_layout = engine.layout.name_to_idx.clone();
-            let compile_host_slots = if let Some(param) = &handler.param {
-                ext_layout.insert(param.clone(), host_slots);
+            // The parameter arrives in the first scratch slot and is copied
+            // into a local on entry, so calls may reuse the slot.
+            let params: Vec<String> = handler.param.iter().cloned().collect();
+            if !params.is_empty() {
                 engine.handler_param_slots.insert(key.clone(), host_slots);
                 call_scratch_pairs = call_scratch_pairs.max(1);
-                host_slots + 1
-            } else {
-                host_slots
-            };
+            }
             if let Some((expr, _)) = engine.compile_fn_stmts(
                 &label,
                 &handler.body,
-                &ext_layout,
-                compile_host_slots,
+                &engine.layout.name_to_idx.clone(),
+                host_slots,
+                &params,
+                None,
                 &jit_fn_ids,
                 &host_funcs,
             ) {
@@ -569,7 +572,7 @@ impl JitEngine {
         builder.seal_block(entry);
 
         let slots_ptr = builder.block_params(entry)[0];
-        let mut locals = HashMap::new();
+        let mut locals = super::locals::JitLocals::default();
         let (tag, data) = lower_insts(
             code,
             name_to_idx,
@@ -597,12 +600,19 @@ impl JitEngine {
         ))
     }
 
+    /// Compile a statement body. `params` arrive in the scratch slots from
+    /// `host_slots` on and are copied into locals at entry, because a call
+    /// from the body passes its own arguments through the same slots.
+    /// `self_name` makes the function callable from its own body.
+    #[allow(clippy::too_many_arguments)]
     fn compile_fn_stmts(
         &mut self,
         label: &str,
         body: &[IrStmt],
         name_to_idx: &HashMap<String, u32>,
         host_slots: u32,
+        params: &[String],
+        self_name: Option<&str>,
         jit_fns: &HashMap<String, FuncId>,
         host_funcs: &HostFuncs,
     ) -> Option<(CompiledExpr, FuncId)> {
@@ -611,6 +621,10 @@ impl JitEngine {
             .module
             .declare_function(label, Linkage::Local, &sig)
             .ok()?;
+        let mut callable = jit_fns.clone();
+        if let Some(name) = self_name {
+            callable.insert(name.to_string(), func_id);
+        }
         let ptr_ty = self.module.target_config().pointer_type();
 
         let mut ctx = self.module.make_context();
@@ -624,14 +638,19 @@ impl JitEngine {
         builder.seal_block(entry);
 
         let slots_ptr = builder.block_params(entry)[0];
-        let mut locals = HashMap::new();
+        let mut locals = super::locals::JitLocals::default();
+        for (i, param) in params.iter().enumerate() {
+            let pair =
+                super::emit::load_tagged(slots_ptr, host_slots + i as u32, ptr_ty, &mut builder);
+            locals.set(param, pair, &mut builder);
+        }
         let (tag, data) = lower_stmts(
             body,
             name_to_idx,
             slots_ptr,
             ptr_ty,
             host_slots,
-            jit_fns,
+            &callable,
             host_funcs,
             &self.event_indices,
             &self.tables,

@@ -48,5 +48,5 @@ Deferred and not claimed:
 - **1.0** freezes the stable surface listed above. After that, breaking changes require a major version.
 - **Package `version`** in `flux.toml` is informational. Dependencies are resolved by path, not by version.
 - **`flux.lock`** carries a format `version` (currently `1`). A lock in any other format or content counts as stale: it is rewritten, or rejected under `--locked`. Checksums hash LF-normalized text, so CRLF checkouts match.
-- **Not compatibility surfaces:** the `.flux/cache` IR cache (keyed by a compiler fingerprint, so any rebuilt compiler starts fresh), the IR, JIT internals, and the diagnostic message wording. Diagnostic codes (`E000`–`E018`) are stable within a minor release.
+- **Not compatibility surfaces:** the `.flux/cache` IR cache (keyed by a compiler fingerprint, so any rebuilt compiler starts fresh), the IR, JIT internals, and the diagnostic message wording. Diagnostic codes (`E000`–`E020`) are stable within a minor release.
 

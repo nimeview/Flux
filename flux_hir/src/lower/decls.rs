@@ -42,6 +42,7 @@ pub(super) fn lower_impl_fns(
     diagnostics: &mut DiagnosticBag,
 ) -> Option<Vec<HirItem>> {
     let target_name = type_name_str(&decl.target_type);
+    symbols.pending_impls.push(decl.clone());
     let mut items = Vec::new();
     for method in &decl.methods {
         let mangled = format!(
@@ -68,6 +69,113 @@ pub(super) fn lower_impl_fns(
         }
     }
     Some(items)
+}
+
+/// E020: an `impl` names a declared trait and defines exactly its methods,
+/// with the trait's parameter count, non-receiver parameter types, and return
+/// type. Traits have no `Self`, so the receiver's type is not compared; an
+/// omitted return type is inferred and not compared either.
+pub(super) fn validate_impls(
+    impls: &[ImplDecl],
+    items: &[HirItem],
+    names: &std::collections::HashMap<crate::SymbolId, String>,
+    diagnostics: &mut DiagnosticBag,
+) {
+    let traits: std::collections::HashMap<&str, &HirTrait> = items
+        .iter()
+        .filter_map(|item| match item {
+            HirItem::Trait(t) => names.get(&t.name).map(|n| (n.as_str(), t)),
+            _ => None,
+        })
+        .collect();
+    let mut push = |message: String, span: flux_diagnostics::Span| {
+        diagnostics.push(FluxError::InvalidImpl {
+            message,
+            span: span_to_miette(span),
+            source_id: span.source,
+        });
+    };
+    for imp in impls {
+        let trait_name = &imp.trait_name.name;
+        let target = type_name_str(&imp.target_type);
+        let Some(declared) = traits.get(trait_name.as_str()) else {
+            push(format!("unknown trait `{trait_name}`"), imp.trait_name.span);
+            continue;
+        };
+        for method in &imp.methods {
+            let name = &method.name.name;
+            let Some((_, params, ret)) = declared.methods.iter().find(|(n, ..)| n == name) else {
+                push(
+                    format!("trait `{trait_name}` has no method `{name}`"),
+                    method.name.span,
+                );
+                continue;
+            };
+            if params.len() != method.params.len() {
+                push(
+                    format!(
+                        "`{name}` takes {} parameter(s), but trait `{trait_name}` declares {}",
+                        method.params.len(),
+                        params.len()
+                    ),
+                    method.name.span,
+                );
+                continue;
+            }
+            for (want, param) in params.iter().zip(&method.params).skip(1) {
+                let got = lower_type(&param.ty);
+                if type_key(want) != type_key(&got) {
+                    push(
+                        format!(
+                            "parameter `{}` of `{name}` is `{}`, but trait `{trait_name}` declares `{}`",
+                            param.name.name,
+                            type_key(&got),
+                            type_key(want)
+                        ),
+                        param.span,
+                    );
+                }
+            }
+            if let (Some(want), Some(got)) = (ret, method.ret.as_ref().map(lower_type)) {
+                if type_key(want) != type_key(&got) {
+                    push(
+                        format!(
+                            "`{name}` returns `{}`, but trait `{trait_name}` declares `{}`",
+                            type_key(&got),
+                            type_key(want)
+                        ),
+                        method.name.span,
+                    );
+                }
+            }
+        }
+        for (name, ..) in &declared.methods {
+            if !imp.methods.iter().any(|m| &m.name.name == name) {
+                push(
+                    format!("impl of `{trait_name}` for `{target}` is missing method `{name}`"),
+                    imp.span,
+                );
+            }
+        }
+    }
+}
+
+/// A type's spelling with `Int`/`Int64` and `Float`/`Float64` unified.
+fn type_key(ty: &HirType) -> String {
+    match ty {
+        HirType::Named { name, .. } | HirType::TypeParam { name, .. } => match name.as_str() {
+            "Int64" => "Int".into(),
+            "Float64" => "Float".into(),
+            _ => name.clone(),
+        },
+        HirType::Generic { name, args, .. } => format!(
+            "{name}[{}]",
+            args.iter().map(type_key).collect::<Vec<_>>().join(", ")
+        ),
+        HirType::Array { inner, .. } => format!("[{}]", type_key(inner)),
+        HirType::Option { inner, .. } => format!("Option[{}]", type_key(inner)),
+        HirType::Result { ok, err, .. } => format!("Result[{}, {}]", type_key(ok), type_key(err)),
+    }
 }
 
 fn type_name_str(ty: &TypeName) -> String {

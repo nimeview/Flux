@@ -45,6 +45,23 @@ pub(super) fn slot_data_addr(
     slot_pair_addr(base, pair_idx, 1, ptr_ty, b)
 }
 
+pub(super) fn load_tagged(
+    slots_ptr: Value,
+    pair_idx: u32,
+    ptr_ty: Type,
+    b: &mut FunctionBuilder<'_>,
+) -> (Value, Value) {
+    let tag_addr = slot_tag_addr(slots_ptr, pair_idx, ptr_ty, b);
+    let data_addr = slot_data_addr(slots_ptr, pair_idx, ptr_ty, b);
+    let tag = b
+        .ins()
+        .load(types::I64, MemFlagsData::trusted(), tag_addr, 0);
+    let data = b
+        .ins()
+        .load(types::I64, MemFlagsData::trusted(), data_addr, 0);
+    (tag, data)
+}
+
 pub(super) fn store_tagged(
     slots_ptr: Value,
     pair_idx: u32,

@@ -34,9 +34,9 @@ pub(crate) fn stack_pop_opt(stack: &mut Vec<RuntimeValue>, context: &str) -> Opt
 
 pub(crate) fn resolve_load(
     name: &str,
-    locals: &std::collections::HashMap<String, RuntimeValue>,
+    locals: &crate::exec::Locals,
     graph: &ReactiveGraph,
-    functions: &std::collections::HashMap<String, CompiledFunction>,
+    functions: &std::collections::HashMap<String, std::sync::Arc<CompiledFunction>>,
 ) -> RuntimeValue {
     if let Some(v) = locals.get(name) {
         return v.clone();

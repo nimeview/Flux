@@ -132,7 +132,9 @@ Arithmetic (`+ - * / %`), comparisons, boolean ops (`&&`, `||`, `!`), `if e { a 
 
 ### Trait method dispatch
 
-`impl Trait for Type { fn method(self: Type, ...) -> U { ... } }` methods can be called with `expr.method(args)` syntax (e.g. `(42).to_string()`, `42.to_string()`). Dispatch is resolved statically: the typechecker matches the receiver's type against registered `impl` blocks, so multiple types can implement the same method name unambiguously (e.g. `Display` for both `Int` and `String`).
+`impl Trait for Type { fn method(self: Type, ...) -> U { ... } }` methods can be called with `expr.method(args)` syntax (e.g. `(42).to_string()`, `shape.area()`). Dispatch is static. The typechecker resolves the receiver's type (a literal, a variable, a parameter, any expression; primitives, structs, and enums) against the `impl` blocks and compiles the call as a direct call to that impl, so several types can implement the same method name.
+
+An `impl` must match its trait (**E020**): the trait must be declared, and the impl must define exactly the trait's methods, with the same parameter count, the same types for parameters after the receiver, and the same return type. Traits have no `Self` type, so the receiver's type is not compared. A method that no impl provides for the receiver's type is **E019**.
 
 ### Reactive semantics
 
@@ -212,7 +214,7 @@ Selective imports: `import io { println, read_line }`. Stdlib modules live under
 | `map` | `fn([T], fn(T) -> U) -> [U]` | Transform each element |
 | `filter` | `fn([T], fn(T) -> Bool) -> [T]` | Keep elements matching predicate |
 | `reduce` | `fn([T], U, fn(U, T) -> U) -> U` | Fold to a single accumulator |
-| `abs`, `min`, `max`, `clamp`, `sqrt`, `floor`, `ceil`, `pow` | math | Numeric intrinsics (`Int`/`Float` overloads where applicable) |
+| `abs`, `min`, `max`, `clamp`, `sqrt`, `floor`, `ceil`, `pow` | math | Numeric intrinsics (`Int`/`Float` overloads where applicable). Integer arguments of `min`/`max`/`clamp` promote like arithmetic operands; a value that does not fit the promoted width (`min(-1, 0u64)`) is `integer overflow` |
 | `str_len` | `fn(String) -> Int` | Length in Unicode scalar values |
 | `str_split` | `fn(String, String) -> [String]` | Split on separator |
 | `str_join` | `fn([String], String) -> String` | Join with separator |
@@ -253,6 +255,9 @@ Selective imports: `import io { println, read_line }`. Stdlib modules live under
 | E011 | `watch`/`on` outside module level |
 | E016 | `let` without `mut` cannot be reassigned (use `let mut`) |
 | E017 | Side effect (`print`, I/O) in derived expression |
+| E018 | Runtime error (overflow, division by zero, failed assertion, …) |
+| E019 | No method with that name for the receiver's type |
+| E020 | `impl` does not match its trait (unknown trait, missing, extra, or mismatched method) |
 
 ## 8. Tooling
 
@@ -304,6 +309,6 @@ Pipeline: **parse → resolve imports → HIR → monomorphize → typecheck →
 - **Entry point.** If the root module defines `fn main()` or `fn main() -> Int` (no parameters; any other signature is a compile error), `flux run` calls it after module initialization. The program then owns stdout: no banner and no binding dump are printed. The exit status is `main`'s `Int` result (it must be 0..=255; another value is an error with status 1), or 0 for a `Unit` `main`. A runtime error in `main` is reported on stderr with status 1. Without `main`, `flux run` prints the module's reactive bindings as before.
 - `const` bindings are compile-time constants: a pure `fn` (including `main`) may read them. Reading `let` / `let mut` module bindings from a pure `fn` is still a reactive read (E002).
 - JIT opt-in: `--jit`, environment `FLUX_JIT=1`, or `[run] jit = true` in `flux.toml`
-- Cranelift JIT compiles numeric derived nodes, pure functions, and eligible `watch`/`on` bodies with tag-aware int/float arithmetic; `LazyIf` branch deps collected statically; VM fallback for strings, pattern matching, and ineligible IR
+- Cranelift JIT compiles numeric derived nodes, pure functions (including loops, early `return`, recursion, and calls to functions defined earlier), and eligible `watch`/`on` bodies with tag-aware int/float arithmetic. `LazyIf` branch deps are collected statically. Strings, pattern matching, `break`/`continue`, and other ineligible IR fall back to the VM
 - `flux run --jit --verbose` prints JIT compile/fallback statistics
 - WASM backend: stub module header (future: full codegen)

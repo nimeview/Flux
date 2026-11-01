@@ -24,6 +24,10 @@ use crate::ExecutionMode;
 
 use values::{code_has_lazy_if, eval_const, watch_should_run};
 
+/// A function's local bindings. Keys are compiler-generated names, so the
+/// fast non-DoS-resistant hasher is safe here.
+pub(crate) type Locals = rustc_hash::FxHashMap<String, RuntimeValue>;
+
 #[cfg(feature = "jit")]
 fn tagged_to_runtime(tv: flux_value::TaggedVal) -> RuntimeValue {
     flux_value::tagged_to_value(tv)
@@ -51,7 +55,8 @@ impl From<(RuntimeValue, FlowControl)> for StmtResult {
 pub struct Executor {
     pub graph: ReactiveGraph,
     pub program: CompiledProgram,
-    functions: HashMap<String, CompiledFunction>,
+    /// Shared so a call can run a body without cloning it.
+    functions: HashMap<String, std::sync::Arc<CompiledFunction>>,
     /// `program.nodes` index by binding name.
     node_index: HashMap<String, usize>,
     in_watch: bool,
@@ -64,6 +69,8 @@ pub struct Executor {
     tracking_scope: Option<HashSet<crate::graph::NodeId>>,
     /// First runtime error; once set, evaluation unwinds and nothing else runs.
     trap: Option<RuntimeError>,
+    /// Operand stacks reused across expression evaluations.
+    stack_pool: Vec<Vec<RuntimeValue>>,
 }
 
 impl Executor {
@@ -79,7 +86,7 @@ impl Executor {
         let functions = program
             .functions
             .iter()
-            .map(|f| (f.name.clone(), f.clone()))
+            .map(|f| (f.name.clone(), std::sync::Arc::new(f.clone())))
             .collect();
 
         let mut graph = ReactiveGraph::new();
@@ -148,13 +155,14 @@ impl Executor {
             changed_nodes: HashSet::new(),
             backend,
             tracking_scope: None,
+            stack_pool: Vec::new(),
             trap: None,
         };
         // Initial values are assigned without propagation; derived values and
         // watches then run once over the fully initialized graph.
         this.defer_propagation = true;
         for stmt in &this.program.init_stmts.clone() {
-            this.run_stmt(stmt, &mut HashMap::new());
+            this.run_stmt(stmt, &mut Locals::default());
             if this.trap.is_some() {
                 let binding = match stmt {
                     flux_ir::IrStmt::Assign { target, .. } => Some(target.as_str()),
@@ -283,7 +291,7 @@ impl Executor {
         self.defer_propagation = true;
         for idx in handler_indices {
             let handler = self.program.on_handlers[idx].clone();
-            let mut locals = HashMap::new();
+            let mut locals = Locals::default();
             if let Some(param) = &handler.param {
                 locals.insert(param.clone(), payload.clone());
             }
@@ -406,7 +414,7 @@ impl Executor {
             .get(name)
             .map(|&idx| self.program.nodes[idx].code.clone())
             .unwrap_or_default();
-        self.eval_expr(&code, &mut HashMap::new())
+        self.eval_expr(&code, &mut Locals::default())
     }
 
     fn derived_uses_lazy_if(&self, name: &str) -> bool {
@@ -431,13 +439,13 @@ impl Executor {
         self.graph.set_derived_deps(id, new_deps);
     }
 
-    pub(super) fn record_dep_load(&mut self, name: &str, locals: &HashMap<String, RuntimeValue>) {
-        if locals.contains_key(name) {
-            return;
-        }
+    pub(super) fn record_dep_load(&mut self, name: &str, locals: &Locals) {
         let Some(tracked) = self.tracking_scope.as_mut() else {
             return;
         };
+        if locals.contains_key(name) {
+            return;
+        }
         if let Some(&id) = self.graph.name_to_id.get(name) {
             tracked.insert(id);
         }
@@ -512,7 +520,7 @@ impl Executor {
         &mut self,
         idx: usize,
         body: &[flux_ir::IrStmt],
-        locals: &mut HashMap<String, RuntimeValue>,
+        locals: &mut Locals,
         param: RuntimeValue,
     ) -> bool {
         // Handler slots hold tagged handles until `apply_jit_assignments` reads them.
@@ -550,7 +558,7 @@ impl Executor {
         for (event, payload) in emits {
             self.emit(&event, payload);
         }
-        self.apply_jit_assignments(body, &mut HashMap::new(), &slots);
+        self.apply_jit_assignments(body, &mut Locals::default(), &slots);
         true
     }
 
@@ -558,7 +566,7 @@ impl Executor {
     fn apply_jit_assignments(
         &mut self,
         body: &[flux_ir::IrStmt],
-        locals: &mut HashMap<String, RuntimeValue>,
+        locals: &mut Locals,
         slots: &[u64],
     ) {
         use flux_ir::IrStmt;
@@ -585,7 +593,7 @@ impl Executor {
     fn apply_jit_assignments(
         &mut self,
         _body: &[flux_ir::IrStmt],
-        _locals: &mut HashMap<String, RuntimeValue>,
+        _locals: &mut Locals,
         _slots: &[u64],
     ) {
     }
@@ -623,7 +631,7 @@ impl Executor {
         for idx in watch_indices {
             let body = self.program.watches[idx].body.clone();
             if !self.try_run_jit_watch(idx, &body) {
-                self.run_stmts(&body, &mut HashMap::new());
+                self.run_stmts(&body, &mut Locals::default());
             }
             if self.trap.is_some() {
                 self.set_trap_context("`watch`", None);

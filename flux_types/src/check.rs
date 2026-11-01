@@ -16,6 +16,7 @@ mod tests;
 mod cycles;
 mod effects;
 mod infer;
+mod methods;
 mod resolve;
 pub(crate) mod state;
 mod stmt;
@@ -35,9 +36,14 @@ use state::TypeCheckContext;
 use stmt::{check_binding, check_block, check_if, check_return_types};
 use util::types_compatible;
 
+pub use methods::resolve_method_calls;
+
 #[derive(Debug, Clone)]
 pub struct TypedProgram {
     pub types: HashMap<SymbolId, Type>,
+    /// The impl function each `recv.method(…)` call resolved to, by call span;
+    /// [`resolve_method_calls`] turns these into direct calls.
+    pub method_calls: HashMap<flux_diagnostics::Span, SymbolId>,
 }
 
 pub fn typecheck_program(
@@ -456,7 +462,10 @@ pub fn typecheck_program(
     if diagnostics.has_errors() {
         None
     } else {
-        Some(TypedProgram { types })
+        Some(TypedProgram {
+            types,
+            method_calls: ctx.method_calls.take(),
+        })
     }
 }
 

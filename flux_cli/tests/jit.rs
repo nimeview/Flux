@@ -363,3 +363,104 @@ let s = sqrt(81.0)
     assert_eq!(jit.executor.get_number("s"), Some(9.0));
     reset_jit();
 }
+
+#[test]
+fn jit_parity_locals_reassigned_in_loops_and_branches() {
+    // Locals used to be plain SSA values: a loop header never saw the body's
+    // reassignment, so `while i < n { i = i + 1 }` hung under the JIT.
+    let _guard = jit_test_lock();
+    reset_jit();
+    let src = "\
+fn count(n: Int) -> Int {\n    let mut i = 0\n    while i < n {\n        i = i + 1\n    }\n    i\n}\n\
+fn pick(c: Int) -> Int {\n    let mut x = 1\n    if c > 0 {\n        x = 2\n    }\n    x\n}\n\
+fn evens(n: Int) -> Int {\n    let mut i = 0\n    let mut acc = 0\n    while i < n {\n        let sq = i * i\n        if i % 2 == 0 {\n            acc = acc + sq\n        } else {\n            acc = acc - 1\n        }\n        i = i + 1\n    }\n    acc\n}\n\
+fn grid(n: Int) -> Int {\n    let mut total = 0\n    let mut r = 0\n    while r < n {\n        let mut c = 0\n        while c < n {\n            total = total + r * c\n            c = c + 1\n        }\n        r = r + 1\n    }\n    total\n}\n\
+fn sum_for(xs: [Int]) -> Int {\n    let mut t = 0\n    for x in xs {\n        t = t + x\n    }\n    t\n}\n\
+let a = count(5)\nlet b = pick(3)\nlet c = pick(0)\nlet d = evens(10)\nlet e = grid(4)\nlet f = sum_for([1, 2, 3, 4])\n\
+derived all = a + b + c + d + e + f\n";
+    let source = source_from("<jit-locals>", src);
+    let vm = compile_with_mode(source.clone(), ExecutionMode::Vm)
+        .unwrap_or_else(|e| panic!("VM compile failed: {:?}", e.diagnostics.errors));
+    let jit = compile_with_mode(source, ExecutionMode::Jit)
+        .unwrap_or_else(|e| panic!("JIT compile failed: {:?}", e.diagnostics.errors));
+    for (name, want) in [
+        ("a", 5),
+        ("b", 2),
+        ("c", 1),
+        ("d", 115),
+        ("e", 36),
+        ("f", 10),
+    ] {
+        let want = Some(RuntimeValue::int_i64(want));
+        assert_eq!(vm.executor.get_value(name), want, "VM `{name}`");
+        assert_eq!(jit.executor.get_value(name), want, "JIT `{name}`");
+    }
+    let stats = jit.executor.jit_stats().expect("jit stats");
+    for f in ["count", "pick", "evens", "grid"] {
+        assert!(
+            !stats.fallback_nodes.iter().any(|n| n == f),
+            "`{f}` should be JIT-compiled: {stats:?}"
+        );
+    }
+}
+
+#[test]
+fn jit_parity_call_does_not_clobber_handler_param() {
+    // Calls pass arguments through shared slots; the handler's own parameter
+    // must survive a call made before it is read.
+    let _guard = jit_test_lock();
+    reset_jit();
+    let src = "fn sq(v: Int) -> Int { v * v }\nevent Add(x: Int)\nlet mut total = 0\non Add { x ->\n    total = sq(3) + x\n}\nderived t = total\n";
+    for mode in [ExecutionMode::Vm, ExecutionMode::Jit] {
+        let mut compiled = compile_with_mode(source_from("<param>", src), mode)
+            .unwrap_or_else(|e| panic!("{mode:?} compile failed: {:?}", e.diagnostics.errors));
+        eprintln!("mode {mode:?} compiled");
+        compiled.executor.emit("Add", RuntimeValue::int_i64(10));
+        eprintln!("mode {mode:?} emitted");
+        assert_eq!(
+            compiled.executor.get_value("total"),
+            Some(RuntimeValue::int_i64(19)),
+            "{mode:?}"
+        );
+    }
+}
+
+#[test]
+fn jit_parity_calls_recursion_and_early_return() {
+    // `return` used to fall through to the next statement under the JIT, and
+    // a call between JIT functions overwrote the caller's parameters.
+    let _guard = jit_test_lock();
+    reset_jit();
+    let src = "\
+fn sign(x: Int) -> Int {\n    if x > 0 {\n        return 1\n    }\n    if x < 0 {\n        return -1\n    }\n    0\n}\n\
+fn sq(v: Int) -> Int { v * v }\n\
+fn after_call(a: Int, b: Int) -> Int { sq(7) + a * 10 + b }\n\
+fn fib(n: Int) -> Int {\n    if n < 2 {\n        n\n    } else {\n        fib(n - 1) + fib(n - 2)\n    }\n}\n\
+fn first_square_over(limit: Int) -> Int {\n    let mut i = 0\n    while i < 100 {\n        if sq(i) > limit {\n            return i\n        }\n        i = i + 1\n    }\n    -1\n}\n\
+let a = sign(5)\nlet b = sign(-3)\nlet c = sign(0)\nlet d = after_call(2, 3)\nlet e = fib(15)\nlet f = first_square_over(50)\n\
+derived all = a + b + c + d + e + f\n";
+    let source = source_from("<jit-calls>", src);
+    let vm = compile_with_mode(source.clone(), ExecutionMode::Vm)
+        .unwrap_or_else(|e| panic!("VM compile failed: {:?}", e.diagnostics.errors));
+    let jit = compile_with_mode(source, ExecutionMode::Jit)
+        .unwrap_or_else(|e| panic!("JIT compile failed: {:?}", e.diagnostics.errors));
+    for (name, want) in [
+        ("a", 1),
+        ("b", -1),
+        ("c", 0),
+        ("d", 72),
+        ("e", 610),
+        ("f", 8),
+    ] {
+        let want = Some(RuntimeValue::int_i64(want));
+        assert_eq!(vm.executor.get_value(name), want, "VM `{name}`");
+        assert_eq!(jit.executor.get_value(name), want, "JIT `{name}`");
+    }
+    let stats = jit.executor.jit_stats().expect("jit stats");
+    for f in ["sign", "after_call", "fib", "first_square_over"] {
+        assert!(
+            !stats.fallback_nodes.iter().any(|n| n == f),
+            "`{f}` should be JIT-compiled: {stats:?}"
+        );
+    }
+}

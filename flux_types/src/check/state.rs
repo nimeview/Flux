@@ -22,6 +22,8 @@ pub struct TypeCheckContext {
     builtin_symbols: std::collections::HashSet<SymbolId>,
     effectful_functions: std::collections::HashSet<SymbolId>,
     pub(crate) const_bindings: std::collections::HashSet<String>,
+    /// `recv.method(…)` call spans resolved to their impl function.
+    pub(crate) method_calls: std::cell::RefCell<HashMap<flux_diagnostics::Span, SymbolId>>,
 }
 
 impl TypeCheckContext {

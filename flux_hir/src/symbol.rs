@@ -44,6 +44,8 @@ pub struct SymbolTable {
     pub closure_counter: u32,
     pub pending_fns: Vec<crate::nodes::HirItem>,
     pub pending_bindings: Vec<crate::nodes::HirItem>,
+    /// Every `impl` seen, checked against its trait once all traits are lowered.
+    pub pending_impls: Vec<flux_syntax::ImplDecl>,
     /// Module-level `const` binding names (immutable, no reassignment).
     pub const_bindings: std::collections::HashSet<String>,
     /// Best-effort element type of array-valued module bindings (by name), used to
@@ -84,6 +86,7 @@ impl SymbolTable {
             closure_counter: 0,
             pending_fns: Vec::new(),
             pending_bindings: Vec::new(),
+            pending_impls: Vec::new(),
             const_bindings: std::collections::HashSet::new(),
             array_elem_hints: HashMap::new(),
             constants: std::collections::HashSet::new(),

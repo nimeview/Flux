@@ -596,6 +596,9 @@ fn finish_lower(
         });
     }
 
+    // Codegen calls the impl the checker resolved for each method call.
+    let mut hir = hir;
+    flux_types::resolve_method_calls(&mut hir, &typed);
     let ir = emit_ir(
         &source,
         &hir,

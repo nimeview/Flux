@@ -134,7 +134,9 @@ pub(crate) fn infer_expr(
         HirExpr::String { .. } => Some(Type::String),
         HirExpr::Ident { symbol, span } => types.get(symbol).cloned().or_else(|| {
             diagnostics.push(FluxError::UndefinedName {
-                name: format!("symbol #{symbol:?}"),
+                name: lookup_name(names, *symbol)
+                    .cloned()
+                    .unwrap_or_else(|| format!("symbol #{}", symbol.0)),
                 span: span_to_miette(*span),
                 source_id: span.source,
             });
@@ -148,6 +150,7 @@ pub(crate) fn infer_expr(
                 let type_tag = trait_dispatch_tag(&base_ty);
                 let fn_id = ctx.trait_impl(&type_tag, field);
                 if let Some(fn_id) = fn_id {
+                    ctx.method_calls.borrow_mut().insert(*span, fn_id);
                     if let Some(Type::Func { params, ret }) = types.get(&fn_id) {
                         let mut call_args = vec![base.as_ref().clone()];
                         call_args.extend(args.iter().cloned());
@@ -173,6 +176,20 @@ pub(crate) fn infer_expr(
                         }
                         return Some(*ret.clone());
                     }
+                }
+                // Not a method of any impl, and not a struct field to call.
+                let is_field = matches!(
+                    unwrap_value_type(&base_ty),
+                    Type::Struct { ref fields, .. } if fields.iter().any(|(n, _)| n == field)
+                );
+                if !is_field && !base_ty.is_error() {
+                    diagnostics.push(FluxError::UnknownMethod {
+                        method: field.clone(),
+                        ty: type_tag,
+                        span: span_to_miette(*span),
+                        source_id: span.source,
+                    });
+                    return Some(Type::Error);
                 }
             }
             if let HirExpr::Ident { symbol, .. } = callee.as_ref() {
@@ -354,6 +371,11 @@ pub(crate) fn infer_expr(
             for arm in arms {
                 let mut arm_scope = types.clone();
                 bind_match_arm_locals(ctx, &scrut_ty, arm, &mut arm_scope, source, diagnostics);
+                // An arm for an unknown variant binds nothing; its error is
+                // reported once below, not again at every use of the binding.
+                for binding in &arm.bindings {
+                    arm_scope.entry(*binding).or_insert(Type::Error);
+                }
                 if let Some(literal) = &arm.literal {
                     // A literal arm never covers the type: it needs a catch-all.
                     let lit_ty = infer_expr(ctx, literal, &arm_scope, names, source, diagnostics)

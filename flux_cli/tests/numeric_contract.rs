@@ -246,6 +246,32 @@ fn cases() -> Vec<(&'static str, String, Want)> {
             "fn four() -> Int { 4 }\nlet mut a = 2 + four()\nlet r = a * 2",
             Value("12"),
         ),
+        // `min`/`max`/`clamp` promote integer operands like arithmetic.
+        (
+            "min_mixed_width",
+            "import math { min }\nlet r = min(3u8, 300)".into(),
+            Value("3"),
+        ),
+        (
+            "max_signed",
+            "import math { max }\nlet r = max(-5, -9)".into(),
+            Value("-5"),
+        ),
+        (
+            "clamp_range",
+            "import math { clamp }\nlet r = clamp(15, 0, 10)".into(),
+            Value("10"),
+        ),
+        (
+            "min_negative_into_unsigned_overflows",
+            "import math { min }\nlet r = min(-1, 0u64)".into(),
+            Error("integer overflow"),
+        ),
+        (
+            "max_negative_into_unsigned_overflows",
+            "import math { max }\nlet r = max(0u64, -1)".into(),
+            Error("integer overflow"),
+        ),
     ]
 }
 

@@ -9,6 +9,7 @@ use flux_ir::IrStmt;
 
 use super::emit::emit_bool_test;
 use super::engine::HostFuncs;
+use super::locals::JitLocals;
 use super::lower_inst::lower_insts;
 use super::tables::JitTables;
 
@@ -24,7 +25,7 @@ pub(crate) fn lower_stmts(
     host_funcs: &HostFuncs,
     event_indices: &HashMap<String, u32>,
     tables: &JitTables,
-    locals: &mut HashMap<String, (Value, Value)>,
+    locals: &mut JitLocals,
     module: &mut JITModule,
     b: &mut FunctionBuilder<'_>,
 ) -> Option<(Value, Value)> {
@@ -65,7 +66,7 @@ pub(crate) fn lower_stmts(
                     module,
                     b,
                 )?;
-                locals.insert(name.clone(), last);
+                locals.set(name, last, b);
             }
             IrStmt::Assign { target, expr } => {
                 let (tag, data) = lower_insts(
@@ -82,11 +83,13 @@ pub(crate) fn lower_stmts(
                     module,
                     b,
                 )?;
-                if let Some(&idx) = layout.get(target.as_str()) {
+                if locals.contains(target) {
+                    locals.set(target, (tag, data), b);
+                } else if let Some(&idx) = layout.get(target.as_str()) {
                     super::emit::store_tagged(slots_ptr, idx, tag, data, ptr_ty, b);
-                }
-                if locals.contains_key(target) {
-                    locals.insert(target.clone(), (tag, data));
+                } else {
+                    // Never drop an assignment: let the VM run this body.
+                    return None;
                 }
                 last = (tag, data);
             }
@@ -287,7 +290,8 @@ pub(crate) fn lower_stmts(
                 let get_ref = module.declare_func_in_func(host_funcs.array_get, b.func);
                 let get_call = b.ins().call(get_ref, &[arr_data, idx]);
                 let results = b.inst_results(get_call);
-                locals.insert(var.clone(), (results[0], results[1]));
+                let item = (results[0], results[1]);
+                locals.set(var, item, b);
                 let _ = arr_tag;
                 last = lower_stmts(
                     body,
@@ -312,7 +316,7 @@ pub(crate) fn lower_stmts(
                 b.seal_block(exit_bb);
             }
             IrStmt::Return { expr } => {
-                last = if let Some(code) = expr {
+                let (tag, data) = if let Some(code) = expr {
                     lower_insts(
                         code,
                         layout,
@@ -330,6 +334,13 @@ pub(crate) fn lower_stmts(
                 } else {
                     (unit_tag, unit_data)
                 };
+                // `return` leaves the function here; anything lowered after it
+                // goes into a fresh block that nothing jumps to.
+                b.ins().return_(&[tag, data]);
+                let dead = b.create_block();
+                b.switch_to_block(dead);
+                b.seal_block(dead);
+                last = (tag, data);
             }
             IrStmt::Break | IrStmt::Continue => return None,
         }

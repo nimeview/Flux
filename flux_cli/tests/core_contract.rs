@@ -665,3 +665,34 @@ let a = aliased()\nlet b = reads_self()\nlet c = other_target()\nlet d = caller(
         }
     }
 }
+
+#[test]
+fn pop_returns_the_array_without_its_last_element() {
+    // SPEC: `pop: fn([T]) -> [T]`. It used to return `[rest, last]`.
+    let src = "import collections { pop, len }\nlet a = pop([1, 2, 3])\nlet b: [Int] = []\nlet c = pop(b)\nlet n = len(pop(a))\n";
+    for mode in [
+        flux_runtime::ExecutionMode::Vm,
+        flux_runtime::ExecutionMode::Jit,
+    ] {
+        let compiled = flux_cli::pipeline::compile_with_mode(source_from("<pop>", src), mode)
+            .unwrap_or_else(|failure| panic!("{:?}", failure.diagnostics.errors));
+        let ints = |xs: &[i64]| {
+            RuntimeValue::array(xs.iter().map(|&x| RuntimeValue::int_i64(x)).collect())
+        };
+        assert_eq!(
+            compiled.executor.get_value("a"),
+            Some(ints(&[1, 2])),
+            "{mode:?}"
+        );
+        assert_eq!(
+            compiled.executor.get_value("c"),
+            Some(ints(&[])),
+            "{mode:?}"
+        );
+        assert_eq!(
+            compiled.executor.get_value("n"),
+            Some(RuntimeValue::int_i64(1)),
+            "{mode:?}"
+        );
+    }
+}

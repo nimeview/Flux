@@ -87,7 +87,7 @@ Module-level bindings form a **dataflow graph**:
 - **Reactive functions** — `rfn` reads are tracked; rfn calls participate in derived graph
 
 The runtime (`flux-runtime`) maintains the graph and propagates updates after each source mutation.
-JIT (`flux_jit`) compiles numeric derived nodes, pure `fn` bodies, and numeric `watch`/`on` handlers via Cranelift; dynamic `LazyIf` uses JIT for evaluation with a VM pass for dependency tracking; strings/emit fall back to VM.
+JIT (`flux_jit`) compiles numeric derived nodes, pure `fn` bodies, and numeric `watch`/`on` handlers via Cranelift. Dynamic `LazyIf` is evaluated by the JIT, with a VM pass for dependency tracking; strings and emit fall back to the VM. Locals are Cranelift `Variable`s, so loops and branches that reassign them get correct SSA. Parameters (function arguments and an `on` payload) arrive in the scratch slots after the reactive nodes and are copied into locals on entry, so a call can reuse those slots for its own arguments. A function body may call functions compiled before it, and itself; any other call falls back. `return` ends the compiled function. `break`/`continue`, an assignment the JIT cannot place, and `Inst::Take` (in-place `push`) fall back to the VM.
 
 ---
 

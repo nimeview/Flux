@@ -722,6 +722,7 @@ dependencies = [
  "flux_syntax",
  "flux_types",
  "flux_value",
+ "rustc-hash",
 ]
 
 [[package]]

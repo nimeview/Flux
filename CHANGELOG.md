@@ -49,8 +49,16 @@ All notable changes to Flux are documented here.
 
 ### Performance
 - Arrays are shared copy-on-write (`Arc`), so reading, indexing, or passing an array no longer copies it, and `xs = push(xs, v)` appends in place. Building and scanning an array is linear instead of quadratic: the `structs_match` benchmark went from 26.6 s to 0.12 s. Value semantics are unchanged (see `PERFORMANCE.md`).
+- VM: function calls no longer clone the function's IR; operand stacks are reused; locals use a fast hasher and are looked up once per `Load`; `Int64` arithmetic and comparison have a direct path. `compute_loop` runs about 2× faster, `recursion` about 3.7×, and `collections` about 2.8×.
+- JIT: function bodies with loops, early `return`, recursion, and calls to earlier functions now compile: `compute_loop` 485 → 2.2 ms, `fib(20)` 138 → 0.2 ms.
 
 ### Fixed
+- Trait methods on structs and enums, and on any variable or parameter receiver, now type-check and dispatch to the receiver's impl. They failed with ``expected `field `m`` ``, and codegen picked the first impl with that method name, whatever the type. An `impl` that does not match its trait is **E020** (it was accepted silently), and a missing method is **E019**
+- A generic function called inside an array, struct literal, enum payload, `as`, `snap`, or match guard is now instantiated (it was `undefined name`)
+- An arm for an unknown enum variant is one error, without a cascade that leaked `undefined name `symbol #SymbolId(…)``; an error the checker finds twice at the same place is reported once
+- `pop(xs)` returns `xs` without its last element, as SPEC states (`fn([T]) -> [T]`); it returned `[rest, last]`, which contradicted its checked type
+- `min`/`max`/`clamp` with an integer that does not fit the promoted width (`min(-1, 0u64)`) is the runtime error `integer overflow`, like `-1 + 0u64`; it silently produced `()`
+- **JIT:** reassigning a local inside a loop hung (the loop condition never saw the new value); `return` continued with the next statement; an `on` handler with a payload that called a function wrote past the JIT slot buffer (segfault). An assignment the JIT cannot place now falls back to the VM instead of being dropped
 - **`if … else` statements silently dropped every statement in `else` / `else if` bodies** (parser); `fmt` now prints whole `else if` chains
 - Assigning a local inside a fn no longer turns a same-named module binding into a reactive source (E016); `else if` bodies are scanned for source reassignments
 - Callback params of `map`/`filter`/`reduce` infer from typed fn params and annotated locals (no longer fall back to `Int`)

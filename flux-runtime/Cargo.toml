@@ -7,6 +7,7 @@ edition.workspace = true
 flux_ir  = { path = "../flux_ir" }
 flux_std = { path = "../flux_std" }
 flux_value = { path = "../flux_value" }
+rustc-hash = "2.1"
 flux_jit = { path = "../flux_jit", optional = true }
 
 [features]

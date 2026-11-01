@@ -1106,11 +1106,32 @@ fn walk_expr_calls(
         } => {
             walk_expr_calls(scrutinee, program, generic_fns, out);
             for arm in arms {
+                if let Some(guard) = &arm.guard {
+                    walk_expr_calls(guard, program, generic_fns, out);
+                }
                 walk_block_calls(&arm.body, program, generic_fns, out);
                 walk_expr_calls(&arm.expr, program, generic_fns, out);
             }
         }
         HirExpr::Field { base, .. } => walk_expr_calls(base, program, generic_fns, out),
+        HirExpr::Snap { expr: inner, .. } | HirExpr::Cast { expr: inner, .. } => {
+            walk_expr_calls(inner, program, generic_fns, out);
+        }
+        HirExpr::Array { elems, .. } => {
+            for e in elems {
+                walk_expr_calls(e, program, generic_fns, out);
+            }
+        }
+        HirExpr::StructLit { fields, .. } => {
+            for (_, e) in fields {
+                walk_expr_calls(e, program, generic_fns, out);
+            }
+        }
+        HirExpr::EnumVariant {
+            payload: Some(p), ..
+        } => {
+            walk_expr_calls(p, program, generic_fns, out);
+        }
         _ => {}
     }
 }
@@ -1249,11 +1270,32 @@ fn collect_calls_in_expr(
         } => {
             collect_calls_in_expr(program, scrutinee, base_name, out);
             for arm in arms {
+                if let Some(guard) = &arm.guard {
+                    collect_calls_in_expr(program, guard, base_name, out);
+                }
                 collect_calls_in_block(program, &arm.body, base_name, out);
                 collect_calls_in_expr(program, &arm.expr, base_name, out);
             }
         }
         HirExpr::Field { base, .. } => collect_calls_in_expr(program, base, base_name, out),
+        HirExpr::Snap { expr: inner, .. } | HirExpr::Cast { expr: inner, .. } => {
+            collect_calls_in_expr(program, inner, base_name, out);
+        }
+        HirExpr::Array { elems, .. } => {
+            for e in elems {
+                collect_calls_in_expr(program, e, base_name, out);
+            }
+        }
+        HirExpr::StructLit { fields, .. } => {
+            for (_, e) in fields {
+                collect_calls_in_expr(program, e, base_name, out);
+            }
+        }
+        HirExpr::EnumVariant {
+            payload: Some(p), ..
+        } => {
+            collect_calls_in_expr(program, p, base_name, out);
+        }
         _ => {}
     }
 }
@@ -1566,6 +1608,16 @@ fn rewrite_expr_matching_calls(
         } => {
             rewrite_expr_matching_calls(scrutinee, from, to, match_types, symbol_types, program);
             for arm in arms {
+                if let Some(guard) = &mut arm.guard {
+                    rewrite_expr_matching_calls(
+                        guard,
+                        from,
+                        to,
+                        match_types,
+                        symbol_types,
+                        program,
+                    );
+                }
                 rewrite_block_matching_calls(
                     &mut arm.body,
                     from,
@@ -1586,6 +1638,24 @@ fn rewrite_expr_matching_calls(
         }
         HirExpr::Field { base, .. } => {
             rewrite_expr_matching_calls(base, from, to, match_types, symbol_types, program)
+        }
+        HirExpr::Snap { expr: inner, .. } | HirExpr::Cast { expr: inner, .. } => {
+            rewrite_expr_matching_calls(inner, from, to, match_types, symbol_types, program);
+        }
+        HirExpr::Array { elems, .. } => {
+            for e in elems {
+                rewrite_expr_matching_calls(e, from, to, match_types, symbol_types, program);
+            }
+        }
+        HirExpr::StructLit { fields, .. } => {
+            for (_, e) in fields {
+                rewrite_expr_matching_calls(e, from, to, match_types, symbol_types, program);
+            }
+        }
+        HirExpr::EnumVariant {
+            payload: Some(p), ..
+        } => {
+            rewrite_expr_matching_calls(p, from, to, match_types, symbol_types, program);
         }
         _ => {}
     }

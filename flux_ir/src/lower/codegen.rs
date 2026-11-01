@@ -205,14 +205,22 @@ fn emit_expr(expr: &HirExpr, program: &HirProgram, code: &mut Vec<Inst>) {
                 for arg in args {
                     emit_expr(arg, program, code);
                 }
+                // Checked programs reach here with method calls already
+                // rewritten to direct calls (`flux_types::resolve_method_calls`).
+                // Otherwise use the literal receiver's type, or the only impl
+                // with this method name; never guess between several.
                 let fn_id = if let Some(tag) = static_type_tag(base, program) {
                     program.trait_impls.get(&(tag, field.clone())).copied()
                 } else {
-                    program
+                    let mut candidates = program
                         .trait_impls
                         .iter()
-                        .find(|((_, method), _)| method == field)
-                        .map(|(_, id)| *id)
+                        .filter(|((_, method), _)| method == field)
+                        .map(|(_, id)| *id);
+                    match (candidates.next(), candidates.next()) {
+                        (Some(only), None) => Some(only),
+                        _ => None,
+                    }
                 };
                 if let Some(name) = fn_id.and_then(|id| runtime_symbol_name(program, &id)) {
                     code.push(Inst::Call {

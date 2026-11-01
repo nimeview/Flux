@@ -236,6 +236,8 @@ fn lower_program_inner(
     items.extend(std::mem::take(&mut symbols.pending_fns));
 
     let names = symbols.export_names();
+    let impls = std::mem::take(&mut symbols.pending_impls);
+    decls::validate_impls(&impls, &items, &names, diagnostics);
     let generic_fns: HashMap<String, GenericFnTemplate> = items
         .iter()
         .filter_map(|item| match item {

@@ -11,9 +11,10 @@ use flux_value::NumOp;
 
 use super::emit::{
     abort_on_error, emit_add, emit_arith, emit_cmp_ordered, emit_const, emit_icmp_eq, emit_icmp_ne,
-    emit_neg, slot_data_addr, slot_tag_addr, store_tagged,
+    emit_neg, store_tagged,
 };
 use super::engine::HostFuncs;
+use super::locals::JitLocals;
 use super::tables::JitTables;
 
 /// Lower a flat stack-machine `Vec<Inst>` → `(tag, data)` values in Cranelift.
@@ -29,7 +30,7 @@ pub(crate) fn lower_insts(
     host_funcs: &HostFuncs,
     event_indices: &HashMap<String, u32>,
     tables: &JitTables,
-    locals: &mut HashMap<String, (Value, Value)>,
+    locals: &mut JitLocals,
     module: &mut JITModule,
     b: &mut FunctionBuilder<'_>,
 ) -> Option<(Value, Value)> {
@@ -48,19 +49,11 @@ pub(crate) fn lower_insts(
             Inst::Const(v) => stack.push(emit_const(v, tables, b)?),
 
             Inst::Load(name) => {
-                if let Some(pair) = locals.get(name) {
-                    stack.push(*pair);
+                if let Some(pair) = locals.get(name, b) {
+                    stack.push(pair);
                 } else {
                     let idx = *layout.get(name.as_str())?;
-                    let tag_addr = slot_tag_addr(slots_ptr, idx, ptr_ty, b);
-                    let data_addr = slot_data_addr(slots_ptr, idx, ptr_ty, b);
-                    let tag = b
-                        .ins()
-                        .load(types::I64, MemFlagsData::trusted(), tag_addr, 0);
-                    let data = b
-                        .ins()
-                        .load(types::I64, MemFlagsData::trusted(), data_addr, 0);
-                    stack.push((tag, data));
+                    stack.push(super::emit::load_tagged(slots_ptr, idx, ptr_ty, b));
                 }
             }
 
@@ -411,7 +404,7 @@ pub(crate) fn lower_insts(
             Inst::Take(_) => return None,
             Inst::BindLocal(name) => {
                 let val = stack.pop()?;
-                locals.insert(name.clone(), val);
+                locals.set(name, val, b);
             }
             Inst::MakeUserEnum {
                 type_name,

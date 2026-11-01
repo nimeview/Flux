@@ -113,6 +113,12 @@ pub fn call_builtin_checked(
     match name {
         "assert" => return Some(math::assert(args.first()?)),
         "assert_eq" => return Some(math::assert_eq(args.first()?, args.get(1)?)),
+        // Integer operands promote like arithmetic does; a value that does not
+        // fit the promoted width (`min(-1, 0u64)`) is the same overflow error
+        // as `-1 + 0u64`, not a missing result.
+        "min" | "max" | "clamp" if args.iter().all(|a| matches!(a, Value::Int { .. })) => {
+            return Some(call_builtin(name, args).ok_or(flux_value::ArithError::Overflow));
+        }
         _ => {}
     }
     if name == "range" {
@@ -242,8 +248,9 @@ pub fn call_builtin(name: &str, args: &[Value]) -> Option<Value> {
                 Value::Array(a) => a.to_vec(),
                 _ => vec![],
             };
-            let last = arr.pop().unwrap_or(Value::Unit);
-            Some(Value::array(vec![Value::array(arr), last]))
+            // `fn([T]) -> [T]` (SPEC): the array without its last element.
+            arr.pop();
+            Some(Value::array(arr))
         }
         // `map`/`filter`/`reduce` are higher-order and need to invoke user functions
         // or closures, which this value-only builtin layer can't do. The VM

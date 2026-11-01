@@ -1,8 +1,6 @@
 //! Stack-machine expression evaluation and function dispatch (including the
 //! higher-order builtins `map` / `filter` / `reduce` that call back into user code).
 
-use std::collections::HashMap;
-
 use flux_ir::Inst;
 
 use crate::graph::RuntimeValue;
@@ -13,15 +11,25 @@ use flux_value::NumOp;
 use super::values::{
     arith_binop, cmp, eq_binop, extract_variant_payload, to_runtime, variant_tag_eq,
 };
-use super::{Executor, FlowControl};
+use super::{Executor, FlowControl, Locals};
 
 impl Executor {
-    pub(super) fn eval_expr(
+    pub(super) fn eval_expr(&mut self, code: &[Inst], locals: &mut Locals) -> RuntimeValue {
+        // Reuse an operand stack: allocating one per expression dominated
+        // tight loops.
+        let mut stack = self.stack_pool.pop().unwrap_or_default();
+        let value = self.eval_on_stack(code, locals, &mut stack);
+        stack.clear();
+        self.stack_pool.push(stack);
+        value
+    }
+
+    fn eval_on_stack(
         &mut self,
         code: &[Inst],
-        locals: &mut HashMap<String, RuntimeValue>,
+        locals: &mut Locals,
+        stack: &mut Vec<RuntimeValue>,
     ) -> RuntimeValue {
-        let mut stack: Vec<RuntimeValue> = Vec::new();
         for inst in code {
             // A runtime error aborts evaluation; nested evaluations (calls,
             // short-circuit operands) surface here on the next instruction.
@@ -30,10 +38,14 @@ impl Executor {
             }
             match inst {
                 Inst::Const(v) => stack.push(to_runtime(v)),
-                Inst::Load(name) => {
-                    self.record_dep_load(name, locals);
-                    stack.push(resolve_load(name, locals, &self.graph, &self.functions));
-                }
+                Inst::Load(name) => match locals.get(name) {
+                    // Locals are never reactive dependencies.
+                    Some(v) => stack.push(v.clone()),
+                    None => {
+                        self.record_dep_load(name, locals);
+                        stack.push(resolve_load(name, locals, &self.graph, &self.functions));
+                    }
+                },
                 Inst::Take(name) => match locals.remove(name) {
                     Some(v) => stack.push(v),
                     None => stack.push(resolve_load(name, locals, &self.graph, &self.functions)),
@@ -46,13 +58,13 @@ impl Executor {
                         Inst::Div => NumOp::Div,
                         _ => NumOp::Rem,
                     };
-                    if let Err(e) = arith_binop(&mut stack, op) {
+                    if let Err(e) = arith_binop(stack, op) {
                         self.raise(e);
                         return RuntimeValue::Unit;
                     }
                 }
                 Inst::Neg => {
-                    let v = stack_pop(&mut stack, "Neg");
+                    let v = stack_pop(stack, "Neg");
                     match flux_value::negate(&v) {
                         Ok(n) => stack.push(n),
                         Err(e) => {
@@ -62,21 +74,21 @@ impl Executor {
                     }
                 }
                 Inst::Not => {
-                    let v = stack_pop(&mut stack, "Not");
+                    let v = stack_pop(stack, "Not");
                     if let Some(b) = v.as_bool() {
                         stack.push(RuntimeValue::Bool(!b));
                     } else {
                         debug_assert_vm(false, &format!("Not: expected bool value, got {v:?}"));
                     }
                 }
-                Inst::CmpEq => eq_binop(&mut stack, false),
-                Inst::CmpNe => eq_binop(&mut stack, true),
-                Inst::CmpLt => cmp(&mut stack, |o| o.is_lt()),
-                Inst::CmpLe => cmp(&mut stack, |o| o.is_le()),
-                Inst::CmpGt => cmp(&mut stack, |o| o.is_gt()),
-                Inst::CmpGe => cmp(&mut stack, |o| o.is_ge()),
+                Inst::CmpEq => eq_binop(stack, false),
+                Inst::CmpNe => eq_binop(stack, true),
+                Inst::CmpLt => cmp(stack, |o| o.is_lt()),
+                Inst::CmpLe => cmp(stack, |o| o.is_le()),
+                Inst::CmpGt => cmp(stack, |o| o.is_gt()),
+                Inst::CmpGe => cmp(stack, |o| o.is_ge()),
                 Inst::ShortAnd(right) => {
-                    let a = stack_pop(&mut stack, "ShortAnd lhs")
+                    let a = stack_pop(stack, "ShortAnd lhs")
                         .as_bool()
                         .unwrap_or_else(|| {
                             debug_assert_vm(false, "ShortAnd: expected bool on stack");
@@ -89,7 +101,7 @@ impl Executor {
                     }
                 }
                 Inst::ShortOr(right) => {
-                    let a = stack_pop(&mut stack, "ShortOr lhs")
+                    let a = stack_pop(stack, "ShortOr lhs")
                         .as_bool()
                         .unwrap_or_else(|| {
                             debug_assert_vm(false, "ShortOr: expected bool on stack");
@@ -105,7 +117,7 @@ impl Executor {
                     then_branch,
                     else_branch,
                 } => {
-                    let cond = stack_pop(&mut stack, "LazyIf cond")
+                    let cond = stack_pop(stack, "LazyIf cond")
                         .as_bool()
                         .unwrap_or_else(|| {
                             debug_assert_vm(false, "LazyIf: expected bool condition");
@@ -118,9 +130,9 @@ impl Executor {
                     }
                 }
                 Inst::Select => {
-                    let else_v = stack_pop_opt(&mut stack, "Select else");
-                    let then_v = stack_pop_opt(&mut stack, "Select then");
-                    let cond = stack_pop(&mut stack, "Select cond")
+                    let else_v = stack_pop_opt(stack, "Select else");
+                    let then_v = stack_pop_opt(stack, "Select then");
+                    let cond = stack_pop(stack, "Select cond")
                         .as_bool()
                         .unwrap_or_else(|| {
                             debug_assert_vm(false, "Select: expected bool condition");
@@ -134,11 +146,8 @@ impl Executor {
                     }
                 }
                 Inst::Call { name, argc } => {
-                    let mut args = Vec::with_capacity(*argc);
-                    for i in 0..*argc {
-                        args.push(stack_pop(&mut stack, &format!("Call `{name}` arg {i}")));
-                    }
-                    args.reverse();
+                    debug_assert_vm(stack.len() >= *argc, "stack underflow in Call arguments");
+                    let mut args = stack.split_off(stack.len().saturating_sub(*argc));
                     // Builtin `push` on an array: append in place. `make_mut`
                     // copies only if the array is still shared, so value
                     // semantics are unchanged.
@@ -156,7 +165,7 @@ impl Executor {
                     stack.push(result);
                 }
                 Inst::Cast { ty } => {
-                    let val = stack_pop(&mut stack, &format!("Cast as {ty}"));
+                    let val = stack_pop(stack, &format!("Cast as {ty}"));
                     match flux_value::cast(&val, ty) {
                         Ok(v) => stack.push(v),
                         Err(e) => {
@@ -168,28 +177,28 @@ impl Executor {
                 Inst::MakeArray(count) => {
                     let mut items = Vec::with_capacity(*count);
                     for i in 0..*count {
-                        items.push(stack_pop(&mut stack, &format!("MakeArray element {i}")));
+                        items.push(stack_pop(stack, &format!("MakeArray element {i}")));
                     }
                     items.reverse();
                     stack.push(RuntimeValue::array(items));
                 }
                 Inst::EnumTagEq(variant) => {
-                    let val = stack_pop_opt(&mut stack, &format!("EnumTagEq `{variant}`"));
+                    let val = stack_pop_opt(stack, &format!("EnumTagEq `{variant}`"));
                     let matches = variant_tag_eq(val.as_ref(), variant);
                     stack.push(RuntimeValue::Bool(matches));
                 }
                 Inst::VariantTagEq(variant) => {
-                    let val = stack_pop_opt(&mut stack, &format!("VariantTagEq `{variant}`"));
+                    let val = stack_pop_opt(stack, &format!("VariantTagEq `{variant}`"));
                     let matches = variant_tag_eq(val.as_ref(), variant);
                     stack.push(RuntimeValue::Bool(matches));
                 }
                 Inst::VariantPayloadGet { field } => {
-                    let val = stack_pop_opt(&mut stack, "VariantPayloadGet");
+                    let val = stack_pop_opt(stack, "VariantPayloadGet");
                     let extracted = extract_variant_payload(val.as_ref(), field.as_deref());
                     stack.push(extracted);
                 }
                 Inst::BindLocal(name) => {
-                    let val = stack_pop(&mut stack, &format!("BindLocal `{name}`"));
+                    let val = stack_pop(stack, &format!("BindLocal `{name}`"));
                     locals.insert(name.clone(), val);
                 }
                 Inst::MakeUserEnum {
@@ -212,7 +221,7 @@ impl Executor {
                     let mut map = std::collections::HashMap::new();
                     for field_name in fields.iter().rev() {
                         let val = stack_pop(
-                            &mut stack,
+                            stack,
                             &format!("MakeUserStruct `{type_name}` field `{field_name}`"),
                         );
                         map.insert(field_name.clone(), val);
@@ -223,7 +232,7 @@ impl Executor {
                     });
                 }
                 Inst::FieldGet(field) => {
-                    let val = stack_pop(&mut stack, &format!("FieldGet `{field}`"));
+                    let val = stack_pop(stack, &format!("FieldGet `{field}`"));
                     if let RuntimeValue::UserStruct { fields, .. } = val {
                         match fields.get(field) {
                             Some(v) => stack.push(v.clone()),
@@ -393,8 +402,8 @@ impl Executor {
             }
             None => {}
         }
-        let func = func.clone();
-        let mut locals = HashMap::new();
+        let func = std::sync::Arc::clone(func);
+        let mut locals = Locals::default();
         for (param, arg) in func.params.iter().zip(args.iter()) {
             locals.insert(param.clone(), arg.clone());
         }

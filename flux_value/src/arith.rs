@@ -179,6 +179,9 @@ fn float_result_width(a: Option<FloatWidth>, b: Option<FloatWidth>) -> FloatWidt
 
 /// Apply a binary arithmetic operator to two numeric values.
 pub fn binary(op: NumOp, a: &Value, b: &Value) -> Result<Value, ArithError> {
+    if let (Some(x), Some(y)) = (as_i64(a), as_i64(b)) {
+        return binary_i64(op, x, y);
+    }
     let (na, nb) = match (num(a), num(b)) {
         (Some(na), Some(nb)) => (na, nb),
         _ => return Err(ArithError::InvalidOperands),
@@ -207,6 +210,31 @@ pub fn binary(op: NumOp, a: &Value, b: &Value) -> Result<Value, ArithError> {
     Ok(float_from_f64(float_result_width(wa, wb), r))
 }
 
+/// `Int64` operands: the common case, without widening to `i128`.
+fn as_i64(v: &Value) -> Option<i64> {
+    match v {
+        Value::Int {
+            width: IntWidth::I64,
+            bits,
+        } => Some(*bits as i64),
+        _ => None,
+    }
+}
+
+/// Same results as the `i128` path: an out-of-range result (including
+/// `MIN / -1`) is `Overflow`, and `MIN % -1` is `0`.
+fn binary_i64(op: NumOp, x: i64, y: i64) -> Result<Value, ArithError> {
+    let r = match op {
+        NumOp::Add => x.checked_add(y),
+        NumOp::Sub => x.checked_sub(y),
+        NumOp::Mul => x.checked_mul(y),
+        NumOp::Div | NumOp::Rem if y == 0 => return Err(ArithError::DivByZero),
+        NumOp::Div => x.checked_div(y),
+        NumOp::Rem => Some(x.wrapping_rem(y)),
+    };
+    r.map(Value::int_i64).ok_or(ArithError::Overflow)
+}
+
 /// Unary minus.
 pub fn negate(v: &Value) -> Result<Value, ArithError> {
     match num(v) {
@@ -218,6 +246,9 @@ pub fn negate(v: &Value) -> Result<Value, ArithError> {
 
 /// Numeric ordering; `None` when either side is NaN or not numeric.
 pub fn compare(a: &Value, b: &Value) -> Option<Ordering> {
+    if let (Some(x), Some(y)) = (as_i64(a), as_i64(b)) {
+        return Some(x.cmp(&y));
+    }
     match (num(a)?, num(b)?) {
         (Num::Int(_, x), Num::Int(_, y)) => Some(x.cmp(&y)),
         (na, nb) => float_parts(&na).1.partial_cmp(&float_parts(&nb).1),

@@ -2,6 +2,7 @@
 
 mod emit;
 mod engine;
+mod locals;
 mod lower_inst;
 mod lower_stmt;
 pub(crate) mod numeric;

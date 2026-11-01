@@ -1,12 +1,10 @@
 //! Statement execution with structured `return` / `break` / `continue` flow.
 
-use std::collections::HashMap;
-
 use flux_ir::IrStmt;
 
 use crate::graph::RuntimeValue;
 
-use super::{Executor, FlowControl, StmtResult};
+use super::{Executor, FlowControl, Locals, StmtResult};
 
 /// Result of a statement aborted by a runtime error: unwind like `return`.
 const TRAPPED: StmtResult = StmtResult {
@@ -15,11 +13,7 @@ const TRAPPED: StmtResult = StmtResult {
 };
 
 impl Executor {
-    pub(super) fn run_stmts(
-        &mut self,
-        stmts: &[IrStmt],
-        locals: &mut HashMap<String, RuntimeValue>,
-    ) -> RuntimeValue {
+    pub(super) fn run_stmts(&mut self, stmts: &[IrStmt], locals: &mut Locals) -> RuntimeValue {
         match self.run_stmts_flow(stmts, locals) {
             (v, FlowControl::None) => v,
             (v, _) => v,
@@ -29,7 +23,7 @@ impl Executor {
     pub(super) fn run_stmts_flow(
         &mut self,
         stmts: &[IrStmt],
-        locals: &mut HashMap<String, RuntimeValue>,
+        locals: &mut Locals,
     ) -> (RuntimeValue, FlowControl) {
         let mut last = RuntimeValue::Unit;
         for stmt in stmts {
@@ -55,19 +49,11 @@ impl Executor {
         (last, FlowControl::None)
     }
 
-    pub(super) fn run_stmt(
-        &mut self,
-        stmt: &IrStmt,
-        locals: &mut HashMap<String, RuntimeValue>,
-    ) -> RuntimeValue {
+    pub(super) fn run_stmt(&mut self, stmt: &IrStmt, locals: &mut Locals) -> RuntimeValue {
         self.run_stmt_flow(stmt, locals).value
     }
 
-    fn run_stmt_flow(
-        &mut self,
-        stmt: &IrStmt,
-        locals: &mut HashMap<String, RuntimeValue>,
-    ) -> StmtResult {
+    fn run_stmt_flow(&mut self, stmt: &IrStmt, locals: &mut Locals) -> StmtResult {
         match stmt {
             IrStmt::Assign { target, expr } => {
                 let value = self.eval_expr(expr, locals);
@@ -76,6 +62,8 @@ impl Executor {
                 }
                 if self.is_source_binding(target) {
                     self.set_source(target, value.clone());
+                } else if let Some(slot) = locals.get_mut(target) {
+                    *slot = value.clone();
                 } else {
                     locals.insert(target.clone(), value.clone());
                 }
