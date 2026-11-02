@@ -7,15 +7,16 @@ mod tagged;
 mod width;
 
 pub use arith::{
-    binary, cast, compare, int_from_i128, int_to_i128, negate, promote_int, values_equal,
-    ArithError, NumOp,
+    binary, binary_i64, cast, compare, int_from_i128, int_to_i128, negate, promote_int,
+    values_equal, ArithError, NumOp,
 };
 pub use convert::{is_tag_representable, tagged_to_value, value_to_tagged};
 pub use display::render;
 pub use heap::{
-    array_finish, array_get, array_len, array_push, clear_for_tests, concat_strings, get_array,
-    get_enum, get_string, heap_scope, heap_stats, int_range, intern_string, make_int_range_array,
-    store_enum, HeapScope, HeapStats, MAX_CALL_DEPTH, MAX_COLLECTION_LEN, MAX_STRING_LEN,
+    array_finish, array_get, array_len, array_push, clear_for_tests, concat_strings, enum_payload,
+    enum_variant_is, get_array, get_enum, get_string, heap_scope, heap_stats, int_range,
+    intern_string, make_int_range_array, store_enum, HeapScope, HeapStats, MAX_CALL_DEPTH,
+    MAX_COLLECTION_LEN, MAX_STRING_LEN,
 };
 pub use ops::{float_from_f64, float_to_f64, int_from_i64, int_to_i64};
 pub use tagged::{
@@ -43,21 +44,30 @@ pub enum Value {
     /// Shared and copied on write: reading or passing an array is O(1);
     /// mutation (`Arc::make_mut`) copies only if another value still holds it.
     Array(std::sync::Arc<Vec<Value>>),
-    UserStruct {
-        type_name: String,
-        fields: HashMap<String, Value>,
-    },
-    UserEnum {
-        type_name: String,
-        variant: String,
-        payload: Option<Box<Value>>,
-    },
+    /// Structs and enums are behind a pointer so that `Value` stays 32
+    /// bytes (inline, they made it 72, and every stack push/pop a slow block
+    /// copy). They are immutable once built, so copies share them, like arrays.
+    UserStruct(std::sync::Arc<StructValue>),
+    UserEnum(std::sync::Arc<EnumValue>),
     Option(Option<Box<Value>>),
     Result(Result<Box<Value>, Box<Value>>),
     /// `Map[K, V]`, ordered by key; each entry keeps the key's own value
     /// (with its integer width). Shared and copied on write, like arrays.
     Map(std::sync::Arc<std::collections::BTreeMap<MapKey, (Value, Value)>>),
     Unit,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct StructValue {
+    pub type_name: String,
+    pub fields: HashMap<String, Value>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct EnumValue {
+    pub type_name: String,
+    pub variant: String,
+    pub payload: Option<Value>,
 }
 
 /// A map key: integers (any width, by value), `String`, `Bool`, or `Char`.
@@ -83,6 +93,18 @@ impl MapKey {
 }
 
 impl Value {
+    pub fn user_struct(type_name: String, fields: HashMap<String, Value>) -> Self {
+        Self::UserStruct(std::sync::Arc::new(StructValue { type_name, fields }))
+    }
+
+    pub fn user_enum(type_name: String, variant: String, payload: Option<Value>) -> Self {
+        Self::UserEnum(std::sync::Arc::new(EnumValue {
+            type_name,
+            variant,
+            payload,
+        }))
+    }
+
     pub fn array(items: Vec<Value>) -> Self {
         Self::Array(std::sync::Arc::new(items))
     }
@@ -145,8 +167,8 @@ impl Value {
             Self::Bool(_) => "Bool",
             Self::String(_) => "String",
             Self::Array(_) => "Array",
-            Self::UserStruct { .. } => "Struct",
-            Self::UserEnum { .. } => "Enum",
+            Self::UserStruct(_) => "Struct",
+            Self::UserEnum(_) => "Enum",
             Self::Option(_) => "Option",
             Self::Result(_) => "Result",
             Self::Map(_) => "Map",
@@ -157,5 +179,15 @@ impl Value {
     /// Human-readable representation for print/display builtins and CLI output.
     pub fn display_string(&self) -> String {
         render(self)
+    }
+}
+
+#[cfg(test)]
+mod size_tests {
+    /// Every operand push/pop moves a `Value`; past 64 bytes the move
+    /// became a block copy that dominated the VM loop.
+    #[test]
+    fn value_stays_small() {
+        assert!(std::mem::size_of::<super::Value>() <= 32);
     }
 }

@@ -78,3 +78,17 @@ fn read_line_reads_from_stdin() {
         "expected read_line output in stdout, got: {stdout}"
     );
 }
+
+/// A call reuses the locals map of an earlier call to the same function, so
+/// a name that call bound keeps its key. Unbound, it must still resolve to
+/// the global, and a recursive call must not see its caller's locals.
+#[test]
+fn reused_call_locals_do_not_leak_between_calls() {
+    let src = "const x = 10\n\
+               fn f(flag: Bool) -> Int {\n    if flag {\n        let x = 1\n        x\n    } else {\n        x\n    }\n}\n\
+               fn g(n: Int) -> Int {\n    if n == 0 {\n        0\n    } else {\n        let k = n\n        g(n - 1) + k\n    }\n}\n\
+               fn run() -> Int {\n    f(true) * 1000 + f(false) * 10 + f(true) + g(4) * 100000\n}\n";
+    let mut ex = run(src);
+    let value = ex.call("run", &[]).expect("runs");
+    assert_eq!(value.as_int(), Some(10 * 100_000 + 1000 + 100 + 1));
+}

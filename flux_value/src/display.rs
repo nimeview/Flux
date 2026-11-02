@@ -14,7 +14,8 @@ pub fn render(value: &Value) -> String {
             let parts: Vec<String> = items.iter().map(render).collect();
             format!("[{}]", parts.join(", "))
         }
-        Value::UserStruct { type_name, fields } => {
+        Value::UserStruct(s) => {
+            let (type_name, fields) = (&s.type_name, &s.fields);
             let mut names: Vec<&String> = fields.keys().collect();
             names.sort();
             let parts: Vec<String> = names
@@ -23,13 +24,9 @@ pub fn render(value: &Value) -> String {
                 .collect();
             format!("{type_name} {{ {} }}", parts.join(", "))
         }
-        Value::UserEnum {
-            type_name,
-            variant,
-            payload,
-        } => match payload {
-            Some(p) => format!("{type_name}::{variant}({})", render(p)),
-            None => format!("{type_name}::{variant}"),
+        Value::UserEnum(e) => match &e.payload {
+            Some(p) => format!("{}::{}({})", e.type_name, e.variant, render(p)),
+            None => format!("{}::{}", e.type_name, e.variant),
         },
         Value::Option(None) => "None".to_string(),
         Value::Option(Some(v)) => format!("Some({})", render(v)),

@@ -240,7 +240,7 @@ fn as_i64(v: &Value) -> Option<i64> {
 
 /// Same results as the `i128` path: an out-of-range result (including
 /// `MIN / -1`) is `Overflow`, and `MIN % -1` is `0`.
-fn binary_i64(op: NumOp, x: i64, y: i64) -> Result<Value, ArithError> {
+pub fn binary_i64(op: NumOp, x: i64, y: i64) -> Result<Value, ArithError> {
     let r = match op {
         NumOp::Add => x.checked_add(y),
         NumOp::Sub => x.checked_sub(y),
@@ -294,34 +294,18 @@ pub fn values_equal(a: &Value, b: &Value) -> bool {
         (Value::Result(Ok(x)), Value::Result(Ok(y)))
         | (Value::Result(Err(x)), Value::Result(Err(y))) => values_equal(x, y),
         (Value::Result(_), Value::Result(_)) => false,
-        (
-            Value::UserStruct {
-                type_name: ta,
-                fields: fa,
-            },
-            Value::UserStruct {
-                type_name: tb,
-                fields: fb,
-            },
-        ) => {
-            ta == tb
-                && fa.len() == fb.len()
-                && fa
+        (Value::UserStruct(a), Value::UserStruct(b)) => {
+            a.type_name == b.type_name
+                && a.fields.len() == b.fields.len()
+                && a.fields
                     .iter()
-                    .all(|(k, v)| fb.get(k).is_some_and(|w| values_equal(v, w)))
+                    .all(|(k, v)| b.fields.get(k).is_some_and(|w| values_equal(v, w)))
         }
-        (
-            Value::UserEnum {
-                type_name: ta,
-                variant: va,
-                payload: pa,
-            },
-            Value::UserEnum {
-                type_name: tb,
-                variant: vb,
-                payload: pb,
-            },
-        ) => ta == tb && va == vb && both(pa.as_deref(), pb.as_deref()),
+        (Value::UserEnum(a), Value::UserEnum(b)) => {
+            a.type_name == b.type_name
+                && a.variant == b.variant
+                && both(a.payload.as_ref(), b.payload.as_ref())
+        }
         (Value::Map(x), Value::Map(y)) => {
             x.len() == y.len()
                 && x.iter()

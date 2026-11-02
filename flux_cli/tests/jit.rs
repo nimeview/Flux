@@ -569,3 +569,91 @@ fn jit_parity_handler_assignment_inside_if_applies() {
         );
     }
 }
+
+#[test]
+fn jit_parity_structs_and_struct_variant_fields() {
+    // Code that builds, reads, passes, returns, compares, or matches structs
+    // (including struct-variant patterns) runs on the VM under `--jit`.
+    // Compiling it through the tagged heap was measured slower than the VM
+    // (see PERFORMANCE.md). Values must match either way.
+    let _guard = jit_test_lock();
+    reset_jit();
+    let src = "import option { Some, None }\n\
+        struct Point {\n    x: Int,\n    y: Int\n}\n\
+        struct Tagged {\n    name: String,\n    p: Point,\n    xs: [Int]\n}\n\
+        struct Maybe {\n    v: Option[Int]\n}\n\
+        enum Shape {\n    Dot(Point),\n    Empty\n}\n\
+        fn make(i: Int) -> Point {\n    Point { x: i, y: i * 2 }\n}\n\
+        fn sum(p: Point) -> Int {\n    p.x + p.y\n}\n\
+        fn area(s: Shape) -> Int {\n    match s {\n        Dot { x, y } => x * y,\n        Empty => 0\n    }\n}\n\
+        fn same(a: Point, b: Point) -> Bool {\n    a == b\n}\n\
+        fn label(t: Tagged) -> String {\n    \"{t.name}:{t.p.x}:{t.xs[1]}\"\n}\n\
+        fn maybe(m: Maybe) -> Int {\n    match m.v {\n        Some(n) => n,\n        None => 0\n    }\n}\n\
+        fn shift(p: Point) -> Point {\n    make(p.x + 1)\n}\n\
+        fn run() -> Int {\n    let p = make(3)\n    sum(p) + area(Dot(p)) * 100 + area(Empty) + sum(shift(p)) * 10000\n}\n";
+    let point = |x: i64, y: i64| {
+        RuntimeValue::user_struct(
+            "Point".into(),
+            [
+                ("x".to_string(), RuntimeValue::int_i64(x)),
+                ("y".to_string(), RuntimeValue::int_i64(y)),
+            ]
+            .into_iter()
+            .collect(),
+        )
+    };
+    let tagged = RuntimeValue::user_struct(
+        "Tagged".into(),
+        [
+            ("name".to_string(), RuntimeValue::String("t".into())),
+            ("p".to_string(), point(3, 6)),
+            (
+                "xs".to_string(),
+                RuntimeValue::array(vec![RuntimeValue::int_i64(7), RuntimeValue::int_i64(8)]),
+            ),
+        ]
+        .into_iter()
+        .collect(),
+    );
+    let maybe = RuntimeValue::user_struct(
+        "Maybe".into(),
+        [(
+            "v".to_string(),
+            RuntimeValue::Option(Some(Box::new(RuntimeValue::int_i64(5)))),
+        )]
+        .into_iter()
+        .collect(),
+    );
+    let calls: Vec<(&str, Vec<RuntimeValue>)> = vec![
+        ("run", vec![]),
+        ("make", vec![RuntimeValue::int_i64(4)]),
+        ("shift", vec![point(1, 9)]),
+        ("same", vec![point(1, 2), point(1, 2)]),
+        ("same", vec![point(1, 2), point(1, 3)]),
+        ("label", vec![tagged]),
+        ("maybe", vec![maybe]),
+    ];
+    let mut results = Vec::new();
+    for mode in [ExecutionMode::Vm, ExecutionMode::Jit] {
+        let mut compiled = compile_with_mode(source_from("<structs>", src), mode)
+            .unwrap_or_else(|e| panic!("{mode:?}: {:?}", e.diagnostics.errors));
+        let values: Vec<_> = calls
+            .iter()
+            .map(|(name, args)| {
+                compiled
+                    .executor
+                    .call(name, args)
+                    .map_err(|e| e.to_string())
+            })
+            .collect();
+        results.push(values);
+    }
+    assert_eq!(results[0], results[1], "VM vs JIT");
+    assert_eq!(results[0][0], Ok(RuntimeValue::int_i64(9 + 1800 + 120000)));
+    assert_eq!(results[0][1], Ok(point(4, 8)));
+    assert_eq!(results[0][2], Ok(point(2, 4)));
+    assert_eq!(results[0][3], Ok(RuntimeValue::Bool(true)));
+    assert_eq!(results[0][4], Ok(RuntimeValue::Bool(false)));
+    assert_eq!(results[0][5], Ok(RuntimeValue::String("t:3:8".into())));
+    assert_eq!(results[0][6], Ok(RuntimeValue::int_i64(5)));
+}

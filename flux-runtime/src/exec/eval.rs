@@ -4,7 +4,10 @@
 use flux_ir::Inst;
 
 use crate::graph::RuntimeValue;
-use crate::vm::{debug_assert_vm, is_bound, resolve_load, stack_pop, stack_pop_opt};
+use crate::vm::{
+    debug_assert_vm, is_bound, resolve_load, stack_pop, stack_pop_opt, stack_pop_opt_with,
+    stack_pop_with,
+};
 
 use flux_value::NumOp;
 
@@ -262,7 +265,7 @@ impl Executor {
                     stack.push(result);
                 }
                 Inst::Cast { ty } => {
-                    let val = stack_pop(stack, &format!("Cast as {ty}"));
+                    let val = stack_pop_with(stack, || format!("Cast as {ty}"));
                     match flux_value::cast(&val, ty) {
                         Ok(v) => stack.push(v),
                         Err(e) => {
@@ -274,18 +277,18 @@ impl Executor {
                 Inst::MakeArray(count) => {
                     let mut items = Vec::with_capacity(*count);
                     for i in 0..*count {
-                        items.push(stack_pop(stack, &format!("MakeArray element {i}")));
+                        items.push(stack_pop_with(stack, || format!("MakeArray element {i}")));
                     }
                     items.reverse();
                     stack.push(RuntimeValue::array(items));
                 }
                 Inst::EnumTagEq(variant) => {
-                    let val = stack_pop_opt(stack, &format!("EnumTagEq `{variant}`"));
+                    let val = stack_pop_opt_with(stack, || format!("EnumTagEq `{variant}`"));
                     let matches = variant_tag_eq(val.as_ref(), variant);
                     stack.push(RuntimeValue::Bool(matches));
                 }
                 Inst::VariantTagEq(variant) => {
-                    let val = stack_pop_opt(stack, &format!("VariantTagEq `{variant}`"));
+                    let val = stack_pop_opt_with(stack, || format!("VariantTagEq `{variant}`"));
                     let matches = variant_tag_eq(val.as_ref(), variant);
                     stack.push(RuntimeValue::Bool(matches));
                 }
@@ -295,43 +298,35 @@ impl Executor {
                     stack.push(extracted);
                 }
                 Inst::BindLocal(name) => {
-                    let val = stack_pop(stack, &format!("BindLocal `{name}`"));
-                    locals.insert(name.clone(), val);
+                    let val = stack_pop_with(stack, || format!("BindLocal `{name}`"));
+                    locals.bind(name, val);
                 }
                 Inst::MakeUserEnum {
                     type_name,
                     variant,
                     has_payload,
                 } => {
-                    let payload = if *has_payload {
-                        stack.pop().map(Box::new)
-                    } else {
-                        None
-                    };
-                    stack.push(RuntimeValue::UserEnum {
-                        type_name: type_name.clone(),
-                        variant: variant.clone(),
+                    let payload = if *has_payload { stack.pop() } else { None };
+                    stack.push(RuntimeValue::user_enum(
+                        type_name.clone(),
+                        variant.clone(),
                         payload,
-                    });
+                    ));
                 }
                 Inst::MakeUserStruct { type_name, fields } => {
                     let mut map = std::collections::HashMap::new();
                     for field_name in fields.iter().rev() {
-                        let val = stack_pop(
-                            stack,
-                            &format!("MakeUserStruct `{type_name}` field `{field_name}`"),
-                        );
+                        let val = stack_pop_with(stack, || {
+                            format!("MakeUserStruct `{type_name}` field `{field_name}`")
+                        });
                         map.insert(field_name.clone(), val);
                     }
-                    stack.push(RuntimeValue::UserStruct {
-                        type_name: type_name.clone(),
-                        fields: map,
-                    });
+                    stack.push(RuntimeValue::user_struct(type_name.clone(), map));
                 }
                 Inst::FieldGet(field) => {
-                    let val = stack_pop(stack, &format!("FieldGet `{field}`"));
-                    if let RuntimeValue::UserStruct { fields, .. } = val {
-                        match fields.get(field) {
+                    let val = stack_pop_with(stack, || format!("FieldGet `{field}`"));
+                    if let RuntimeValue::UserStruct(s) = val {
+                        match s.fields.get(field) {
                             Some(v) => stack.push(v.clone()),
                             None => {
                                 debug_assert_vm(
@@ -536,13 +531,15 @@ impl Executor {
             }
             None => {}
         }
-        let mut locals = Locals::default();
+        let mut locals = self.locals_pool.pop().unwrap_or_default();
         for (param, arg) in func.params.iter().zip(args.iter()) {
-            locals.insert(param.clone(), arg.clone());
+            locals.bind(param, arg.clone());
         }
-        match self.run_stmts_flow(&func.body, &mut locals) {
-            (v, FlowControl::Return) | (v, FlowControl::None) => v,
-            (v, _) => v,
+        let (value, _) = self.run_stmts_flow(&func.body, &mut locals);
+        locals.unbind_all();
+        if self.locals_pool.len() < super::LOCALS_POOL_LIMIT {
+            self.locals_pool.push(locals);
         }
+        value
     }
 }

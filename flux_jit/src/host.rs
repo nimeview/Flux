@@ -3,9 +3,9 @@
 use std::sync::{Mutex, OnceLock};
 
 use flux_value::{
-    array_finish, array_get, array_len, array_push, get_enum, get_string, intern_string,
-    make_int_range_array, store_enum, tag_kind, tagged_to_value, value_to_tagged, TaggedVal,
-    TAG_ENUM, TAG_FLOAT, TAG_INT, TAG_STRING,
+    array_finish, array_get, array_len, array_push, enum_payload, enum_variant_is, get_string,
+    intern_string, make_int_range_array, store_enum, tag_kind, tagged_to_value, value_to_tagged,
+    TaggedVal, TAG_ENUM, TAG_FLOAT, TAG_INT, TAG_STRING,
 };
 
 type EmitHook = Box<dyn Fn(u64, TaggedVal) + Send>;
@@ -135,20 +135,12 @@ pub extern "C" fn flux_jit_make_enum(
 
 #[no_mangle]
 pub extern "C" fn flux_jit_enum_variant_eq(enum_id: u64, variant_name_id: u64) -> u64 {
-    let want = match get_string(variant_name_id) {
-        Some(s) => s,
-        None => return 0,
-    };
-    get_enum(enum_id)
-        .map(|(_, v, _)| (v == want) as u64)
-        .unwrap_or(0)
+    enum_variant_is(enum_id, variant_name_id) as u64
 }
 
 #[no_mangle]
 pub extern "C" fn flux_jit_enum_payload_get(enum_id: u64) -> TaggedVal {
-    get_enum(enum_id)
-        .and_then(|(_, _, p)| p)
-        .unwrap_or(TaggedVal::UNIT)
+    enum_payload(enum_id).unwrap_or(TaggedVal::UNIT)
 }
 
 #[no_mangle]

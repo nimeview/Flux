@@ -23,6 +23,26 @@ pub(crate) fn stack_pop(stack: &mut Vec<RuntimeValue>, context: &str) -> Runtime
     }
 }
 
+/// [`stack_pop`] with a context built only on underflow: formatting it on
+/// every pop allocated on the hot path (`match`, struct fields, locals).
+pub(crate) fn stack_pop_with(
+    stack: &mut Vec<RuntimeValue>,
+    context: impl FnOnce() -> String,
+) -> RuntimeValue {
+    stack_pop_opt_with(stack, context).unwrap_or(RuntimeValue::Unit)
+}
+
+pub(crate) fn stack_pop_opt_with(
+    stack: &mut Vec<RuntimeValue>,
+    context: impl FnOnce() -> String,
+) -> Option<RuntimeValue> {
+    let v = stack.pop();
+    if v.is_none() {
+        debug_assert_vm(false, &format!("stack underflow during {}", context()));
+    }
+    v
+}
+
 pub(crate) fn stack_pop_opt(stack: &mut Vec<RuntimeValue>, context: &str) -> Option<RuntimeValue> {
     if let Some(v) = stack.pop() {
         Some(v)

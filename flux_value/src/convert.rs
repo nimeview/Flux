@@ -27,16 +27,12 @@ pub fn value_to_tagged(v: &Value) -> TaggedVal {
             let items: Vec<TaggedVal> = elems.iter().map(value_to_tagged).collect();
             TaggedVal::from_array_id(crate::heap::store_array(items))
         }
-        Value::UserEnum {
-            type_name,
-            variant,
-            payload,
-        } => {
-            let p = payload.as_ref().map(|inner| value_to_tagged(inner));
-            TaggedVal::from_enum_id(store_enum(type_name, variant, p))
+        Value::UserEnum(e) => {
+            let p = e.payload.as_ref().map(value_to_tagged);
+            TaggedVal::from_enum_id(store_enum(&e.type_name, &e.variant, p))
         }
         Value::Unit => TaggedVal::UNIT,
-        Value::UserStruct { .. } | Value::Option(_) | Value::Result(_) | Value::Map(_) => {
+        Value::UserStruct(_) | Value::Option(_) | Value::Result(_) | Value::Map(_) => {
             TaggedVal::UNIT
         }
     }
@@ -54,8 +50,8 @@ pub fn is_tag_representable(v: &Value) -> bool {
         | Value::String(_)
         | Value::Unit => true,
         Value::Array(items) => items.iter().all(is_tag_representable),
-        Value::UserEnum { payload, .. } => payload.as_deref().is_none_or(is_tag_representable),
-        Value::UserStruct { .. } | Value::Option(_) | Value::Result(_) | Value::Map(_) => false,
+        Value::UserEnum(e) => e.payload.as_ref().is_none_or(is_tag_representable),
+        Value::UserStruct(_) | Value::Option(_) | Value::Result(_) | Value::Map(_) => false,
     }
 }
 
@@ -85,10 +81,8 @@ pub fn tagged_to_value(tv: TaggedVal) -> Value {
             .map(Value::String)
             .unwrap_or(Value::Unit),
         TAG_ENUM => get_enum(tv.data)
-            .map(|(type_name, variant, payload)| Value::UserEnum {
-                type_name,
-                variant,
-                payload: payload.map(|p| Box::new(tagged_to_value(p))),
+            .map(|(type_name, variant, payload)| {
+                Value::user_enum(type_name, variant, payload.map(tagged_to_value))
             })
             .unwrap_or(Value::Unit),
         _ => Value::Unit,

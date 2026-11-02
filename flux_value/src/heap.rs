@@ -191,6 +191,26 @@ pub fn get_enum(id: u64) -> Option<(String, String, Option<TaggedVal>)> {
         .map(|e| (e.type_name.clone(), e.variant.clone(), e.payload))
 }
 
+/// Whether enum `id` is the variant named by interned string `name_id`. One
+/// lock and no copies: compiled `match` calls this per arm.
+pub fn enum_variant_is(id: u64, name_id: u64) -> bool {
+    let guard = stores().lock().expect("flux_value heap mutex poisoned");
+    match (guard.enums.get(&id), guard.strings.get(&name_id)) {
+        (Some(e), Some(name)) => e.variant == *name,
+        _ => false,
+    }
+}
+
+/// Enum `id`'s payload, without copying its names.
+pub fn enum_payload(id: u64) -> Option<TaggedVal> {
+    stores()
+        .lock()
+        .expect("flux_value heap mutex poisoned")
+        .enums
+        .get(&id)
+        .and_then(|e| e.payload)
+}
+
 pub fn store_array(items: Vec<TaggedVal>) -> u64 {
     let id = alloc_id();
     record(ScopedEntry::Array(id));

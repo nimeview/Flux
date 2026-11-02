@@ -26,7 +26,61 @@ use values::{code_has_lazy_if, eval_const, watch_should_run};
 
 /// A function's local bindings. Keys are compiler-generated names, so the
 /// fast non-DoS-resistant hasher is safe here.
-pub(crate) type Locals = rustc_hash::FxHashMap<String, RuntimeValue>;
+///
+/// An unbound name may keep its key with no value: a map reused by a later
+/// call keeps its keys, so rebinding them allocates nothing. A key without
+/// a value behaves exactly like a missing one.
+#[derive(Default)]
+pub(crate) struct Locals {
+    map: rustc_hash::FxHashMap<String, Option<RuntimeValue>>,
+}
+
+impl Locals {
+    pub(crate) fn get(&self, name: &str) -> Option<&RuntimeValue> {
+        self.map.get(name)?.as_ref()
+    }
+
+    pub(crate) fn get_mut(&mut self, name: &str) -> Option<&mut RuntimeValue> {
+        self.map.get_mut(name)?.as_mut()
+    }
+
+    pub(crate) fn contains_key(&self, name: &str) -> bool {
+        self.get(name).is_some()
+    }
+
+    pub(crate) fn remove(&mut self, name: &str) -> Option<RuntimeValue> {
+        self.map.get_mut(name)?.take()
+    }
+
+    /// Binds `name`, allocating its key only when the map never held it.
+    pub(crate) fn bind(&mut self, name: &str, value: RuntimeValue) {
+        match self.map.get_mut(name) {
+            Some(slot) => *slot = Some(value),
+            None => {
+                self.map.insert(name.to_owned(), Some(value));
+            }
+        }
+    }
+
+    /// Unbinds every name for reuse by another call. Keys are kept while
+    /// there are few (the map then serves the same few functions without
+    /// allocating); a map that grew large is cleared so unbinding stays cheap.
+    fn unbind_all(&mut self) {
+        if self.map.len() > LOCALS_KEEP_KEYS {
+            self.map.clear();
+        } else {
+            for slot in self.map.values_mut() {
+                *slot = None;
+            }
+        }
+    }
+}
+
+/// Locals maps kept for reuse; deeper recursion allocates beyond this.
+const LOCALS_POOL_LIMIT: usize = 64;
+
+/// Most keys a reused locals map keeps between calls.
+const LOCALS_KEEP_KEYS: usize = 32;
 
 #[cfg(feature = "jit")]
 fn tagged_to_runtime(tv: flux_value::TaggedVal) -> RuntimeValue {
@@ -73,6 +127,9 @@ pub struct Executor {
     trap: Option<RuntimeError>,
     /// Operand stacks reused across expression evaluations.
     stack_pool: Vec<Vec<RuntimeValue>>,
+    /// Unbound locals maps reused by calls: allocating a table and its keys
+    /// per call dominated call-heavy loops.
+    locals_pool: Vec<Locals>,
     /// `return`/`break`/`continue` raised inside an expression (a match arm
     /// block), on its way to the enclosing statement.
     pending_flow: Option<(RuntimeValue, FlowControl)>,
@@ -169,6 +226,7 @@ impl Executor {
             backend,
             tracking_scope: None,
             stack_pool: Vec::new(),
+            locals_pool: Vec::new(),
             pending_flow: None,
             call_depth: 0,
             trap: None,
@@ -308,7 +366,7 @@ impl Executor {
             let handler = self.program.on_handlers[idx].clone();
             let mut locals = Locals::default();
             if let Some(param) = &handler.param {
-                locals.insert(param.clone(), payload.clone());
+                locals.bind(param, payload.clone());
             }
             if !self.try_run_jit_on(idx, &handler.body, &mut locals, payload.clone()) {
                 self.run_stmts(&handler.body, &mut locals);
@@ -610,7 +668,7 @@ impl Executor {
             if self.is_source_binding(&target) {
                 self.set_source(&target, val);
             } else {
-                locals.insert(target, val);
+                locals.bind(&target, val);
             }
         }
     }

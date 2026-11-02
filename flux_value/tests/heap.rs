@@ -36,11 +36,7 @@ fn value_tagged_roundtrip_primitives() {
 fn value_tagged_roundtrip_enum_and_array() {
     let _guard = heap_test_lock();
     clear_for_tests();
-    let en = Value::UserEnum {
-        type_name: "Color".into(),
-        variant: "Green".into(),
-        payload: None,
-    };
+    let en = Value::user_enum("Color".into(), "Green".into(), None);
     assert_eq!(tagged_to_value(value_to_tagged(&en)), en);
 
     let arr = Value::array(vec![Value::int_i64(1), Value::int_i64(2)]);

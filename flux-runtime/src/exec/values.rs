@@ -11,7 +11,7 @@ use crate::vm::{debug_assert_vm, stack_pop};
 
 pub(super) fn variant_tag_eq(val: Option<&RuntimeValue>, variant: &str) -> bool {
     match val {
-        Some(RuntimeValue::UserEnum { variant: v, .. }) => v == variant,
+        Some(RuntimeValue::UserEnum(e)) => e.variant == variant,
         Some(RuntimeValue::Option(Some(_))) => variant == "Some",
         Some(RuntimeValue::Option(None)) => variant == "None",
         Some(RuntimeValue::Result(Ok(_))) => variant == "Ok",
@@ -29,10 +29,11 @@ pub(super) fn extract_variant_payload(
             debug_assert_vm(false, "VariantPayloadGet: missing value on stack");
             RuntimeValue::Unit
         }
-        Some(RuntimeValue::UserEnum { payload, .. }) => {
+        Some(RuntimeValue::UserEnum(e)) => {
+            let payload = &e.payload;
             if let Some(field) = field {
-                if let Some(RuntimeValue::UserStruct { fields, .. }) = payload.as_deref() {
-                    return match fields.get(field) {
+                if let Some(RuntimeValue::UserStruct(s)) = payload {
+                    return match s.fields.get(field) {
                         Some(v) => v.clone(),
                         None => {
                             debug_assert_vm(
@@ -46,7 +47,7 @@ pub(super) fn extract_variant_payload(
                 debug_assert_vm(false, "VariantPayloadGet: expected struct payload");
                 RuntimeValue::Unit
             } else {
-                payload.as_deref().cloned().unwrap_or_else(|| {
+                payload.clone().unwrap_or_else(|| {
                     debug_assert_vm(false, "VariantPayloadGet: missing enum payload");
                     RuntimeValue::Unit
                 })
@@ -65,11 +66,34 @@ pub(super) fn extract_variant_payload(
     }
 }
 
+/// Both top operands as `Int64`: the common case, computed in place
+/// instead of moving two values off the stack and one back.
+fn top_i64_pair(stack: &[RuntimeValue]) -> Option<(i64, i64)> {
+    use flux_value::IntWidth::I64;
+    match stack {
+        [.., RuntimeValue::Int {
+            width: I64,
+            bits: a,
+        }, RuntimeValue::Int {
+            width: I64,
+            bits: b,
+        }] => Some((*a as i64, *b as i64)),
+        _ => None,
+    }
+}
+
 /// Ordered comparison; NaN compares false, matching IEEE.
 pub(super) fn cmp<F>(stack: &mut Vec<RuntimeValue>, f: F)
 where
     F: FnOnce(std::cmp::Ordering) -> bool,
 {
+    if let Some((x, y)) = top_i64_pair(stack) {
+        stack.pop();
+        if let Some(top) = stack.last_mut() {
+            *top = RuntimeValue::Bool(f(x.cmp(&y)));
+        }
+        return;
+    }
     let b = stack_pop(stack, "comparison rhs");
     let a = stack_pop(stack, "comparison lhs");
     debug_assert_vm(
@@ -91,6 +115,14 @@ pub(super) fn eq_binop(stack: &mut Vec<RuntimeValue>, negate: bool) {
 
 /// `+ - * / %`; `+` also concatenates strings.
 pub(super) fn arith_binop(stack: &mut Vec<RuntimeValue>, op: NumOp) -> Result<(), ArithError> {
+    if let Some((x, y)) = top_i64_pair(stack) {
+        let result = flux_value::binary_i64(op, x, y)?;
+        stack.pop();
+        if let Some(top) = stack.last_mut() {
+            *top = result;
+        }
+        return Ok(());
+    }
     let b = stack_pop(stack, "arithmetic rhs");
     let a = stack_pop(stack, "arithmetic lhs");
     if let (NumOp::Add, RuntimeValue::String(a), RuntimeValue::String(b)) = (op, &a, &b) {

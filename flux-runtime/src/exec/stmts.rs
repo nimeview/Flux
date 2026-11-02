@@ -76,7 +76,7 @@ impl Executor {
                 } else if let Some(slot) = locals.get_mut(target) {
                     *slot = value.clone();
                 } else {
-                    locals.insert(target.clone(), value.clone());
+                    locals.bind(target, value.clone());
                 }
                 StmtResult {
                     value,
@@ -88,7 +88,7 @@ impl Executor {
                 if let Some(stop) = self.interrupted() {
                     return stop;
                 }
-                locals.insert(name.clone(), value.clone());
+                locals.bind(name, value.clone());
                 StmtResult {
                     value,
                     flow: FlowControl::None,
@@ -211,7 +211,7 @@ impl Executor {
                     _ => vec![],
                 };
                 'for_loop: for item in items {
-                    locals.insert(var.clone(), item);
+                    locals.bind(var, item);
                     drop(std::mem::replace(&mut last, RuntimeValue::Unit));
                     let result = self.run_stmts_flow(body, locals);
                     if let Some(stop) = self.interrupted() {
