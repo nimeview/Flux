@@ -6,6 +6,7 @@ pub(crate) fn is_numeric_code(code: &[Inst], jit_fns: &HashSet<String>) -> bool 
     code.iter().all(|i| match i {
         Inst::Const(_)
         | Inst::Load(_)
+        | Inst::LoadLocal { .. }
         | Inst::Add
         | Inst::Sub
         | Inst::Mul
@@ -39,10 +40,10 @@ pub(crate) fn is_numeric_code(code: &[Inst], jit_fns: &HashSet<String>) -> bool 
         Inst::EnumTagEq(_)
         | Inst::VariantTagEq(_)
         | Inst::VariantPayloadGet { field: None }
-        | Inst::BindLocal(_) => true,
+        | Inst::BindLocal { .. } => true,
         // A struct-variant field (`Shape::Rect { w, h }`) has no lowering.
         Inst::VariantPayloadGet { field: Some(_) } => false,
-        Inst::Take(_) | Inst::Block(_) | Inst::Try => false,
+        Inst::Take(_) | Inst::TakeLocal { .. } | Inst::Block(_) | Inst::Try => false,
         Inst::MakeUserEnum { .. } => true,
         Inst::MakeUserStruct { .. } | Inst::FieldGet(_) => false,
     })

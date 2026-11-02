@@ -54,13 +54,9 @@ pub(crate) fn stack_pop_opt(stack: &mut Vec<RuntimeValue>, context: &str) -> Opt
 
 pub(crate) fn resolve_load(
     name: &str,
-    locals: &crate::exec::Locals,
     graph: &ReactiveGraph,
     functions: &std::collections::HashMap<String, std::sync::Arc<CompiledFunction>>,
 ) -> RuntimeValue {
-    if let Some(v) = locals.get(name) {
-        return v.clone();
-    }
     if let Some(v) = graph.get_by_name(name) {
         return v.clone();
     }
@@ -74,15 +70,13 @@ pub(crate) fn resolve_load(
     RuntimeValue::Unit
 }
 
-/// Whether `resolve_load` finds `name` (a local, binding, or function).
+/// Whether `resolve_load` finds `name` (a binding or function).
 pub(crate) fn is_bound(
     name: &str,
-    locals: &crate::exec::Locals,
     graph: &ReactiveGraph,
     functions: &std::collections::HashMap<String, std::sync::Arc<CompiledFunction>>,
 ) -> bool {
-    locals.contains_key(name)
-        || graph.get_by_name(name).is_some()
+    graph.get_by_name(name).is_some()
         || functions.contains_key(name)
         || flux_std::is_builtin_fn(name)
 }
@@ -143,11 +137,11 @@ fn validate_stmt(
     context: &str,
 ) -> Result<(), String> {
     match stmt {
-        IrStmt::Assign { target, expr } => {
+        IrStmt::Assign { target, expr, .. } => {
             validate_code(expr, allowed.clone(), context)?;
             allowed.insert(target.clone());
         }
-        IrStmt::Let { name, expr } => {
+        IrStmt::Let { name, expr, .. } => {
             validate_code(expr, allowed.clone(), context)?;
             allowed.insert(name.clone());
         }
@@ -175,7 +169,9 @@ fn validate_stmt(
             validate_code(cond, allowed.clone(), context)?;
             validate_stmts(body, allowed.clone(), context)?;
         }
-        IrStmt::For { var, iter, body } => {
+        IrStmt::For {
+            var, iter, body, ..
+        } => {
             validate_code(iter, allowed.clone(), context)?;
             let mut loop_allowed = allowed.clone();
             loop_allowed.insert(var.clone());
@@ -189,13 +185,16 @@ fn validate_stmt(
 fn validate_code(code: &[Inst], mut allowed: HashSet<String>, context: &str) -> Result<(), String> {
     for inst in code {
         match inst {
-            Inst::Load(name) | Inst::Take(name)
+            Inst::Load(name)
+            | Inst::Take(name)
+            | Inst::LoadLocal { name, .. }
+            | Inst::TakeLocal { name, .. }
                 if !allowed.contains(name) && !flux_std::is_builtin_fn(name) =>
             {
                 return Err(format!("Load of undefined name `{name}` in {context}"));
             }
-            Inst::Load(_) | Inst::Take(_) => {}
-            Inst::BindLocal(name) => {
+            Inst::Load(_) | Inst::Take(_) | Inst::LoadLocal { .. } | Inst::TakeLocal { .. } => {}
+            Inst::BindLocal { name, .. } => {
                 allowed.insert(name.clone());
             }
             // Its `let`s stay visible to the rest of the arm.

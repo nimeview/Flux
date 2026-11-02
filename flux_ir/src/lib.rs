@@ -1,5 +1,6 @@
 mod codegen;
 mod lower;
+mod resolve;
 
 use std::collections::HashMap;
 
@@ -7,6 +8,7 @@ use serde::{Deserialize, Serialize};
 
 pub use codegen::{Codegen, IrCodegen};
 pub use lower::lower_to_ir;
+pub use resolve::resolve_locals;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct NodeId(pub u32);
@@ -65,11 +67,24 @@ pub enum IrValue {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Inst {
     Const(IrValue),
+    /// A binding, function, or builtin by name. Locals are `LoadLocal` once
+    /// [`resolve_locals`] has run.
     Load(String),
+    /// A local's frame slot. An unbound slot (a `let` not yet run) reads
+    /// `name` as a global instead, exactly like a name-based lookup.
+    LoadLocal {
+        slot: u32,
+        name: String,
+    },
     /// Moves a local out (it is unbound until reassigned). Only emitted for
     /// `x = push(x, v)` / `x = set(x, i, v)` when the other arguments do not
     /// read `x`, so the array is not shared and is updated in place.
     Take(String),
+    /// `Take` of a local's frame slot; resolved like `LoadLocal`.
+    TakeLocal {
+        slot: u32,
+        name: String,
+    },
     /// Statements run in the current locals, pushing nothing: a match arm
     /// block with control flow. A `return`/`break`/`continue` inside leaves
     /// the expression and acts on the enclosing function or loop.
@@ -108,7 +123,11 @@ pub enum Inst {
     VariantPayloadGet {
         field: Option<String>,
     },
-    BindLocal(String),
+    /// Binds a pattern variable; `slot` is assigned by [`resolve_locals`].
+    BindLocal {
+        name: String,
+        slot: u32,
+    },
     MakeUserEnum {
         type_name: String,
         variant: String,
@@ -131,12 +150,17 @@ pub enum Inst {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum IrStmt {
+    /// `slot` is the target's frame slot, or `None` for a reactive source
+    /// (assigned by name); set by [`resolve_locals`].
     Assign {
         target: String,
+        slot: Option<u32>,
         expr: Vec<Inst>,
     },
+    /// `slot` is set by [`resolve_locals`].
     Let {
         name: String,
+        slot: u32,
         expr: Vec<Inst>,
     },
     Emit {
@@ -155,8 +179,10 @@ pub enum IrStmt {
         cond: Vec<Inst>,
         body: Vec<IrStmt>,
     },
+    /// `slot` (the loop variable's) is set by [`resolve_locals`].
     For {
         var: String,
+        slot: u32,
         iter: Vec<Inst>,
         body: Vec<IrStmt>,
     },

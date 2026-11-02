@@ -41,16 +41,18 @@ impl Executor {
             }
             match inst {
                 Inst::Const(v) => stack.push(to_runtime(v)),
-                Inst::Load(name) => match locals.get(name) {
-                    // Locals are never reactive dependencies.
+                Inst::Load(name) => match self.load_global(name) {
+                    Some(v) => stack.push(v),
+                    None => return self.unbound(name),
+                },
+                // Locals are never reactive dependencies; an unbound slot
+                // reads the name as a global, like `Load`.
+                Inst::LoadLocal { slot, name } => match locals.get(*slot) {
                     Some(v) => stack.push(v.clone()),
-                    None => {
-                        self.record_dep_load(name, locals);
-                        if !is_bound(name, locals, &self.graph, &self.functions) {
-                            return self.unbound(name);
-                        }
-                        stack.push(resolve_load(name, locals, &self.graph, &self.functions));
-                    }
+                    None => match self.load_global(name) {
+                        Some(v) => stack.push(v),
+                        None => return self.unbound(name),
+                    },
                 },
                 Inst::Block(stmts) => {
                     let (value, flow) = self.run_stmts_flow(stmts, locals);
@@ -101,12 +103,16 @@ impl Executor {
                         return RuntimeValue::Unit;
                     }
                 },
-                Inst::Take(name) => match locals.remove(name) {
+                Inst::Take(name) => match self.load_global(name) {
                     Some(v) => stack.push(v),
-                    None if !is_bound(name, locals, &self.graph, &self.functions) => {
-                        return self.unbound(name);
-                    }
-                    None => stack.push(resolve_load(name, locals, &self.graph, &self.functions)),
+                    None => return self.unbound(name),
+                },
+                Inst::TakeLocal { slot, name } => match locals.take(*slot) {
+                    Some(v) => stack.push(v),
+                    None => match self.load_global(name) {
+                        Some(v) => stack.push(v),
+                        None => return self.unbound(name),
+                    },
                 },
                 Inst::Add | Inst::Sub | Inst::Mul | Inst::Div | Inst::Rem => {
                     let op = match inst {
@@ -297,9 +303,9 @@ impl Executor {
                     let extracted = extract_variant_payload(val.as_ref(), field.as_deref());
                     stack.push(extracted);
                 }
-                Inst::BindLocal(name) => {
+                Inst::BindLocal { name, slot } => {
                     let val = stack_pop_with(stack, || format!("BindLocal `{name}`"));
-                    locals.bind(name, val);
+                    locals.set(*slot, val);
                 }
                 Inst::MakeUserEnum {
                     type_name,
@@ -360,6 +366,14 @@ impl Executor {
 
     /// A name with no value at run time is a compiler bug: stop with an
     /// internal error rather than continue with `()`.
+    /// A binding, function, or builtin by name, recording a reactive read;
+    /// `None` if nothing has that name.
+    fn load_global(&mut self, name: &str) -> Option<RuntimeValue> {
+        self.record_dep_load(name);
+        is_bound(name, &self.graph, &self.functions)
+            .then(|| resolve_load(name, &self.graph, &self.functions))
+    }
+
     fn unbound(&mut self, name: &str) -> RuntimeValue {
         debug_assert_vm(false, &format!("unbound name `{name}` at runtime"));
         self.raise(flux_value::ArithError::Internal);
@@ -532,11 +546,12 @@ impl Executor {
             None => {}
         }
         let mut locals = self.locals_pool.pop().unwrap_or_default();
-        for (param, arg) in func.params.iter().zip(args.iter()) {
-            locals.bind(param, arg.clone());
+        // Parameters are slots `0..n`.
+        for (slot, arg) in (0..func.params.len() as u32).zip(args.iter()) {
+            locals.set(slot, arg.clone());
         }
         let (value, _) = self.run_stmts_flow(&func.body, &mut locals);
-        locals.unbind_all();
+        locals.clear();
         if self.locals_pool.len() < super::LOCALS_POOL_LIMIT {
             self.locals_pool.push(locals);
         }

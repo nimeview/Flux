@@ -799,7 +799,7 @@ fn collect_lazy_if_loads(code: &[Inst]) -> HashSet<String> {
 fn collect_lazy_if_loads_rec(code: &[Inst], set: &mut HashSet<String>) {
     for inst in code {
         match inst {
-            Inst::Load(name) => {
+            Inst::Load(name) | Inst::LoadLocal { name, .. } => {
                 set.insert(name.clone());
             }
             Inst::LazyIf {

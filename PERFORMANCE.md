@@ -225,10 +225,31 @@ Compiled `match` on an enum called the host per arm (`flux_jit_enum_variant_eq`)
 
 **Tried and rejected: compiling structs in the JIT.** Struct support was implemented and passed the parity tests: a `TAG_STRUCT` heap record, struct construction and field reads through the host, and struct-variant patterns. It was nevertheless slower on `structs_match`: JIT 16.1 → 22.4 ms, and still 18.5 ms after the lookup fix above, against 15.9 ms on the VM path. On every call into compiled code the struct (and the enum around it) had to be copied into heap-pool records under the mutex, field names included, and every field read was another locked host call. The interpreter now reads an `Arc`-shared struct directly, which costs less than that round trip. So code that uses structs keeps running on the VM under `--jit`. Making the JIT faster for structs needs a different value representation in compiled code: handles that point at the shared `Value` instead of copies in the mutex-guarded pools. `jit_parity_structs_and_struct_variant_fields` checks VM and JIT results on that fallback path.
 
+## Slot locals (2026-11-02)
+
+Turbo Boost off. A/B against 25dd765 in a temporary worktree, same session.
+
+| Workload | VM before | VM after | JIT before | JIT after |
+|----------|-----------|----------|------------|-----------|
+| compute_loop | 101 ms | **64 ms** | 2.20 ms | 2.21 ms |
+| enum_match | 387 ms | **298 ms** | 135 ms | 138 ms |
+| structs_match | 15.3 ms | **12.9 ms** | 16.5 ms | **13.8 ms** |
+| recursion | 15.2 ms | **13.2 ms** | 239 µs | 242 µs |
+| collections | 18.1 ms | **16.1 ms** | 14.0 ms | 15.1 ms⁴ |
+| strings | 23.1 ms | 22.0 ms | 22.8 ms | 22.5 ms |
+| reactive_events_1000 | 8.9 ms | 8.6 ms | 10.5 ms | 10.1 ms |
+| compile_inventory_totals | 1.96 ms | 1.94 ms | 2.02 ms | 1.98 ms |
+
+⁴ Confirmed on two alternating re-runs (+8%), with the same functions compiled. On the same program at 2,000,000 elements (`flux run --jit`, two runs each), the new build is faster: 1.42 s vs 1.50 s. So the gap is a fixed cost or code layout, not a per-element one.
+
+Locals used to be keyed by name: every `Load`, `let`, and assignment hashed the name and compared strings. The new pass `flux_ir::resolve_locals` gives each body (function, `on`, `watch`, derived expression, module init) a frame. Parameters take slots `0..n`, and every other name the body binds gets the next slot. Local reads become `Inst::LoadLocal { slot, name }` (and `TakeLocal`), and `let`, `for`, `BindLocal`, and assignments carry their slot. The VM frame is a `Vec<Option<Value>>`.
+
+Behavior is unchanged by construction: a slot is unbound until its binding runs, and an unbound slot reads `name` as a global, exactly as a missed name lookup did. An assignment to a reactive source has no slot and still goes by name, because the VM checked sources first. The pass runs at the end of lowering and again in `Executor::with_mode`, and it is idempotent, so hand-built IR works too. Cached IR is invalidated automatically, because the compiler fingerprint hashes `flux_ir`. The JIT treats the slot forms like their name forms. Tests: `flux_ir/tests/resolve.rs`, plus the existing VM/JIT parity and differential suites.
+
 ## Findings
 
 1. **Arrays were copied quadratically (fixed).** `Value::Array(Vec<Value>)` has full value semantics, so every read of a local array (`len(xs)`, `get(xs, i)`, passing it to a function) deep-clones it, nested structs included. `xs = push(xs, v)` copies it as well, because the old value is still held by `xs` during the call. Doubling the size roughly quadruples the time, for building (`push`: 500 → 0.3 s, 1,000 → 0.9 s, 2,000 → 3.6 s) and for indexed scanning (1,000 → 1.1 s, 2,000 → 4.2 s). Fix:
    - `Value::Array` is an `Arc<Vec<Value>>`, so reads and argument passing share it, and mutation copies on write.
    - `x = push(x, v)` on a local lowers to `Inst::Take x`, which moves the array out of the local, so `push` appends in place. This happens only when `v` does not read `x`. The JIT treats `Take` as ineligible and falls back to the VM.
    - Statement and loop runners release the previous statement's value before running the next one, so it no longer keeps the array shared.
-2. The interpreter loop cost about 1.5 µs per iteration (`compute_loop`, turbo on). Half of that went to allocation and hashing; see the sections above. Moving 72-byte values was the next largest cost (fixed by the 32-byte `Value`). Locals are still resolved by name, but by measurement that is not the bottleneck.
+2. The interpreter loop cost about 1.5 µs per iteration (`compute_loop`, turbo on). Half of that went to allocation and hashing; see the sections above. Moving 72-byte values was the next largest cost (fixed by the 32-byte `Value`). Locals are now frame slots (see "Slot locals").

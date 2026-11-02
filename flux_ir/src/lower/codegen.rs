@@ -25,9 +25,10 @@ fn emit_arm_body(arm: &HirMatchArm, program: &HirProgram, code: &mut Vec<Inst>) 
             _ => continue,
         };
         emit_expr(value, program, code);
-        code.push(Inst::BindLocal(
-            target.unwrap_or_else(|| "\0flux_discard".to_string()),
-        ));
+        code.push(Inst::BindLocal {
+            name: target.unwrap_or_else(|| "\0flux_discard".to_string()),
+            slot: 0,
+        });
     }
 }
 
@@ -45,13 +46,13 @@ fn emit_match_bindings(
         code.push(Inst::VariantPayloadGet { field: None });
         if let Some(sym) = arm.bindings.first() {
             if let Some(name) = runtime_symbol_name(program, sym) {
-                code.push(Inst::BindLocal(name));
+                code.push(Inst::BindLocal { name, slot: 0 });
             }
         }
     } else if arm.variant.is_empty() && arm.bindings.len() == 1 {
         code.push(Inst::Load(scrutinee_name.to_string()));
         if let Some(name) = runtime_symbol_name(program, &arm.bindings[0]) {
-            code.push(Inst::BindLocal(name));
+            code.push(Inst::BindLocal { name, slot: 0 });
         }
     } else if !arm.binding_fields.is_empty() {
         for (sym, field) in arm.bindings.iter().zip(arm.binding_fields.iter()) {
@@ -60,7 +61,7 @@ fn emit_match_bindings(
                 field: Some(field.clone()),
             });
             if let Some(name) = runtime_symbol_name(program, sym) {
-                code.push(Inst::BindLocal(name));
+                code.push(Inst::BindLocal { name, slot: 0 });
             }
         }
     }
@@ -298,7 +299,10 @@ fn emit_expr(expr: &HirExpr, program: &HirProgram, code: &mut Vec<Inst>) {
             // with a user local or module binding.
             let temp = format!("\0flux_match_{}_{}", span.source.0, span.start);
             emit_expr(scrutinee, program, code);
-            code.push(Inst::BindLocal(temp.clone()));
+            code.push(Inst::BindLocal {
+                name: temp.clone(),
+                slot: 0,
+            });
 
             // `LazyIf` ensures that only the selected arm executes. The initial
             // Unit is an unreachable fallback after the type check verifies

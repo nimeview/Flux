@@ -48,7 +48,8 @@ pub(crate) fn lower_insts(
         match inst {
             Inst::Const(v) => stack.push(emit_const(v, tables, b)?),
 
-            Inst::Load(name) => {
+            // Locals are Cranelift variables by name, so a slot load is a load.
+            Inst::Load(name) | Inst::LoadLocal { name, .. } => {
                 if let Some(pair) = locals.get(name, b) {
                     stack.push(pair);
                 } else {
@@ -413,8 +414,8 @@ pub(crate) fn lower_insts(
                 stack.push((results[0], results[1]));
             }
             // Ineligible (see `numeric.rs`); the VM runs these.
-            Inst::Take(_) | Inst::Block(_) | Inst::Try => return None,
-            Inst::BindLocal(name) => {
+            Inst::Take(_) | Inst::TakeLocal { .. } | Inst::Block(_) | Inst::Try => return None,
+            Inst::BindLocal { name, .. } => {
                 let val = stack.pop()?;
                 locals.set(name, val, b);
             }

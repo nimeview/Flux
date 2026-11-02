@@ -51,7 +51,7 @@ pub(crate) fn lower_stmts(
                     b,
                 )?;
             }
-            IrStmt::Let { name, expr } => {
+            IrStmt::Let { name, expr, .. } => {
                 last = lower_insts(
                     expr,
                     layout,
@@ -68,7 +68,7 @@ pub(crate) fn lower_stmts(
                 )?;
                 locals.set(name, last, b);
             }
-            IrStmt::Assign { target, expr } => {
+            IrStmt::Assign { target, expr, .. } => {
                 let (tag, data) = lower_insts(
                     expr,
                     layout,
@@ -250,7 +250,9 @@ pub(crate) fn lower_stmts(
                 b.seal_block(header_bb);
                 b.seal_block(exit_bb);
             }
-            IrStmt::For { var, iter, body } => {
+            IrStmt::For {
+                var, iter, body, ..
+            } => {
                 let (arr_tag, arr_data) = lower_insts(
                     iter,
                     layout,

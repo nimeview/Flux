@@ -24,63 +24,38 @@ use crate::ExecutionMode;
 
 use values::{code_has_lazy_if, eval_const, watch_should_run};
 
-/// A function's local bindings. Keys are compiler-generated names, so the
-/// fast non-DoS-resistant hasher is safe here.
-///
-/// An unbound name may keep its key with no value: a map reused by a later
-/// call keeps its keys, so rebinding them allocates nothing. A key without
-/// a value behaves exactly like a missing one.
+/// A frame of local bindings, indexed by the slots `flux_ir::resolve_locals`
+/// assigns. A slot is unbound (`None`) until its binding runs.
 #[derive(Default)]
 pub(crate) struct Locals {
-    map: rustc_hash::FxHashMap<String, Option<RuntimeValue>>,
+    slots: Vec<Option<RuntimeValue>>,
 }
 
 impl Locals {
-    pub(crate) fn get(&self, name: &str) -> Option<&RuntimeValue> {
-        self.map.get(name)?.as_ref()
+    pub(crate) fn get(&self, slot: u32) -> Option<&RuntimeValue> {
+        self.slots.get(slot as usize)?.as_ref()
     }
 
-    pub(crate) fn get_mut(&mut self, name: &str) -> Option<&mut RuntimeValue> {
-        self.map.get_mut(name)?.as_mut()
+    pub(crate) fn take(&mut self, slot: u32) -> Option<RuntimeValue> {
+        self.slots.get_mut(slot as usize)?.take()
     }
 
-    pub(crate) fn contains_key(&self, name: &str) -> bool {
-        self.get(name).is_some()
-    }
-
-    pub(crate) fn remove(&mut self, name: &str) -> Option<RuntimeValue> {
-        self.map.get_mut(name)?.take()
-    }
-
-    /// Binds `name`, allocating its key only when the map never held it.
-    pub(crate) fn bind(&mut self, name: &str, value: RuntimeValue) {
-        match self.map.get_mut(name) {
-            Some(slot) => *slot = Some(value),
-            None => {
-                self.map.insert(name.to_owned(), Some(value));
-            }
+    pub(crate) fn set(&mut self, slot: u32, value: RuntimeValue) {
+        let i = slot as usize;
+        if i >= self.slots.len() {
+            self.slots.resize_with(i + 1, || None);
         }
+        self.slots[i] = Some(value);
     }
 
-    /// Unbinds every name for reuse by another call. Keys are kept while
-    /// there are few (the map then serves the same few functions without
-    /// allocating); a map that grew large is cleared so unbinding stays cheap.
-    fn unbind_all(&mut self) {
-        if self.map.len() > LOCALS_KEEP_KEYS {
-            self.map.clear();
-        } else {
-            for slot in self.map.values_mut() {
-                *slot = None;
-            }
-        }
+    /// Unbinds every slot, keeping the allocation for the next call.
+    fn clear(&mut self) {
+        self.slots.clear();
     }
 }
 
-/// Locals maps kept for reuse; deeper recursion allocates beyond this.
+/// Frames kept for reuse; deeper recursion allocates beyond this.
 const LOCALS_POOL_LIMIT: usize = 64;
-
-/// Most keys a reused locals map keeps between calls.
-const LOCALS_KEEP_KEYS: usize = 32;
 
 #[cfg(feature = "jit")]
 fn tagged_to_runtime(tv: flux_value::TaggedVal) -> RuntimeValue {
@@ -127,8 +102,8 @@ pub struct Executor {
     trap: Option<RuntimeError>,
     /// Operand stacks reused across expression evaluations.
     stack_pool: Vec<Vec<RuntimeValue>>,
-    /// Unbound locals maps reused by calls: allocating a table and its keys
-    /// per call dominated call-heavy loops.
+    /// Cleared frames reused by calls: allocating one per call dominated
+    /// call-heavy loops.
     locals_pool: Vec<Locals>,
     /// `return`/`break`/`continue` raised inside an expression (a match arm
     /// block), on its way to the enclosing statement.
@@ -144,7 +119,12 @@ impl Executor {
     }
 
     /// Create an executor with an explicit engine choice.
-    pub fn with_mode(program: CompiledProgram, mode: ExecutionMode) -> Result<Self, ExecutorError> {
+    pub fn with_mode(
+        mut program: CompiledProgram,
+        mode: ExecutionMode,
+    ) -> Result<Self, ExecutorError> {
+        // Lowering already resolves slots; this covers IR built elsewhere.
+        flux_ir::resolve_locals(&mut program);
         validate_program(&program).map_err(ExecutorError::Invalid)?;
 
         let functions = program
@@ -365,8 +345,9 @@ impl Executor {
         for idx in handler_indices {
             let handler = self.program.on_handlers[idx].clone();
             let mut locals = Locals::default();
-            if let Some(param) = &handler.param {
-                locals.bind(param, payload.clone());
+            if handler.param.is_some() {
+                // A handler's parameter is slot 0.
+                locals.set(0, payload.clone());
             }
             if !self.try_run_jit_on(idx, &handler.body, &mut locals, payload.clone()) {
                 self.run_stmts(&handler.body, &mut locals);
@@ -521,13 +502,11 @@ impl Executor {
         self.graph.set_derived_deps(id, new_deps);
     }
 
-    pub(super) fn record_dep_load(&mut self, name: &str, locals: &Locals) {
+    /// Records a read of global `name` (a local is never a dependency).
+    pub(super) fn record_dep_load(&mut self, name: &str) {
         let Some(tracked) = self.tracking_scope.as_mut() else {
             return;
         };
-        if locals.contains_key(name) {
-            return;
-        }
         if let Some(&id) = self.graph.name_to_id.get(name) {
             tracked.insert(id);
         }
@@ -654,21 +633,20 @@ impl Executor {
         use flux_ir::IrStmt;
         // Compiled handlers assign sources only at the top level (see
         // `JitEngine::new`), so these are all the targets the run assigned.
-        let assigns: Vec<(String, RuntimeValue)> = body
+        let assigns: Vec<(String, Option<u32>, RuntimeValue)> = body
             .iter()
             .filter_map(|stmt| {
-                let IrStmt::Assign { target, .. } = stmt else {
+                let IrStmt::Assign { target, slot, .. } = stmt else {
                     return None;
                 };
                 let tv = self.backend.slot_tagged_in_buffer(target, slots)?;
-                Some((target.clone(), tagged_to_runtime(tv)))
+                Some((target.clone(), *slot, tagged_to_runtime(tv)))
             })
             .collect();
-        for (target, val) in assigns {
-            if self.is_source_binding(&target) {
-                self.set_source(&target, val);
-            } else {
-                locals.bind(&target, val);
+        for (target, slot, val) in assigns {
+            match slot {
+                Some(slot) => locals.set(slot, val),
+                None => self.set_source(&target, val),
             }
         }
     }

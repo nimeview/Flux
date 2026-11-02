@@ -156,6 +156,7 @@ pub fn lower_to_ir(
                     init_items.push(InitItem {
                         stmt: IrStmt::Assign {
                             target: target.clone(),
+                            slot: None,
                             expr: lower_expr(&b.value, program),
                         },
                         target: Some(b.name),
@@ -169,6 +170,7 @@ pub fn lower_to_ir(
                     init_items.push(InitItem {
                         stmt: IrStmt::Assign {
                             target: target.clone(),
+                            slot: None,
                             expr: lower_expr(&a.value, program),
                         },
                         target: None,
@@ -241,14 +243,16 @@ pub fn lower_to_ir(
         return None;
     }
 
-    Some(CompiledProgram {
+    let mut program = CompiledProgram {
         nodes,
         init_stmts,
         functions,
         watches,
         on_handlers,
         events,
-    })
+    };
+    crate::resolve_locals(&mut program);
+    Some(program)
 }
 
 struct InitItem {

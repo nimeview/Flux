@@ -56,6 +56,7 @@ fn stmts_numeric_accepts_if_and_emit() {
             cond: vec![Inst::Const(IrValue::Bool(true))],
             then_body: vec![IrStmt::Assign {
                 target: "x".into(),
+                slot: Some(0),
                 expr: vec![Inst::Const(IrValue::Int(1))],
             }],
             else_body: None,

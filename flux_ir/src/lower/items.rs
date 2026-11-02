@@ -62,7 +62,11 @@ fn lower_stmt(stmt: &HirStmt, program: &HirProgram) -> Option<IrStmt> {
             let target = runtime_symbol_name(program, &a.name)?;
             let mut expr = lower_expr(&a.value, program);
             take_for_push(&target, &mut expr);
-            Some(IrStmt::Assign { target, expr })
+            Some(IrStmt::Assign {
+                target,
+                slot: None,
+                expr,
+            })
         }
         HirStmt::Emit(e) => Some(IrStmt::Emit {
             event: program.names.get(&e.event)?.clone(),
@@ -73,6 +77,7 @@ fn lower_stmt(stmt: &HirStmt, program: &HirProgram) -> Option<IrStmt> {
         }),
         HirStmt::Let(l) => Some(IrStmt::Let {
             name: runtime_symbol_name(program, &l.name)?,
+            slot: 0,
             expr: lower_expr(&l.value, program),
         }),
         HirStmt::If(i) => Some(lower_if_stmt(i, program)),
@@ -82,6 +87,7 @@ fn lower_stmt(stmt: &HirStmt, program: &HirProgram) -> Option<IrStmt> {
         }),
         HirStmt::For(f) => Some(IrStmt::For {
             var: runtime_symbol_name(program, &f.name)?,
+            slot: 0,
             iter: lower_expr(&f.iter, program),
             body: lower_block(&f.body, program),
         }),
@@ -151,7 +157,7 @@ fn can_leave(code: &[Inst]) -> bool {
 
 fn mentions_name(code: &[Inst], target: &str) -> bool {
     code.iter().any(|inst| match inst {
-        Inst::Load(n) | Inst::Take(n) | Inst::BindLocal(n) => n == target,
+        Inst::Load(n) | Inst::Take(n) | Inst::BindLocal { name: n, .. } => n == target,
         Inst::ShortAnd(inner) | Inst::ShortOr(inner) => mentions_name(inner, target),
         Inst::LazyIf {
             then_branch,
