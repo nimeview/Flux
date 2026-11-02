@@ -9,7 +9,7 @@ use flux_syntax::UnaryOp;
 use crate::types::{resolve_type_name, Type};
 
 use super::super::resolve::resolve_hir_type;
-use super::super::state::TypeCheckContext;
+use super::super::state::{Scope, TypeCheckContext};
 use super::super::util::{
     lookup_name, numeric_type, trait_dispatch_tag, types_compatible, unwrap_value_type,
 };
@@ -21,7 +21,7 @@ fn bind_match_arm_locals(
     ctx: &TypeCheckContext,
     scrut_ty: &Type,
     arm: &HirMatchArm,
-    scope: &mut HashMap<SymbolId, Type>,
+    scope: &mut Scope<'_>,
     _source: SourceId,
     _diagnostics: &mut DiagnosticBag,
 ) {
@@ -67,7 +67,7 @@ fn bind_match_arm_locals(
 fn infer_arm_body(
     ctx: &TypeCheckContext,
     arm: &HirMatchArm,
-    scope: &mut HashMap<SymbolId, Type>,
+    scope: &mut Scope<'_>,
     names: &HashMap<SymbolId, String>,
     source: SourceId,
     diagnostics: &mut DiagnosticBag,
@@ -101,12 +101,12 @@ fn infer_arm_body(
             }
             // Control flow (allowed only inside functions).
             other => {
-                let module = scope.clone();
+                let module = scope.module();
                 super::super::stmt::check_stmt(
                     ctx,
                     other,
                     scope,
-                    &module,
+                    module,
                     names,
                     false,
                     source,
@@ -187,7 +187,7 @@ fn check_assignable(
 pub(crate) fn infer_expr(
     ctx: &TypeCheckContext,
     expr: &HirExpr,
-    types: &HashMap<SymbolId, Type>,
+    types: &Scope<'_>,
     names: &HashMap<SymbolId, String>,
     source: SourceId,
     diagnostics: &mut DiagnosticBag,
@@ -455,7 +455,9 @@ pub(crate) fn infer_expr(
                 // An arm for an unknown variant binds nothing; its error is
                 // reported once below, not again at every use of the binding.
                 for binding in &arm.bindings {
-                    arm_scope.entry(*binding).or_insert(Type::Error);
+                    if arm_scope.get(binding).is_none() {
+                        arm_scope.insert(*binding, Type::Error);
+                    }
                 }
                 if let Some(literal) = &arm.literal {
                     // A literal arm never covers the type: it needs a catch-all.

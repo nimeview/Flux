@@ -81,6 +81,31 @@ pub(crate) fn is_bound(
         || flux_std::is_builtin_fn(name)
 }
 
+/// Names a piece of code may load: the program's, shared, plus its locals.
+/// Each expression checks a copy, which must not include the whole program.
+#[derive(Clone)]
+struct Allowed<'a> {
+    global: &'a HashSet<String>,
+    local: HashSet<String>,
+}
+
+impl<'a> Allowed<'a> {
+    fn new(global: &'a HashSet<String>) -> Self {
+        Self {
+            global,
+            local: HashSet::new(),
+        }
+    }
+
+    fn contains(&self, name: &str) -> bool {
+        self.local.contains(name) || self.global.contains(name)
+    }
+
+    fn insert(&mut self, name: String) {
+        self.local.insert(name);
+    }
+}
+
 pub fn validate_program(program: &CompiledProgram) -> Result<(), String> {
     let graph_names: HashSet<String> = program.nodes.iter().map(|n| n.name.clone()).collect();
     let fn_names: HashSet<String> = program.functions.iter().map(|f| f.name.clone()).collect();
@@ -92,20 +117,24 @@ pub fn validate_program(program: &CompiledProgram) -> Result<(), String> {
         if node.kind == NodeKind::Derived {
             validate_code(
                 &node.code,
-                global_allowed.clone(),
+                Allowed::new(&global_allowed),
                 &format!("derived binding `{}`", node.name),
             )?;
         }
     }
 
-    validate_stmts(&program.init_stmts, global_allowed.clone(), "module init")?;
+    validate_stmts(
+        &program.init_stmts,
+        Allowed::new(&global_allowed),
+        "module init",
+    )?;
 
     for watch in &program.watches {
-        validate_stmts(&watch.body, global_allowed.clone(), "watch body")?;
+        validate_stmts(&watch.body, Allowed::new(&global_allowed), "watch body")?;
     }
 
     for handler in &program.on_handlers {
-        let mut allowed = global_allowed.clone();
+        let mut allowed = Allowed::new(&global_allowed);
         if let Some(param) = &handler.param {
             allowed.insert(param.clone());
         }
@@ -113,29 +142,23 @@ pub fn validate_program(program: &CompiledProgram) -> Result<(), String> {
     }
 
     for func in &program.functions {
-        let mut allowed = global_allowed.clone();
-        allowed.extend(func.params.iter().cloned());
+        let mut allowed = Allowed::new(&global_allowed);
+        for param in &func.params {
+            allowed.insert(param.clone());
+        }
         validate_stmts(&func.body, allowed, &format!("function `{}`", func.name))?;
     }
     Ok(())
 }
 
-fn validate_stmts(
-    stmts: &[IrStmt],
-    mut allowed: HashSet<String>,
-    context: &str,
-) -> Result<(), String> {
+fn validate_stmts(stmts: &[IrStmt], mut allowed: Allowed<'_>, context: &str) -> Result<(), String> {
     for stmt in stmts {
         validate_stmt(stmt, &mut allowed, context)?;
     }
     Ok(())
 }
 
-fn validate_stmt(
-    stmt: &IrStmt,
-    allowed: &mut HashSet<String>,
-    context: &str,
-) -> Result<(), String> {
+fn validate_stmt(stmt: &IrStmt, allowed: &mut Allowed<'_>, context: &str) -> Result<(), String> {
     match stmt {
         IrStmt::Assign { target, expr, .. } => {
             validate_code(expr, allowed.clone(), context)?;
@@ -182,7 +205,7 @@ fn validate_stmt(
     Ok(())
 }
 
-fn validate_code(code: &[Inst], mut allowed: HashSet<String>, context: &str) -> Result<(), String> {
+fn validate_code(code: &[Inst], mut allowed: Allowed<'_>, context: &str) -> Result<(), String> {
     for inst in code {
         match inst {
             Inst::Load(name)

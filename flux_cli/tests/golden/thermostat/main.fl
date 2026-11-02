@@ -1,0 +1,105 @@
+// A thermostat driven by commands on stdin: `temp N`, `target N`, `scale N`.
+// The heater and the display follow by themselves; a bad command is reported and
+// skipped, but a scale of zero is a runtime error that stops the program.
+import io { println, eprintln, read_line }
+
+import str { str_split, parse_int }
+
+import collections { len }
+
+import result { Ok, Err }
+
+event Temp(n: Int)
+
+event Target(n: Int)
+
+event Scale(n: Int)
+
+event Log(n: Int)
+
+let mut temp = 20
+
+let mut target = 21
+
+let mut scale = 1
+
+let mut changes = 0
+
+let shown = temp * 10 / scale
+
+let heating = temp < target
+
+let gap = if heating { target - temp } else { 0 }
+
+on Temp { n ->
+    temp = n
+}
+
+on Target { n ->
+    target = n
+    emit Log(n)
+}
+
+on Scale { n ->
+    scale = n
+}
+
+on Log { n ->
+    println("log: target is now {n}")
+}
+
+watch heating {
+    changes = changes + 1
+    if heating {
+        println("heater on, {gap} to go")
+    } else {
+        println("heater off")
+    }
+}
+
+watch shown {
+    println("display: {shown}")
+}
+
+watch changes {
+    println("heater changes: {changes}")
+}
+
+fn apply(line: String) -> Result[Bool, String] {
+    if line == "" {
+        return Ok(false)
+    }
+    let parts = str_split(line, " ")
+    if len(parts) != 2 {
+        return Err("expected `command value`: {line}")
+    }
+    let n = parse_int(parts[1])?
+    if parts[0] == "temp" {
+        emit Temp(n)
+    } else if parts[0] == "target" {
+        emit Target(n)
+    } else if parts[0] == "scale" {
+        emit Scale(n)
+    } else {
+        return Err("unknown command `{parts[0]}`")
+    }
+    Ok(true)
+}
+
+fn main() {
+    let mut going = true
+    while going {
+        match read_line() {
+            Ok(line) => match apply(line) {
+            Ok(more) => {
+                going = more
+            },
+            Err(e) => eprintln("skipped: {e}")
+        },
+            Err(_) => {
+                going = false
+            }
+        }
+    }
+    println("done")
+}

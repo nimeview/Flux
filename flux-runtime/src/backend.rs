@@ -10,7 +10,7 @@ use crate::ExecutionMode;
 /// A JIT-computed value, or the runtime error the compiled code raised.
 pub type JitResult = Result<RuntimeValue, flux_value::ArithError>;
 
-type HandlerResult = (JitResult, Vec<(String, RuntimeValue)>, Vec<u64>);
+type HandlerResult = (JitResult, Vec<u64>);
 
 #[cfg(feature = "jit")]
 fn from_tagged(tv: flux_value::TaggedVal) -> JitResult {
@@ -120,31 +120,8 @@ impl JitBackend {
         }
         let param_tv = param.map(flux_value::value_to_tagged);
         slots = self.engine.build_stmt_slots(key, &slots, param_tv);
-        flux_jit::take_emit_events();
         let result = self.engine.run_stmts_with(key, &slots).map(from_tagged)?;
-        let emitted = flux_jit::take_emit_events();
-        if result.is_err() {
-            // The handler aborted; its queued emits and slot writes are discarded.
-            return Some((result, Vec::new(), slots));
-        }
-        if emitted.is_empty() {
-            return Some((result, Vec::new(), slots));
-        }
-        let event_table: HashMap<u64, String> = self
-            .engine
-            .event_indices
-            .iter()
-            .map(|(name, idx)| (*idx as u64, name.clone()))
-            .collect();
-        let emits = emitted
-            .into_iter()
-            .filter_map(|(idx, tv)| {
-                event_table
-                    .get(&idx)
-                    .map(|event| (event.clone(), flux_value::tagged_to_value(tv)))
-            })
-            .collect();
-        Some((result, emits, slots))
+        Some((result, slots))
     }
 
     pub fn slot_tagged_in_buffer(

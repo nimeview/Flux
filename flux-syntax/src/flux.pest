@@ -44,7 +44,8 @@ enum_decl = { pub_modifier? ~ "enum" ~ ident ~ enum_variants }
 enum_variants = { "{" ~ enum_variant ~ ("," ~ enum_variant)* ~ "}" }
 enum_variant = { ident ~ enum_payload? }
 enum_payload = { tuple_payload | struct_payload }
-tuple_payload = { "(" ~ type_name ~ ")" }
+// More than one type parses so that the parser can explain the rule.
+tuple_payload = { "(" ~ type_name ~ ("," ~ type_name)* ~ ")" }
 struct_payload = { "{" ~ struct_field ~ ("," ~ struct_field)* ~ "}" }
 
 event_decl = { pub_modifier? ~ "event" ~ ident ~ event_params? }

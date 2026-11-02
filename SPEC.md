@@ -27,7 +27,7 @@ Flux is a statically typed language with **built-in reactivity**: module-level b
 
 Generics: `fn id[T](x: T) -> T` — monomorphized at compile time per call site.
 
-**Recursive types.** A struct or enum may refer to itself or to another user type that leads back to it, directly (`enum T { Leaf, Wrap(T) }`), through another type (`enum L { Nil, Cons(Node) }` with `struct Node { value: Int, next: L }`), or through `Option` and arrays (`struct Tree { kids: [Tree] }`). User types are compared by name. A value can be nested as deep as a program builds it; dropping, comparing, and printing it do not overflow the stack.
+**Recursive types.** A struct or enum may refer to itself or to another user type that leads back to it, directly (`enum T { Leaf, Wrap(T) }`), through another type (`enum L { Nil, Cons(Node) }` with `struct Node { value: Int, next: L }`), or through `Option` and arrays (`struct Tree { kids: [Tree] }`). User types are compared by name. A value can be nested as deep as a program builds it; dropping, comparing, and printing it do not overflow the stack. A type that has no finite value, such as `struct S { me: S }`, is **E025**.
 
 ### Casts
 
@@ -330,6 +330,7 @@ These limits keep extreme programs a language error rather than a native stack o
 | Nested function calls (recursion depth) | 10,000 active calls | runtime error `call depth limit exceeded (10000 nested calls)` (E018) |
 | Bracket nesting (`(`, `[`, `{`, string `{…}`) | 256 levels | parse error (E000) |
 | Consecutive unary `-`/`!` | 256 | parse error (E000) |
+| Generic specializations in a program | 1,024, with types nested at most 32 levels | compile error (E005) |
 | Syntax tree depth (e.g. one operator chain `1 + 1 + …`) | 1,000 levels | parse error (E000); split it with `let` |
 | Collection length (`range`, `push`, …) | 10,000,000 elements | runtime error `allocation limit exceeded` |
 | String built by `+` or interpolation | 100,000,000 bytes | runtime error `allocation limit exceeded` |
@@ -358,6 +359,8 @@ These limits keep extreme programs a language error rather than a native stack o
 | E021 | Invalid `?` (see §5, "The `?` operator") |
 | E022 | Importing a name the module declares without `pub` |
 | E023 | Calling something that is not a function |
+| E024 | A type alias that refers to itself |
+| E025 | A type with no possible values (`struct S { me: S }`) |
 
 A UTF-8 byte-order mark at the start of a file is ignored, like whitespace.
 
@@ -412,6 +415,6 @@ Pipeline: **parse → resolve imports → HIR → monomorphize → typecheck →
 - **Entry point.** If the root module defines `fn main()` or `fn main() -> Int` (no parameters; any other signature is a compile error), `flux run` calls it after module initialization. The program then owns stdout: no banner and no binding dump are printed. The exit status is `main`'s `Int` result (it must be 0..=255; another value is an error with status 1), or 0 for a `Unit` `main`. A runtime error in `main` is reported on stderr with status 1. Without `main`, `flux run` prints the module's reactive bindings as before.
 - `const` bindings are compile-time constants: a pure `fn` (including `main`) may read them. Reading `let` / `let mut` module bindings from a pure `fn` is still a reactive read (E002).
 - JIT opt-in: `--jit`, environment `FLUX_JIT=1`, or `[run] jit = true` in `flux.toml`
-- Cranelift JIT compiles numeric derived nodes, pure functions (including loops, early `return`, recursion, and calls to functions defined earlier), and eligible `watch`/`on` bodies with tag-aware int/float arithmetic. `LazyIf` branch deps are collected statically. `match` on integers and on user enums (tuple payloads) is compiled. Strings, struct-variant fields, `break`/`continue`, and other ineligible IR fall back to the VM. So does any call whose inputs include a struct, `Option`, or `Result`, which have no tagged form
+- Cranelift JIT compiles numeric derived nodes, pure functions (including loops, early `return`, recursion, and calls to functions defined earlier), and eligible `watch`/`on` bodies with tag-aware int/float arithmetic. `LazyIf` branch deps are collected statically. `match` on integers and on user enums (tuple payloads) and string `+` are compiled. Structs, struct-variant fields, `break`/`continue`, `emit`, calls through function values, and other ineligible IR fall back to the VM. So does any call whose inputs include a struct, a closure, `Option`, `Result`, or a map, which have no tagged form
 - `flux run --jit --verbose` prints JIT compile/fallback statistics
 - WASM backend: stub module header (future: full codegen)

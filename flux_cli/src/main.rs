@@ -350,6 +350,13 @@ fn lock_cmd(check: bool) -> Result<(), ()> {
         eprintln!("error: no flux.toml in this directory or its parents");
         return Err(());
     };
+    let missing = flux_resolve::lockfile::missing_dependencies(&root);
+    if !missing.is_empty() {
+        for dir in missing {
+            eprintln!("error: path dependency not found: {}", dir.display());
+        }
+        return Err(());
+    }
     match flux_resolve::lockfile::sync_lock(&root, check) {
         Ok(flux_resolve::lockfile::LockStatus::NoDependencies) => {
             println!("no dependencies; no flux.lock needed");

@@ -50,21 +50,21 @@ fn numeric_code_falls_back_for_struct_variant_fields() {
 }
 
 #[test]
-fn stmts_numeric_accepts_if_and_emit() {
-    let stmts = vec![
-        IrStmt::If {
-            cond: vec![Inst::Const(IrValue::Bool(true))],
-            then_body: vec![IrStmt::Assign {
-                target: "x".into(),
-                slot: Some(0),
-                expr: vec![Inst::Const(IrValue::Int(1))],
-            }],
-            else_body: None,
-        },
-        IrStmt::Emit {
-            event: "E".into(),
-            arg: None,
-        },
-    ];
-    assert!(stmts_are_jit_numeric(&stmts, &HashSet::new()));
+fn stmts_numeric_accepts_if_but_not_emit_or_loop_exits() {
+    let if_stmt = IrStmt::If {
+        cond: vec![Inst::Const(IrValue::Bool(true))],
+        then_body: vec![IrStmt::Assign {
+            target: "x".into(),
+            slot: Some(0),
+            expr: vec![Inst::Const(IrValue::Int(1))],
+        }],
+        else_body: None,
+    };
+    assert!(stmts_are_jit_numeric(&[if_stmt], &HashSet::new()));
+    let emit = IrStmt::Emit {
+        event: "E".into(),
+        arg: None,
+    };
+    assert!(!stmts_are_jit_numeric(&[emit], &HashSet::new()));
+    assert!(!stmts_are_jit_numeric(&[IrStmt::Break], &HashSet::new()));
 }

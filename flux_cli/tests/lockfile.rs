@@ -146,3 +146,26 @@ fn projects_without_dependencies_get_no_lock() {
     assert!(flux(&["check", "--locked"], dir.path()).status.success());
     assert!(!dir.path().join("flux.lock").exists());
 }
+
+#[test]
+fn lock_reports_a_dependency_whose_path_is_missing() {
+    let dir = tempfile::tempdir().unwrap();
+    write_tree(
+        dir.path(),
+        &[
+            (
+                "flux.toml",
+                "[package]\nname = \"app\"\nversion = \"0.1.0\"\nentry = \"main.fl\"\n\n[dependencies]\ngone = { path = \"../gone\" }\n",
+            ),
+            ("main.fl", "fn main() {\n}\n"),
+        ],
+    );
+    for args in [&["lock"][..], &["lock", "--check"][..]] {
+        let output = flux(args, dir.path());
+        assert_eq!(output.status.code(), Some(1), "{args:?}: {output:?}");
+        assert!(
+            text(&output.stderr).contains("path dependency not found"),
+            "{output:?}"
+        );
+    }
+}

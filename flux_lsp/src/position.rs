@@ -17,6 +17,41 @@ pub fn offset_to_position(text: &str, offset: usize) -> (u32, u32) {
     (line as u32, character as u32)
 }
 
+/// [`offset_to_position`] for many offsets into one text: finding the line
+/// once per diagnostic was quadratic on a file with many of them.
+pub struct LineIndex<'a> {
+    text: &'a str,
+    line_starts: Vec<usize>,
+}
+
+impl<'a> LineIndex<'a> {
+    pub fn new(text: &'a str) -> Self {
+        let mut line_starts = vec![0];
+        line_starts.extend(text.match_indices('\n').map(|(i, _)| i + 1));
+        Self { text, line_starts }
+    }
+
+    pub fn position(&self, offset: usize) -> (u32, u32) {
+        let mut offset = offset.min(self.text.len());
+        while !self.text.is_char_boundary(offset) {
+            offset -= 1;
+        }
+        let line = self.line_starts.partition_point(|&start| start <= offset) - 1;
+        let character = self.text[self.line_starts[line]..offset]
+            .encode_utf16()
+            .count();
+        (line as u32, character as u32)
+    }
+
+    /// [`byte_range_to_lsp`] for this text.
+    pub fn range(&self, start: usize, end: usize) -> (u32, u32, u32, u32) {
+        let end = widened_end(self.text, start, end);
+        let (sl, sc) = self.position(start);
+        let (el, ec) = self.position(end);
+        (sl, sc, el, ec)
+    }
+}
+
 /// Byte offset into `text` for a 0-based LSP `(line, UTF-16 character)`.
 /// A line past the end maps to the end of `text`; a character past the end of
 /// its line maps to the line end; one inside a surrogate pair snaps to the
@@ -44,22 +79,46 @@ pub fn position_to_offset(text: &str, line: u32, character: u32) -> usize {
 /// 0-based `(start_line, start_char, end_line, end_char)` for a byte range.
 /// Empty ranges widen to one character so editors can show them.
 pub fn byte_range_to_lsp(text: &str, start: usize, end: usize) -> (u32, u32, u32, u32) {
-    let end = if end > start {
-        end
-    } else {
-        text[start.min(text.len())..]
-            .chars()
-            .next()
-            .map_or(start, |c| start + c.len_utf8())
-    };
+    let end = widened_end(text, start, end);
     let (sl, sc) = offset_to_position(text, start);
     let (el, ec) = offset_to_position(text, end);
     (sl, sc, el, ec)
 }
 
+fn widened_end(text: &str, start: usize, end: usize) -> usize {
+    if end > start {
+        return end;
+    }
+    let mut at = start.min(text.len());
+    while !text.is_char_boundary(at) {
+        at -= 1;
+    }
+    text[at..]
+        .chars()
+        .next()
+        .map_or(start, |c| start + c.len_utf8())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_line_index_agrees_with_the_direct_conversion() {
+        let index = LineIndex::new(TEXT);
+        for offset in 0..=TEXT.len() + 2 {
+            assert_eq!(
+                index.position(offset),
+                offset_to_position(TEXT, offset),
+                "{offset}"
+            );
+            assert_eq!(
+                index.range(offset, offset + 1),
+                byte_range_to_lsp(TEXT, offset, offset + 1),
+                "{offset}"
+            );
+        }
+    }
 
     // `é` is 2 bytes / 1 unit; `𝒳` (U+1D4B3) is 4 bytes / 2 units.
     const TEXT: &str = "let é = 1\nlet 𝒳x = \"𝒳\"\n";

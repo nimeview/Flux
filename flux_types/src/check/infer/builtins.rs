@@ -7,7 +7,7 @@ use flux_hir::{HirExpr, SymbolId};
 
 use crate::types::Type;
 
-use super::super::state::TypeCheckContext;
+use super::super::state::{Scope, TypeCheckContext};
 use super::super::util::{types_compatible, unwrap_value_type};
 use super::expr::infer_expr;
 use super::util::{check_callback, infer_array_elem};
@@ -16,7 +16,7 @@ use super::util::{check_callback, infer_array_elem};
 fn check_numeric_args(
     ctx: &TypeCheckContext,
     args: &[HirExpr],
-    types: &HashMap<SymbolId, Type>,
+    types: &Scope<'_>,
     names: &HashMap<SymbolId, String>,
     source: SourceId,
     diagnostics: &mut DiagnosticBag,
@@ -43,7 +43,7 @@ pub(super) fn infer_builtin_call(
     ctx: &TypeCheckContext,
     name: &str,
     args: &[HirExpr],
-    types: &HashMap<SymbolId, Type>,
+    types: &Scope<'_>,
     names: &HashMap<SymbolId, String>,
     source: SourceId,
     diagnostics: &mut DiagnosticBag,
@@ -683,7 +683,7 @@ pub(super) fn infer_builtin_call(
 fn first_is_map(
     ctx: &TypeCheckContext,
     args: &[HirExpr],
-    types: &HashMap<SymbolId, Type>,
+    types: &Scope<'_>,
     names: &HashMap<SymbolId, String>,
     source: SourceId,
 ) -> bool {
@@ -697,7 +697,7 @@ fn first_is_map(
 fn infer_map_arg(
     ctx: &TypeCheckContext,
     arg: Option<&HirExpr>,
-    types: &HashMap<SymbolId, Type>,
+    types: &Scope<'_>,
     names: &HashMap<SymbolId, String>,
     source: SourceId,
     diagnostics: &mut DiagnosticBag,
@@ -727,7 +727,7 @@ fn check_arg(
     ctx: &TypeCheckContext,
     arg: Option<&HirExpr>,
     expected: &Type,
-    types: &HashMap<SymbolId, Type>,
+    types: &Scope<'_>,
     names: &HashMap<SymbolId, String>,
     source: SourceId,
     diagnostics: &mut DiagnosticBag,

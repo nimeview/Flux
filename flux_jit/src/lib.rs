@@ -13,8 +13,8 @@
 //! JitEngine::run_stmts() – JIT-compiled stmt bodies (watch/on/fn)
 //! ```
 //!
-//! Strings, user enums, and arrays use `flux_value` heap stores; numeric
-//! `emit` in handlers is lowered to `flux_jit_emit`.
+//! Strings, user enums, and arrays use `flux_value` heap stores. Bodies that
+//! `emit` run on the VM, which runs handlers at the `emit`.
 
 mod cache;
 mod compiler;
@@ -26,7 +26,6 @@ pub use flux_value::{
     get_array, get_enum, get_string, intern_string, store_enum, tagged_to_value, value_to_tagged,
     TaggedVal,
 };
-pub use host::{set_emit_hook, take_emit_events};
 
 /// Eligibility predicates exported for tests and tooling.
 pub fn code_is_jit_numeric(
@@ -44,6 +43,6 @@ pub fn stmts_are_jit_numeric(
 }
 
 pub fn reset_host_for_tests() {
-    host::clear_stores_for_tests();
+    flux_value::clear_for_tests();
     cache::clear_for_tests();
 }

@@ -5,9 +5,9 @@ use std::path::{Path, PathBuf};
 
 use flux_diagnostics::SourceId;
 
-use lsp_types::{Position, TextDocumentContentChangeEvent, Url};
+use lsp_types::{Diagnostic, Position, TextDocumentContentChangeEvent, Url};
 
-use crate::analysis::{analyze_document, position_to_offset, DocAnalysis};
+use crate::analysis::{analyze_document_with, position_to_offset, DocAnalysis};
 
 #[derive(Debug, Clone)]
 struct OpenDocument {
@@ -29,8 +29,8 @@ struct CachedDocAnalysis {
 pub struct DocumentStore {
     docs: HashMap<Url, OpenDocument>,
     analysis: HashMap<Url, CachedDocAnalysis>,
-    /// Imported (not open) files each open document last published diagnostics to.
-    foreign_targets: HashMap<Url, HashSet<Url>>,
+    /// What each open document last reported on imported (not open) files.
+    foreign: HashMap<Url, HashMap<Url, Vec<Diagnostic>>>,
 }
 
 impl DocumentStore {
@@ -69,15 +69,35 @@ impl DocumentStore {
         self.docs.contains_key(uri)
     }
 
-    /// Records the imported files `root` now publishes to; returns the previous set.
-    pub fn replace_foreign_targets(&mut self, root: &Url, targets: HashSet<Url>) -> HashSet<Url> {
-        if targets.is_empty() {
-            self.foreign_targets.remove(root).unwrap_or_default()
+    /// Records what `root` now reports on imported files; returns the files it
+    /// reported on before.
+    pub fn replace_foreign(
+        &mut self,
+        root: &Url,
+        reports: HashMap<Url, Vec<Diagnostic>>,
+    ) -> HashSet<Url> {
+        let previous = if reports.is_empty() {
+            self.foreign.remove(root)
         } else {
-            self.foreign_targets
-                .insert(root.clone(), targets)
-                .unwrap_or_default()
+            self.foreign.insert(root.clone(), reports)
+        };
+        previous.unwrap_or_default().into_keys().collect()
+    }
+
+    /// What all open documents report on imported file `target`. A file has one
+    /// diagnostics list per client, so one root must not overwrite another's.
+    pub fn foreign_diagnostics(&self, target: &Url) -> Vec<Diagnostic> {
+        let mut roots: Vec<&Url> = self.foreign.keys().collect();
+        roots.sort_by_key(|root| root.to_string());
+        let mut merged: Vec<Diagnostic> = Vec::new();
+        for root in roots {
+            for diagnostic in self.foreign[root].get(target).into_iter().flatten() {
+                if !merged.contains(diagnostic) {
+                    merged.push(diagnostic.clone());
+                }
+            }
         }
+        merged
     }
 
     pub fn version(&self, uri: &Url) -> Option<i32> {
@@ -94,24 +114,37 @@ impl DocumentStore {
     pub fn analyze(&mut self, uri: &Url) -> Option<DocAnalysis> {
         let text = self.docs.get(uri)?.text.clone();
         let hash = content_hash(&text);
+        // Imports read the editor's buffers, not the possibly older files.
+        let overlay: HashMap<PathBuf, String> = self
+            .docs
+            .iter()
+            .filter(|(open, _)| *open != uri)
+            .filter_map(|(open, doc)| {
+                Some((canonical(&open.to_file_path().ok()?), doc.text.clone()))
+            })
+            .collect();
+        let hash_of = |path: &Path| match overlay.get(&canonical(path)) {
+            Some(text) => Some(content_hash(text)),
+            None => file_hash(path),
+        };
         if let Some(cached) = self.analysis.get(uri) {
             let deps_fresh = cached
                 .deps
                 .iter()
-                .all(|(path, dep_hash)| file_hash(path) == *dep_hash);
+                .all(|(path, dep_hash)| hash_of(path) == *dep_hash);
             if cached.content_hash == hash && deps_fresh && cached.analysis.hir.is_some() {
                 return Some(cached.analysis.clone());
             }
         }
         let path = uri.to_file_path().ok();
-        let analysis = analyze_document(path.as_deref(), &text);
+        let analysis = analyze_document_with(path.as_deref(), &text, overlay.clone());
         let deps = analysis
             .source_paths
             .iter()
             .filter(|(id, _)| **id != SourceId(0))
             .map(|(_, path)| {
                 let path = PathBuf::from(path);
-                let hash = file_hash(&path);
+                let hash = hash_of(&path);
                 (path, hash)
             })
             .collect();
@@ -126,7 +159,8 @@ impl DocumentStore {
         Some(analysis)
     }
 
-    /// Open documents (other than `uri`) whose last analysis read `uri`'s file.
+    /// Open documents (other than `uri`) whose last analysis read `uri`'s file
+    /// or could not finish.
     pub fn dependents(&self, uri: &Url) -> Vec<Url> {
         let Some(path) = uri.to_file_path().ok().map(|p| canonical(&p)) else {
             return Vec::new();
@@ -135,9 +169,11 @@ impl DocumentStore {
             .analysis
             .iter()
             .filter(|(root, cached)| {
+                // A document that failed to resolve may have been missing `uri`.
                 *root != uri
                     && self.docs.contains_key(*root)
-                    && cached.deps.iter().any(|(dep, _)| canonical(dep) == path)
+                    && (cached.analysis.hir.is_none()
+                        || cached.deps.iter().any(|(dep, _)| canonical(dep) == path))
             })
             .map(|(root, _)| root.clone())
             .collect();
@@ -176,7 +212,7 @@ fn file_hash(path: &Path) -> Option<u64> {
 }
 
 fn canonical(path: &Path) -> PathBuf {
-    path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
+    flux_driver::canonical_path(path)
 }
 
 fn content_hash(text: &str) -> u64 {

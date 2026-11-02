@@ -23,7 +23,6 @@ pub(crate) fn lower_stmts(
     host_slots: u32,
     jit_fns: &HashMap<String, FuncId>,
     host_funcs: &HostFuncs,
-    event_indices: &HashMap<String, u32>,
     tables: &JitTables,
     locals: &mut JitLocals,
     module: &mut JITModule,
@@ -37,51 +36,21 @@ pub(crate) fn lower_stmts(
         match stmt {
             IrStmt::Expr { code } => {
                 last = lower_insts(
-                    code,
-                    layout,
-                    slots_ptr,
-                    ptr_ty,
-                    host_slots,
-                    jit_fns,
-                    host_funcs,
-                    event_indices,
-                    tables,
-                    locals,
-                    module,
-                    b,
+                    code, layout, slots_ptr, ptr_ty, host_slots, jit_fns, host_funcs, tables,
+                    locals, module, b,
                 )?;
             }
             IrStmt::Let { name, expr, .. } => {
                 last = lower_insts(
-                    expr,
-                    layout,
-                    slots_ptr,
-                    ptr_ty,
-                    host_slots,
-                    jit_fns,
-                    host_funcs,
-                    event_indices,
-                    tables,
-                    locals,
-                    module,
-                    b,
+                    expr, layout, slots_ptr, ptr_ty, host_slots, jit_fns, host_funcs, tables,
+                    locals, module, b,
                 )?;
                 locals.set(name, last, b);
             }
             IrStmt::Assign { target, expr, .. } => {
                 let (tag, data) = lower_insts(
-                    expr,
-                    layout,
-                    slots_ptr,
-                    ptr_ty,
-                    host_slots,
-                    jit_fns,
-                    host_funcs,
-                    event_indices,
-                    tables,
-                    locals,
-                    module,
-                    b,
+                    expr, layout, slots_ptr, ptr_ty, host_slots, jit_fns, host_funcs, tables,
+                    locals, module, b,
                 )?;
                 if locals.contains(target) {
                     locals.set(target, (tag, data), b);
@@ -93,49 +62,16 @@ pub(crate) fn lower_stmts(
                 }
                 last = (tag, data);
             }
-            IrStmt::Emit { event, arg } => {
-                let (tag, data) = if let Some(code) = arg {
-                    lower_insts(
-                        code,
-                        layout,
-                        slots_ptr,
-                        ptr_ty,
-                        host_slots,
-                        jit_fns,
-                        host_funcs,
-                        event_indices,
-                        tables,
-                        locals,
-                        module,
-                        b,
-                    )?
-                } else {
-                    (unit_tag, unit_data)
-                };
-                let event_idx = *event_indices.get(event)?;
-                let idx_v = b.ins().iconst(types::I64, event_idx as i64);
-                let emit_ref = module.declare_func_in_func(host_funcs.emit, b.func);
-                b.ins().call(emit_ref, &[idx_v, tag, data]);
-                last = (unit_tag, unit_data);
-            }
+            // Ineligible: the VM runs handlers at the `emit` (see `numeric.rs`).
+            IrStmt::Emit { .. } => return None,
             IrStmt::If {
                 cond,
                 then_body,
                 else_body,
             } => {
                 let (_, cond_d) = lower_insts(
-                    cond,
-                    layout,
-                    slots_ptr,
-                    ptr_ty,
-                    host_slots,
-                    jit_fns,
-                    host_funcs,
-                    event_indices,
-                    tables,
-                    locals,
-                    module,
-                    b,
+                    cond, layout, slots_ptr, ptr_ty, host_slots, jit_fns, host_funcs, tables,
+                    locals, module, b,
                 )?;
                 let zero = b.ins().iconst(types::I64, 0);
                 let is_true = b.ins().icmp(IntCC::NotEqual, cond_d, zero);
@@ -156,18 +92,8 @@ pub(crate) fn lower_stmts(
                 b.switch_to_block(then_bb);
                 b.seal_block(then_bb);
                 let (then_t, then_d) = lower_stmts(
-                    then_body,
-                    layout,
-                    slots_ptr,
-                    ptr_ty,
-                    host_slots,
-                    jit_fns,
-                    host_funcs,
-                    event_indices,
-                    tables,
-                    locals,
-                    module,
-                    b,
+                    then_body, layout, slots_ptr, ptr_ty, host_slots, jit_fns, host_funcs, tables,
+                    locals, module, b,
                 )?;
                 b.ins().jump(
                     merge_bb,
@@ -177,18 +103,8 @@ pub(crate) fn lower_stmts(
                 b.seal_block(else_bb);
                 let (else_t, else_d) = if let Some(body) = else_body {
                     lower_stmts(
-                        body,
-                        layout,
-                        slots_ptr,
-                        ptr_ty,
-                        host_slots,
-                        jit_fns,
-                        host_funcs,
-                        event_indices,
-                        tables,
-                        locals,
-                        module,
-                        b,
+                        body, layout, slots_ptr, ptr_ty, host_slots, jit_fns, host_funcs, tables,
+                        locals, module, b,
                     )?
                 } else {
                     (unit_tag, unit_data)
@@ -208,18 +124,8 @@ pub(crate) fn lower_stmts(
                 b.ins().jump(header_bb, &[] as &[BlockArg]);
                 b.switch_to_block(header_bb);
                 let (cond_t, cond_d) = lower_insts(
-                    cond,
-                    layout,
-                    slots_ptr,
-                    ptr_ty,
-                    host_slots,
-                    jit_fns,
-                    host_funcs,
-                    event_indices,
-                    tables,
-                    locals,
-                    module,
-                    b,
+                    cond, layout, slots_ptr, ptr_ty, host_slots, jit_fns, host_funcs, tables,
+                    locals, module, b,
                 )?;
                 let is_true = emit_bool_test(cond_t, cond_d, b);
                 b.ins().brif(
@@ -232,18 +138,8 @@ pub(crate) fn lower_stmts(
                 b.switch_to_block(body_bb);
                 b.seal_block(body_bb);
                 last = lower_stmts(
-                    body,
-                    layout,
-                    slots_ptr,
-                    ptr_ty,
-                    host_slots,
-                    jit_fns,
-                    host_funcs,
-                    event_indices,
-                    tables,
-                    locals,
-                    module,
-                    b,
+                    body, layout, slots_ptr, ptr_ty, host_slots, jit_fns, host_funcs, tables,
+                    locals, module, b,
                 )?;
                 b.ins().jump(header_bb, &[] as &[BlockArg]);
                 b.switch_to_block(exit_bb);
@@ -254,18 +150,8 @@ pub(crate) fn lower_stmts(
                 var, iter, body, ..
             } => {
                 let (arr_tag, arr_data) = lower_insts(
-                    iter,
-                    layout,
-                    slots_ptr,
-                    ptr_ty,
-                    host_slots,
-                    jit_fns,
-                    host_funcs,
-                    event_indices,
-                    tables,
-                    locals,
-                    module,
-                    b,
+                    iter, layout, slots_ptr, ptr_ty, host_slots, jit_fns, host_funcs, tables,
+                    locals, module, b,
                 )?;
                 let len_ref = module.declare_func_in_func(host_funcs.array_len, b.func);
                 let len_call = b.ins().call(len_ref, &[arr_data]);
@@ -296,18 +182,8 @@ pub(crate) fn lower_stmts(
                 locals.set(var, item, b);
                 let _ = arr_tag;
                 last = lower_stmts(
-                    body,
-                    layout,
-                    slots_ptr,
-                    ptr_ty,
-                    host_slots,
-                    jit_fns,
-                    host_funcs,
-                    event_indices,
-                    tables,
-                    locals,
-                    module,
-                    b,
+                    body, layout, slots_ptr, ptr_ty, host_slots, jit_fns, host_funcs, tables,
+                    locals, module, b,
                 )?;
                 locals.remove(var);
                 let one = b.ins().iconst(types::I64, 1);
@@ -320,18 +196,8 @@ pub(crate) fn lower_stmts(
             IrStmt::Return { expr } => {
                 let (tag, data) = if let Some(code) = expr {
                     lower_insts(
-                        code,
-                        layout,
-                        slots_ptr,
-                        ptr_ty,
-                        host_slots,
-                        jit_fns,
-                        host_funcs,
-                        event_indices,
-                        tables,
-                        locals,
-                        module,
-                        b,
+                        code, layout, slots_ptr, ptr_ty, host_slots, jit_fns, host_funcs, tables,
+                        locals, module, b,
                     )?
                 } else {
                     (unit_tag, unit_data)

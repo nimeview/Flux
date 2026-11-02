@@ -1,0 +1,15 @@
+heater on, 1 to go
+display: 200
+heater changes: 1
+heater off
+display: 250
+heater changes: 2
+log: target is now 30
+heater on, 5 to go
+heater changes: 3
+heater off
+display: 310
+heater changes: 4
+display: 155
+log: target is now 31
+done

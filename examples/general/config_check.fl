@@ -1,7 +1,9 @@
 // Config utility: read `key = value` lines, skip comments, validate required keys.
 // The exit status is the number of problems found.
 import io { println }
+
 import str { str_split, str_trim, str_starts_with, str_contains, str_len, to_string, parse_int }
+
 import collections { push, len, get }
 
 struct Entry {
@@ -10,10 +12,7 @@ struct Entry {
 }
 
 fn part(parts: [String], index: Int) -> String {
-    match get(parts, index) {
-        Some(p) => str_trim(p),
-        None => ""
-    }
+    match get(parts, index) { Some(p) => str_trim(p), None => "" }
 }
 
 fn parse_entry(line: String) -> Entry {
@@ -35,7 +34,9 @@ fn entries(text: String) -> [Entry] {
 fn lookup(es: [Entry], key: String) -> String {
     let mut found = ""
     for e in es {
-        if e.key == key { found = e.value }
+        if e.key == key {
+            found = e.value
+        }
     }
     found
 }
@@ -49,10 +50,7 @@ fn check(text: String) -> Int {
         println("missing: name")
         problems = problems + 1
     }
-    let port = match parse_int(lookup(es, "port")) {
-        Ok(p) => p,
-        Err(_) => -1
-    }
+    let port = match parse_int(lookup(es, "port")) { Ok(p) => p, Err(_) => -1 }
     if port < 1 || port > 65535 {
         println("invalid: port")
         problems = problems + 1

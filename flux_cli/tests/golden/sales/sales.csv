@@ -1,0 +1,7 @@
+# region, item, quantity, unit price
+north, apple, 10, 0.5
+south, pear, 2, 1.5
+
+north, plum, 1, 2.0
+east, fig, 40, 0.25
+south, apple, 3, 0.5

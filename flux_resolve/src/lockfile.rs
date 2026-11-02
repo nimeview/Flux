@@ -71,6 +71,14 @@ pub fn compute_lock(project_root: &Path) -> Result<Vec<LockedPackage>, String> {
     Ok(found.into_values().collect())
 }
 
+/// Direct dependencies of the project whose path does not exist.
+pub fn missing_dependencies(project_root: &Path) -> Vec<PathBuf> {
+    dependency_dirs(&canonical(project_root))
+        .into_iter()
+        .filter(|dir| !dir.is_dir())
+        .collect()
+}
+
 /// Brings `flux.lock` in line with the dependency tree. With `locked`, the
 /// file is never written: a missing or different lock is an `Err` naming
 /// what differs.

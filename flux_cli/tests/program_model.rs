@@ -628,3 +628,53 @@ fn return_inside_a_closure_is_a_compile_error() {
         text(&output.stderr)
     );
 }
+
+#[test]
+fn a_flood_of_diagnostics_is_cut_short() {
+    let src: String = (0..200).map(|i| format!("let a{i} = {i}\n")).collect();
+    let output = run(&src, "--vm", &[]);
+    assert!(output.status.success(), "{output:?}");
+    let stderr = text(&output.stderr);
+    assert!(stderr.contains("... and 150 more warnings"), "{stderr}");
+    assert_eq!(stderr.matches("unused binding").count(), 50, "{stderr}");
+}
+
+#[test]
+fn clear_errors_for_small_mistakes() {
+    for (src, needle) in [
+        (
+            "struct S {\n    me: S\n}\nfn main() {\n}\n",
+            "no value of type `S` can exist",
+        ),
+        (
+            "enum A {\n    X(B)\n}\nenum B {\n    Y(A)\n}\nfn main() {\n}\n",
+            "no value of type `A` can exist",
+        ),
+        (
+            "struct P {\n    q: Q\n}\nstruct Q {\n    p: P\n}\nfn main() {\n}\n",
+            "no value of type `P` can exist",
+        ),
+        (
+            "let h\u{e9}llo = 1\n",
+            "unexpected `\u{e9}`: outside strings and comments, Flux code is ASCII only",
+        ),
+        ("let a = \u{1F389}\n", "ASCII only"),
+        (
+            "enum E {\n    Pair(Int, Int)\n}\n",
+            "a tuple variant holds one type",
+        ),
+        ("import math\nlet max = 1\n", "`max` is already imported"),
+    ] {
+        let output = run(src, "--vm", &[]);
+        assert_eq!(output.status.code(), Some(1), "{src}: {output:?}");
+        assert!(
+            text(&output.stderr).contains(needle),
+            "{src}: {}",
+            text(&output.stderr)
+        );
+    }
+    // A chain that can end has values, including through an alias.
+    let src = "type Next = Option[N]\nstruct N {\n    next: Next\n}\nenum T {\n    End,\n    More(T)\n}\nstruct R {\n    r: Result[R, Int]\n}\nfn main() {\n}\n";
+    let output = run(src, "--vm", &[]);
+    assert!(output.status.success(), "{}", text(&output.stderr));
+}

@@ -1,0 +1,45 @@
+// Reads a settings file through the `settings` package and validates it.
+import io { println, eprintln, args, read_file }
+
+import collections { get }
+
+import option { Some, None }
+
+import result { Ok, Err }
+
+import settings { Settings, parse, text_of, int_of }
+
+import report { Server, describe }
+
+const MAX_PORT = 65535
+
+fn load(s: Settings) -> Result[Server, String] {
+    let port = int_of(s, "port")?
+    if port < 1 || port > MAX_PORT {
+        return Err("port {port} is out of range")
+    }
+    let name = match text_of(s, "name") { Some(n) => n, None => "unnamed" }
+    let workers = match int_of(s, "workers") { Ok(n) => n, Err(_) => 1 }
+    Ok(Server { name: name, port: port, workers: workers })
+}
+
+fn run(path: String) -> Result[String, String] {
+    let text = read_file(path)?
+    let s = parse(text)?
+    let server = load(s)?
+    Ok(describe(server))
+}
+
+fn main() -> Int {
+    let path = match get(args(), 0) { Some(p) => p, None => "app.conf" }
+    match run(path) {
+        Ok(line) => {
+            println(line)
+            0
+        },
+        Err(e) => {
+            eprintln("error: {e}")
+            1
+        }
+    }
+}

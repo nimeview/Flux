@@ -1,7 +1,9 @@
 event SearchQuery(q: String)
+
 event AppStarted
 
 let mut query = ""
+
 let mut count = 0
 
 on AppStarted {

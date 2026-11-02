@@ -6,9 +6,9 @@ use std::path::Path;
 
 use flux_diagnostics::{SourceFile, SourceId, Span};
 
-use crate::position::byte_range_to_lsp;
 pub use crate::position::position_to_offset;
-use flux_driver::analyze_document as driver_analyze;
+use crate::position::{byte_range_to_lsp, LineIndex};
+use flux_driver::analyze_document_with as driver_analyze;
 use flux_hir::{
     build_reference_index, rename_spans, symbol_at_offset, HirItem, HirProgram, ReferenceIndex,
     SymbolId,
@@ -62,6 +62,8 @@ pub struct DocAnalysis {
     pub hir: Option<HirProgram>,
     pub typed: Option<TypedProgram>,
     pub source_paths: HashMap<SourceId, String>,
+    /// The text analyzed for each module, which may be an unsaved buffer.
+    pub sources: Vec<flux_diagnostics::SourceFile>,
     pub symbols: SymbolIndex,
     pub references: Option<ReferenceIndex>,
 }
@@ -70,7 +72,17 @@ pub struct DocAnalysis {
 /// against sibling files on disk; when `None` (or when resolution fails), falls
 /// back to treating `contents` as a standalone single-file program.
 pub fn analyze_document(path: Option<&Path>, contents: &str) -> DocAnalysis {
-    let analyzed = driver_analyze(path, contents);
+    analyze_document_with(path, contents, HashMap::new())
+}
+
+/// Like [`analyze_document`], reading imports from `overlay` (canonical path
+/// to contents) when it has them: the editor's other open buffers.
+pub fn analyze_document_with(
+    path: Option<&Path>,
+    contents: &str,
+    overlay: HashMap<std::path::PathBuf, String>,
+) -> DocAnalysis {
+    let analyzed = driver_analyze(path, contents, overlay);
     let fallback_path = path
         .map(|p| p.display().to_string())
         .unwrap_or_else(|| "<buffer>".to_string());
@@ -81,6 +93,7 @@ pub fn analyze_document(path: Option<&Path>, contents: &str) -> DocAnalysis {
     let references = hir.map(build_reference_index);
     DocAnalysis {
         diagnostics: to_ranged(&analyzed.diagnostics, contents, &analyzed.sources),
+        sources: analyzed.sources,
         hir: analyzed.hir,
         typed: analyzed.typed,
         source_paths: analyzed.source_paths,
@@ -404,16 +417,19 @@ fn is_ident(c: char) -> bool {
 pub fn span_to_lsp_range(
     contents: &str,
     span: &Span,
-    source_paths: &HashMap<SourceId, String>,
+    analysis: &DocAnalysis,
 ) -> Option<(u32, u32, u32, u32)> {
     // The analyzed document is SourceId 0; use its (possibly unsaved) buffer.
-    let file_contents = if span.source == SourceId(0) {
-        None
+    let text = if span.source == SourceId(0) {
+        contents
     } else {
-        let path = source_paths.get(&span.source)?;
-        std::fs::read_to_string(path).ok()
+        // A module's own text, or the buffer for the document itself.
+        analysis
+            .sources
+            .iter()
+            .find(|source| source.id == span.source)
+            .map_or(contents, |source| source.contents.as_str())
     };
-    let text = file_contents.as_deref().unwrap_or(contents);
     Some(byte_range_to_lsp(text, span.start, span.end))
 }
 
@@ -476,61 +492,46 @@ fn to_ranged(
     contents: &str,
     sources: &[SourceFile],
 ) -> Vec<RangedDiagnostic> {
-    let locate = |span: Span| -> (&str, Option<String>) {
-        if span.source == SourceId(0) {
-            return (contents, None);
+    let root_index = LineIndex::new(contents);
+    let source_indexes: HashMap<SourceId, (LineIndex<'_>, &str)> = sources
+        .iter()
+        .map(|s| (s.id, (LineIndex::new(&s.contents), s.path.as_str())))
+        .collect();
+    let ranged = |span: Span, message: String, code: String, level: DiagnosticLevel| {
+        let (index, path) = match source_indexes.get(&span.source) {
+            Some((index, path)) if span.source != SourceId(0) => (index, Some(path.to_string())),
+            _ => (&root_index, None),
+        };
+        let (sl, sc, el, ec) = index.range(span.start, span.end);
+        RangedDiagnostic {
+            start_line: sl as usize + 1,
+            start_column: sc as usize + 1,
+            end_line: el as usize + 1,
+            end_column: ec as usize + 1,
+            message,
+            code,
+            level,
+            path,
         }
-        sources
-            .iter()
-            .find(|s| s.id == span.source)
-            .map(|s| (s.contents.as_str(), Some(s.path.clone())))
-            .unwrap_or((contents, None))
     };
     let mut out = Vec::with_capacity(bag.errors.len() + bag.warnings.len());
     for e in &bag.errors {
-        let (text, path) = locate(e.label_span());
-        out.push(span_to_ranged(
+        out.push(ranged(
             e.label_span(),
             e.to_string(),
             e.code().to_string(),
             DiagnosticLevel::Error,
-            text,
-            path,
         ));
     }
     for w in &bag.warnings {
-        let (text, path) = locate(w.label_span());
-        out.push(span_to_ranged(
+        out.push(ranged(
             w.label_span(),
             w.to_string(),
             w.code().to_string(),
             DiagnosticLevel::Warning,
-            text,
-            path,
         ));
     }
     out
-}
-
-fn span_to_ranged(
-    span: Span,
-    message: String,
-    code: String,
-    level: DiagnosticLevel,
-    contents: &str,
-    path: Option<String>,
-) -> RangedDiagnostic {
-    let (sl, sc, el, ec) = byte_range_to_lsp(contents, span.start, span.end);
-    RangedDiagnostic {
-        start_line: sl as usize + 1,
-        start_column: sc as usize + 1,
-        end_line: el as usize + 1,
-        end_column: ec as usize + 1,
-        message,
-        code,
-        level,
-        path,
-    }
 }
 
 /// Prefix of the identifier being completed at `line`/`character` (may be empty).
@@ -688,7 +689,12 @@ fn analysis_sources(
         let text = if path == "<buffer>" || paths_equal(path, buffer_path) {
             buffer_contents.to_string()
         } else {
-            std::fs::read_to_string(path).unwrap_or_default()
+            analysis
+                .sources
+                .iter()
+                .find(|source| source.id == *id)
+                .map(|source| source.contents.clone())
+                .unwrap_or_default()
         };
         map.insert(*id, text);
     }
@@ -746,7 +752,7 @@ pub fn hover_range_for_symbol(
     word: &str,
 ) -> Option<(u32, u32, u32, u32)> {
     let loc = analysis.symbols.by_name.get(word)?;
-    span_to_lsp_range(contents, &loc.span, &analysis.source_paths)
+    span_to_lsp_range(contents, &loc.span, analysis)
 }
 
 /// Extracts the identifier word touching or containing `offset` in `contents`.

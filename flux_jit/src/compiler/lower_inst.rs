@@ -28,7 +28,6 @@ pub(crate) fn lower_insts(
     host_slots: u32,
     jit_fns: &HashMap<String, FuncId>,
     host_funcs: &HostFuncs,
-    event_indices: &HashMap<String, u32>,
     tables: &JitTables,
     locals: &mut JitLocals,
     module: &mut JITModule,
@@ -149,18 +148,8 @@ pub(crate) fn lower_insts(
                 b.switch_to_block(then_bb);
                 b.seal_block(then_bb);
                 let (rt, rd) = lower_insts(
-                    right_code,
-                    layout,
-                    slots_ptr,
-                    ptr_ty,
-                    host_slots,
-                    jit_fns,
-                    host_funcs,
-                    event_indices,
-                    tables,
-                    locals,
-                    module,
-                    b,
+                    right_code, layout, slots_ptr, ptr_ty, host_slots, jit_fns, host_funcs, tables,
+                    locals, module, b,
                 )?;
                 b.ins()
                     .jump(merge_bb, &[BlockArg::Value(rt), BlockArg::Value(rd)]);
@@ -194,18 +183,8 @@ pub(crate) fn lower_insts(
                 b.switch_to_block(else_bb);
                 b.seal_block(else_bb);
                 let (rt, rd) = lower_insts(
-                    right_code,
-                    layout,
-                    slots_ptr,
-                    ptr_ty,
-                    host_slots,
-                    jit_fns,
-                    host_funcs,
-                    event_indices,
-                    tables,
-                    locals,
-                    module,
-                    b,
+                    right_code, layout, slots_ptr, ptr_ty, host_slots, jit_fns, host_funcs, tables,
+                    locals, module, b,
                 )?;
                 b.ins()
                     .jump(merge_bb, &[BlockArg::Value(rt), BlockArg::Value(rd)]);
@@ -247,7 +226,6 @@ pub(crate) fn lower_insts(
                     host_slots,
                     jit_fns,
                     host_funcs,
-                    event_indices,
                     tables,
                     locals,
                     module,
@@ -267,7 +245,6 @@ pub(crate) fn lower_insts(
                     host_slots,
                     jit_fns,
                     host_funcs,
-                    event_indices,
                     tables,
                     locals,
                     module,

@@ -59,10 +59,8 @@ pub(crate) fn stmts_numeric(stmts: &[IrStmt], jit_fns: &HashSet<String>) -> bool
         IrStmt::Expr { code } => is_numeric_code(code, jit_fns),
         IrStmt::Let { expr, .. } => is_numeric_code(expr, jit_fns),
         IrStmt::Assign { expr, .. } => is_numeric_code(expr, jit_fns),
-        IrStmt::Emit { arg, .. } => arg
-            .as_ref()
-            .map(|c| is_numeric_code(c, jit_fns))
-            .unwrap_or(true),
+        // Handlers run at the `emit`; compiled code could not do that.
+        IrStmt::Emit { .. } => false,
         IrStmt::If {
             cond,
             then_body,
@@ -85,7 +83,8 @@ pub(crate) fn stmts_numeric(stmts: &[IrStmt], jit_fns: &HashSet<String>) -> bool
             .as_ref()
             .map(|c| is_numeric_code(c, jit_fns))
             .unwrap_or(true),
-        IrStmt::Break | IrStmt::Continue => true,
+        // Lowering has no loop exits.
+        IrStmt::Break | IrStmt::Continue => false,
     })
 }
 

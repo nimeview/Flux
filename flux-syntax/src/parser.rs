@@ -77,16 +77,36 @@ fn parse_program_unbounded(
     let pairs = match FluxParser::parse(Rule::program, input) {
         Ok(mut pairs) => pairs.next()?.into_inner(),
         Err(err) => {
-            diagnostics.push(FluxError::Parse {
+            let span = span_from_pest_error(source_id, &err);
+            let message = match input.get(span.start..).and_then(|rest| rest.chars().next()) {
+                Some(c) if !c.is_ascii() => format!(
+                    "unexpected `{c}`: outside strings and comments, Flux code is ASCII only"
+                ),
                 // The span already carries the location; pest's `Display` would
                 // render a second snippet inside the diagnostic.
-                message: err.variant.message().into_owned(),
-                span: span_to_miette(span_from_pest_error(source_id, &err)),
+                _ => err.variant.message().into_owned(),
+            };
+            diagnostics.push(FluxError::Parse {
+                message,
+                span: span_to_miette(span),
                 source_id,
             });
             return None;
         }
     };
+
+    for pair in pairs.clone().flatten() {
+        if pair.as_rule() == Rule::tuple_payload && pair.clone().into_inner().count() > 1 {
+            diagnostics.push(FluxError::Parse {
+                message: "a tuple variant holds one type; use a struct for several, as in \
+                          `Pair(Point)` or `Pair { x: Int, y: Int }`"
+                    .into(),
+                span: span_to_miette(span_of(source_id, &pair)),
+                source_id,
+            });
+            return None;
+        }
+    }
 
     let mut items = Vec::new();
     for pair in pairs {

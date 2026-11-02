@@ -23,7 +23,6 @@ pub(crate) struct HostFuncs {
     pub array_len: FuncId,
     pub array_get: FuncId,
     pub range: FuncId,
-    pub emit: FuncId,
     pub string_concat: FuncId,
     pub array_index: FuncId,
     pub value_eq: FuncId,
@@ -79,14 +78,6 @@ impl HostFuncs {
         let range = module
             .declare_function("flux_jit_range", Linkage::Import, &range_sig)
             .expect("declare flux_jit_range");
-
-        let mut emit_sig = module.make_signature();
-        emit_sig.params.push(AbiParam::new(types::I64));
-        emit_sig.params.push(AbiParam::new(types::I64));
-        emit_sig.params.push(AbiParam::new(types::I64));
-        let emit = module
-            .declare_function("flux_jit_emit", Linkage::Import, &emit_sig)
-            .expect("declare flux_jit_emit");
 
         let mut concat_sig = module.make_signature();
         for _ in 0..4 {
@@ -191,7 +182,6 @@ impl HostFuncs {
             array_len,
             array_get,
             range,
-            emit,
             string_concat,
             array_index,
             value_eq,
@@ -242,7 +232,6 @@ pub struct JitEngine {
     pub lazy_if_deps: HashMap<String, HashSet<String>>,
     /// `__on_N` → slot pair index for event param binding.
     pub handler_param_slots: HashMap<String, u32>,
-    pub event_indices: HashMap<String, u32>,
     pub tables: JitTables,
     host_slots: u32,
     /// Extra slot pairs beyond reactive nodes for JIT `Call` args / handler params.
@@ -277,7 +266,6 @@ impl JitEngine {
             crate::host::flux_jit_array_get as *const u8,
         );
         jit_builder.symbol("flux_jit_range", crate::host::flux_jit_range as *const u8);
-        jit_builder.symbol("flux_jit_emit", crate::host::flux_jit_emit as *const u8);
         jit_builder.symbol(
             "flux_jit_string_concat",
             crate::host::flux_jit_string_concat as *const u8,
@@ -314,13 +302,6 @@ impl JitEngine {
 
         let tables = JitTables::build(program);
 
-        let event_indices: HashMap<String, u32> = program
-            .events
-            .iter()
-            .enumerate()
-            .map(|(i, e)| (e.clone(), i as u32))
-            .collect();
-
         let mut engine = Self {
             module,
             layout: SlotLayout::new(),
@@ -332,7 +313,6 @@ impl JitEngine {
             fallback_reasons: HashMap::new(),
             lazy_if_deps: HashMap::new(),
             handler_param_slots: HashMap::new(),
-            event_indices,
             tables,
             host_slots: 0,
             call_scratch_pairs: 0,
@@ -400,22 +380,29 @@ impl JitEngine {
         engine.tables.depth_pair = host_slots + scratch;
         let mut call_scratch_pairs = 0u32;
         let mut jit_fn_ids: HashMap<String, FuncId> = HashMap::new();
+        let mut callable: HashSet<String> = HashSet::new();
         for func in &program.functions {
             call_scratch_pairs = call_scratch_pairs
                 .max(func.params.len() as u32)
                 .max(max_call_argc_in_stmts(&func.body));
             // A body may call functions compiled before it, and itself.
-            let mut callable: HashSet<String> = jit_fn_ids.keys().cloned().collect();
             callable.insert(func.name.clone());
             // A compiled `emit` only queues the event, and only handlers
             // drain that queue; the VM runs the handler at the `emit`, before
             // the next statement. So a function that emits runs on the VM.
             if stmts_emit(&func.body) {
                 engine.note_fallback(&func.name, "emits_events");
+                callable.remove(&func.name);
+                continue;
+            }
+            if stmts_leave_loop(&func.body) {
+                engine.note_fallback(&func.name, "break_continue");
+                callable.remove(&func.name);
                 continue;
             }
             if !func_is_numeric(&func.body, &callable) {
                 engine.note_fallback(&func.name, "non_numeric_fn_body");
+                callable.remove(&func.name);
                 continue;
             }
             let label = format!("fn_{}", func.name);
@@ -433,7 +420,10 @@ impl JitEngine {
                     jit_fn_ids.insert(func.name.clone(), fid);
                     engine.exprs.insert(func.name.clone(), expr);
                 }
-                None => engine.note_fallback(&func.name, "compile_failed"),
+                None => {
+                    engine.note_fallback(&func.name, "compile_failed");
+                    callable.remove(&func.name);
+                }
             }
         }
 
@@ -701,7 +691,6 @@ impl JitEngine {
             host_slots,
             jit_fns,
             host_funcs,
-            &self.event_indices,
             &self.tables,
             &mut locals,
             &mut self.module,
@@ -772,7 +761,6 @@ impl JitEngine {
             host_slots,
             &callable,
             host_funcs,
-            &self.event_indices,
             &self.tables,
             &mut locals,
             &mut self.module,
@@ -867,6 +855,20 @@ fn loads_in_code(code: &[Inst], set: &mut HashSet<String>) {
             loads_in_stmts(stmts, set);
         }
     }
+}
+
+/// Whether `stmts` contain a `break` or `continue` (at any depth).
+fn stmts_leave_loop(stmts: &[IrStmt]) -> bool {
+    stmts.iter().any(|s| match s {
+        IrStmt::Break | IrStmt::Continue => true,
+        IrStmt::If {
+            then_body,
+            else_body,
+            ..
+        } => stmts_leave_loop(then_body) || else_body.as_deref().is_some_and(stmts_leave_loop),
+        IrStmt::While { body, .. } | IrStmt::For { body, .. } => stmts_leave_loop(body),
+        _ => false,
+    })
 }
 
 /// Whether `stmts` contain an `emit` (at any depth).

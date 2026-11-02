@@ -1,0 +1,3 @@
+skipped: expected `command value`: nonsense
+skipped: invalid integer: `hot`
+skipped: unknown command `fly`

@@ -80,3 +80,121 @@ fn formatted_programs_still_type_check() {
     assert!(checked > 40, "only {checked} programs checked");
     assert!(failures.is_empty(), "\n{}", failures.join("\n"));
 }
+
+/// The syntax tree of `source` without its source positions.
+fn tree_without_spans(source: &str) -> Option<String> {
+    let mut diagnostics = flux_diagnostics::DiagnosticBag::new();
+    let program =
+        flux_syntax::parse_program(flux_diagnostics::SourceId(0), source, &mut diagnostics)?;
+    let tree = format!("{program:?}");
+    let mut out = String::with_capacity(tree.len());
+    let mut rest = tree.as_str();
+    while let Some(at) = rest.find("Span {") {
+        out.push_str(&rest[..at]);
+        let end = rest[at..].find('}').expect("span ends");
+        rest = &rest[at + end + 1..];
+    }
+    out.push_str(rest);
+    Some(out)
+}
+
+/// Formatting used to drop every parenthesis, turning `(1 + 2) * 3` into
+/// `1 + 2 * 3`, and only type-checking was tested.
+#[test]
+fn formatting_never_changes_a_programs_tree() {
+    let mut checked = 0;
+    let mut failures = Vec::new();
+    let mut files = Vec::new();
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    for dir in program_dirs()
+        .into_iter()
+        .chain([root.join("tests/golden"), root.join("benches/workloads")])
+    {
+        let mut dirs = vec![dir.clone()];
+        collect_dirs(&dir, &mut dirs);
+        for dir in dirs {
+            for entry in fs::read_dir(&dir).unwrap().flatten() {
+                if entry.path().extension().is_some_and(|ext| ext == "fl") {
+                    files.push(entry.path());
+                }
+            }
+        }
+    }
+    files.sort();
+    files.dedup();
+    for file in files {
+        let source = fs::read_to_string(&file).unwrap();
+        let Some(before) = tree_without_spans(&source) else {
+            continue;
+        };
+        let formatted = format_source(&source).expect("parsed source formats");
+        let after = tree_without_spans(&formatted)
+            .unwrap_or_else(|| panic!("{}: output does not parse", file.display()));
+        if before != after {
+            let at = before
+                .bytes()
+                .zip(after.bytes())
+                .take_while(|(a, b)| a == b)
+                .count();
+            let window = |text: &str| {
+                let start = at.saturating_sub(70);
+                let end = (at + 90).min(text.len());
+                text.get(start..end).unwrap_or("").to_string()
+            };
+            failures.push(format!(
+                "{}\n  before: {}\n  after:  {}",
+                file.display(),
+                window(&before),
+                window(&after)
+            ));
+        }
+        checked += 1;
+    }
+    assert!(checked > 100, "only {checked} programs checked");
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+#[test]
+fn formatting_keeps_exactly_the_parentheses_that_matter() {
+    for (input, want) in [
+        ("(1 + 2) * 3", "(1 + 2) * 3"),
+        ("1 + (2 * 3)", "1 + 2 * 3"),
+        ("1 - (2 - 3)", "1 - (2 - 3)"),
+        ("(1 - 2) - 3", "1 - 2 - 3"),
+        ("(1 + 2) % 3", "(1 + 2) % 3"),
+        ("-(1 + 2)", "-(1 + 2)"),
+        ("!(a && b)", "!(a && b)"),
+        ("(a || b) && c", "(a || b) && c"),
+        ("a || (b && c)", "a || b && c"),
+        ("(a == b) == c", "a == b == c"),
+        ("a == (b == c)", "a == (b == c)"),
+        ("(x as Int) + 1", "x as Int + 1"),
+        ("(1 + 2) as Float", "(1 + 2) as Float"),
+        ("-(x as Float)", "-(x as Float)"),
+        ("(-x) as Float", "-x as Float"),
+        ("(1 + 2).f", "(1 + 2).f"),
+        ("(a + b)[0]", "(a + b)[0]"),
+        ("(a + b)?", "(a + b)?"),
+        ("(-a).f", "(-a).f"),
+        ("(f)(1)", "f(1)"),
+        ("(|x| x)(1)", "(|x| x)(1)"),
+        ("(|x| x) + 1", "(|x| x) + 1"),
+        ("(if a { 1 } else { 2 }) + 1", "(if a { 1 } else { 2 }) + 1"),
+        ("1 + if a { 1 } else { 2 }", "1 + if a { 1 } else { 2 }"),
+        ("(-9223372036854775808)[0]", "(-9223372036854775808)[0]"),
+        ("(-1).f", "(-1).f"),
+    ] {
+        let formatted = format_source(&format!("const q = {input}\n")).expect("formats");
+        assert_eq!(formatted, format!("const q = {want}\n"), "{input}");
+    }
+}
+
+#[test]
+fn formatting_keeps_suffixed_literal_patterns_valid() {
+    for pattern in ["1i8", "2u16", "3.5f32", "-1", "1"] {
+        let source = format!("const q = match x {{\n    {pattern} => 2,\n    _ => 3\n}}\n");
+        let once = format_source(&source).expect("formats");
+        assert!(once.contains(pattern), "{once}");
+        assert_eq!(format_source(&once).expect("output parses"), once);
+    }
+}

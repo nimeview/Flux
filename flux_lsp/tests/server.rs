@@ -592,6 +592,267 @@ fn saving_an_import_refreshes_the_unchanged_root() {
     shutdown(&client, handle);
 }
 
+/// Publications until `want` has one matching `done`; the rest are returned too.
+fn publications_until(
+    client: &Connection,
+    done: impl Fn(&PublishDiagnosticsParams) -> bool,
+) -> Vec<PublishDiagnosticsParams> {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    let mut seen = Vec::new();
+    loop {
+        let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+        let msg = client
+            .receiver
+            .recv_timeout(remaining)
+            .unwrap_or_else(|_| panic!("no matching publication; saw {seen:?}"));
+        let Message::Notification(n) = msg else {
+            continue;
+        };
+        if n.method != PublishDiagnostics::METHOD {
+            continue;
+        }
+        let diags: PublishDiagnosticsParams = serde_json::from_value(n.params).unwrap();
+        let finished = done(&diags);
+        seen.push(diags);
+        if finished {
+            return seen;
+        }
+    }
+}
+
+fn has_error(diags: &PublishDiagnosticsParams) -> bool {
+    diags
+        .diagnostics
+        .iter()
+        .any(|d| d.severity == Some(lsp_types::DiagnosticSeverity::ERROR))
+}
+
+#[test]
+fn an_unsaved_edit_to_an_import_updates_the_root() {
+    let (_dir, main, util) = import_project("pub fn f() -> Int { 1 }\n");
+    let (client, handle) = start_server();
+    did_open_uri(
+        &client,
+        main.clone(),
+        "import util { f }\nlet x = f()\nlet y = x\n",
+    );
+    assert!(!has_error(&recv_diagnostics(&client)));
+    did_open_uri(&client, util.clone(), "pub fn f() -> Int { 1 }\n");
+    let _ = recv_diagnostics(&client);
+
+    // Nothing is written to disk: the root follows the editor's text.
+    change_full(&client, util.clone(), 2, "pub fn f(a: Int) -> Int { a }\n");
+    let main_uri = main.clone();
+    publications_until(&client, |d| d.uri == main_uri && has_error(d));
+    change_full(&client, util.clone(), 3, "pub fn f() -> Int { 2 }\n");
+    let main_uri = main.clone();
+    publications_until(&client, |d| d.uri == main_uri && !has_error(d));
+
+    // Closing the buffer discards the edit, and the root sees the disk again.
+    change_full(&client, util.clone(), 4, "pub fn f(a: Int) -> Int { a }\n");
+    let main_uri = main.clone();
+    publications_until(&client, |d| d.uri == main_uri && has_error(d));
+    client
+        .sender
+        .send(Message::Notification(Notification::new(
+            DidCloseTextDocument::METHOD.to_string(),
+            DidCloseTextDocumentParams {
+                text_document: TextDocumentIdentifier { uri: util },
+            },
+        )))
+        .unwrap();
+    let main_uri = main.clone();
+    publications_until(&client, |d| d.uri == main_uri && !has_error(d));
+    shutdown(&client, handle);
+}
+
+#[test]
+fn definition_follows_an_unsaved_edit_to_an_import() {
+    let (_dir, main, util) = import_project("pub fn f() -> Int { 1 }\n");
+    let (client, handle) = start_server();
+    did_open_uri(&client, util.clone(), "\n\n\npub fn f() -> Int { 1 }\n");
+    let _ = recv_diagnostics(&client);
+    did_open_uri(
+        &client,
+        main.clone(),
+        "import util { f }\nlet x = f()\nlet y = x\n",
+    );
+    let _ = recv_diagnostics(&client);
+    client
+        .sender
+        .send(Message::Request(Request::new(
+            RequestId::from(40),
+            GotoDefinition::METHOD.to_string(),
+            GotoDefinitionParams {
+                text_document_position_params: TextDocumentPositionParams {
+                    text_document: TextDocumentIdentifier { uri: main },
+                    position: Position::new(1, 8),
+                },
+                work_done_progress_params: WorkDoneProgressParams::default(),
+                partial_result_params: PartialResultParams::default(),
+            },
+        )))
+        .unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    let location = loop {
+        let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+        if let Message::Response(r) = client.receiver.recv_timeout(remaining).expect("response") {
+            let found: GotoDefinitionResponse = serde_json::from_value(r.result.unwrap()).unwrap();
+            let GotoDefinitionResponse::Scalar(location) = found else {
+                panic!("{found:?}");
+            };
+            break location;
+        }
+    };
+    assert_eq!(location.uri, util);
+    assert_eq!(location.range.start.line, 3, "{location:?}");
+    shutdown(&client, handle);
+}
+
+#[test]
+fn a_root_does_not_clear_the_diagnostics_of_an_import_opened_later() {
+    let (_dir, main, util) = import_project("pub fn f() -> Int { nope }\n");
+    let (client, handle) = start_server();
+    did_open_uri(
+        &client,
+        main.clone(),
+        "import util { f }\nlet x = f()\nlet y = x\n",
+    );
+    let util_uri = util.clone();
+    publications_until(&client, |d| d.uri == util_uri && has_error(d));
+    did_open_uri(&client, util.clone(), "pub fn f() -> Int { nope }\n");
+    let util_uri = util.clone();
+    publications_until(&client, |d| d.uri == util_uri && has_error(d));
+    // The root republishes; the open import's own diagnostics stay.
+    change_full(
+        &client,
+        main.clone(),
+        2,
+        "import util { f }\nlet x = f()\nlet z = x\n",
+    );
+    let main_uri = main.clone();
+    let mut seen = publications_until(&client, |d| d.uri == main_uri);
+    // Publications for imported files follow the root's.
+    while let Ok(msg) = client
+        .receiver
+        .recv_timeout(std::time::Duration::from_millis(300))
+    {
+        if let Message::Notification(n) = msg {
+            seen.push(serde_json::from_value(n.params).unwrap());
+        }
+    }
+    assert!(
+        seen.iter().all(|d| d.uri != util || has_error(d)),
+        "{seen:?}"
+    );
+    shutdown(&client, handle);
+}
+
+#[test]
+fn malformed_messages_do_not_stop_the_server() {
+    let (client, handle) = start_server();
+    for method in [
+        DidOpenTextDocument::METHOD,
+        DidChangeTextDocument::METHOD,
+        DidSaveTextDocument::METHOD,
+        DidCloseTextDocument::METHOD,
+    ] {
+        client
+            .sender
+            .send(Message::Notification(Notification::new(
+                method.to_string(),
+                serde_json::json!({ "nonsense": 1 }),
+            )))
+            .unwrap();
+    }
+    client
+        .sender
+        .send(Message::Request(Request::new(
+            RequestId::from(50),
+            HoverRequest::METHOD.to_string(),
+            serde_json::json!({ "nonsense": 1 }),
+        )))
+        .unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    loop {
+        let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+        if let Message::Response(r) = client.receiver.recv_timeout(remaining).expect("response") {
+            assert_eq!(r.id, RequestId::from(50));
+            assert!(r.error.is_some(), "{r:?}");
+            break;
+        }
+    }
+    // The server still works.
+    did_open(&client, "let x = nope\n");
+    assert!(has_error(&recv_diagnostics(&client)));
+    shutdown(&client, handle);
+}
+
+#[test]
+fn opening_an_import_refreshes_a_root_that_needed_it() {
+    // `f` is not on disk yet, and then `new.fl` does not exist there at all.
+    let (dir, main, util) = import_project("pub fn g() -> Int { 1 }\n");
+    let (client, handle) = start_server();
+    did_open_uri(
+        &client,
+        main.clone(),
+        "import util { f }\nlet x = f()\nlet y = x\n",
+    );
+    let main_uri = main.clone();
+    publications_until(&client, |d| d.uri == main_uri && has_error(d));
+    did_open_uri(&client, util, "pub fn f() -> Int { 1 }\n");
+    let main_uri = main.clone();
+    publications_until(&client, |d| d.uri == main_uri && !has_error(d));
+
+    let new_file =
+        Url::from_file_path(dir.path().canonicalize().unwrap().join("fresh.fl")).unwrap();
+    change_full(
+        &client,
+        main.clone(),
+        2,
+        "import fresh { h }\nlet x = h()\nlet y = x\n",
+    );
+    let main_uri = main.clone();
+    publications_until(&client, |d| d.uri == main_uri && has_error(d));
+    did_open_uri(&client, new_file, "pub fn h() -> Int { 1 }\n");
+    let main_uri = main.clone();
+    publications_until(&client, |d| d.uri == main_uri && !has_error(d));
+    shutdown(&client, handle);
+}
+
+#[test]
+fn closing_one_root_keeps_what_another_reports_on_an_import() {
+    let (dir, main, util) = import_project("pub fn f() -> Int { nope }\n");
+    let other = Url::from_file_path(dir.path().canonicalize().unwrap().join("other.fl")).unwrap();
+    let (client, handle) = start_server();
+    let root_text = "import util { f }\nlet x = f()\nlet y = x\n";
+    did_open_uri(&client, main.clone(), root_text);
+    let util_uri = util.clone();
+    publications_until(&client, |d| d.uri == util_uri && has_error(d));
+    did_open_uri(&client, other, root_text);
+    let util_uri = util.clone();
+    publications_until(&client, |d| d.uri == util_uri && has_error(d));
+    client
+        .sender
+        .send(Message::Notification(Notification::new(
+            DidCloseTextDocument::METHOD.to_string(),
+            DidCloseTextDocumentParams {
+                text_document: TextDocumentIdentifier { uri: main },
+            },
+        )))
+        .unwrap();
+    while let Ok(msg) = client
+        .receiver
+        .recv_timeout(std::time::Duration::from_millis(300))
+    {
+        if let Message::Notification(n) = msg {
+            let diags: PublishDiagnosticsParams = serde_json::from_value(n.params).unwrap();
+            assert!(diags.uri != util || has_error(&diags), "{diags:?}");
+        }
+    }
+    shutdown(&client, handle);
+}
+
 fn shutdown(client: &Connection, handle: thread::JoinHandle<()>) {
     client
         .sender

@@ -28,7 +28,7 @@ use flux_syntax::{
 };
 
 use crate::nodes::*;
-use crate::symbol::{Symbol, SymbolKind, SymbolTable};
+use crate::symbol::{Symbol, SymbolId, SymbolKind, SymbolTable};
 
 use decls::{
     lower_const_binding, lower_derived, lower_enum, lower_event, lower_impl_fns, lower_module_if,
@@ -190,7 +190,16 @@ fn lower_program_inner(
     // Pass 1: declare all top-level names (events, functions, bindings).
     for item in &program.items {
         if let Some(err) = declare_item(item, &mut symbols) {
-            push_duplicate(diagnostics, item, err);
+            let (name, span) = item_name_span(item);
+            if symbols.imported_names.contains(&name) {
+                diagnostics.push(FluxError::ImportedNameTaken {
+                    name,
+                    span: span_to_miette(span),
+                    source_id: span.source,
+                });
+            } else {
+                push_duplicate(diagnostics, item, err);
+            }
         }
         if let Item::Let(l) = item {
             if !l.mutable {
@@ -234,6 +243,8 @@ fn lower_program_inner(
     }
     items.extend(extra_fns);
     items.extend(std::mem::take(&mut symbols.pending_fns));
+    check_alias_cycles(&program.items, &type_aliases, diagnostics);
+    check_inhabited_types(&items, &symbols.export_names(), &type_aliases, diagnostics);
 
     let names = symbols.export_names();
     let impls = std::mem::take(&mut symbols.pending_impls);
@@ -272,6 +283,152 @@ fn lower_program_inner(
         };
         check_unused_bindings(&hir, diagnostics);
         Some(hir)
+    }
+}
+
+/// A type whose every value must contain another value of itself has no
+/// values: `struct S { me: S }`. Starting from nothing, a type gets values once
+/// a struct's fields all have some, or one of an enum's variants does.
+fn check_inhabited_types(
+    items: &[HirItem],
+    names: &HashMap<SymbolId, String>,
+    aliases: &HashMap<String, HirType>,
+    diagnostics: &mut DiagnosticBag,
+) {
+    fn has_values(
+        ty: &HirType,
+        user_types: &HashSet<&str>,
+        inhabited: &HashSet<&str>,
+        aliases: &HashMap<String, HirType>,
+    ) -> bool {
+        let check = |t: &HirType| has_values(t, user_types, inhabited, aliases);
+        match ty {
+            HirType::Named { name, .. } => match aliases.get(name) {
+                _ if user_types.contains(name.as_str()) => inhabited.contains(name.as_str()),
+                Some(aliased) => check(aliased),
+                None => true,
+            },
+            // `None`, `[]`, an empty map, and any function exist without a value inside.
+            HirType::Generic { name, args, .. } if name == "Result" && args.len() == 2 => {
+                check(&args[0]) || check(&args[1])
+            }
+            HirType::Result { ok, err, .. } => check(ok) || check(err),
+            _ => true,
+        }
+    }
+    let user_types: HashSet<&str> = items
+        .iter()
+        .filter_map(|item| match item {
+            HirItem::Struct(s) => names.get(&s.name).map(String::as_str),
+            HirItem::Enum(e) => names.get(&e.name).map(String::as_str),
+            _ => None,
+        })
+        .collect();
+    let mut inhabited: HashSet<&str> = HashSet::new();
+    loop {
+        let before = inhabited.len();
+        for item in items {
+            let (name, has) = match item {
+                HirItem::Struct(s) => (
+                    &s.name,
+                    s.fields
+                        .iter()
+                        .all(|(_, ty)| has_values(ty, &user_types, &inhabited, aliases)),
+                ),
+                HirItem::Enum(e) => (
+                    &e.name,
+                    e.variants.iter().any(|(_, payload)| match payload {
+                        None => true,
+                        Some(HirEnumPayload::Tuple(ty)) => {
+                            has_values(ty, &user_types, &inhabited, aliases)
+                        }
+                        Some(HirEnumPayload::Struct(fields)) => fields
+                            .iter()
+                            .all(|(_, ty)| has_values(ty, &user_types, &inhabited, aliases)),
+                    }),
+                ),
+                _ => continue,
+            };
+            if has {
+                if let Some(name) = names.get(name) {
+                    inhabited.insert(name);
+                }
+            }
+        }
+        if inhabited.len() == before {
+            break;
+        }
+    }
+    for item in items {
+        let (id, span) = match item {
+            HirItem::Struct(s) => (&s.name, s.span),
+            HirItem::Enum(e) => (&e.name, e.span),
+            _ => continue,
+        };
+        if let Some(name) = names.get(id) {
+            if !inhabited.contains(name.as_str()) {
+                diagnostics.push(FluxError::UninhabitedType {
+                    name: name.clone(),
+                    span: span_to_miette(span),
+                    source_id: span.source,
+                });
+            }
+        }
+    }
+}
+
+/// Resolving an alias follows the aliases it names, so a cycle would never end.
+fn check_alias_cycles(
+    items: &[Item],
+    aliases: &HashMap<String, HirType>,
+    diagnostics: &mut DiagnosticBag,
+) {
+    fn names_in(ty: &HirType, out: &mut Vec<String>) {
+        match ty {
+            HirType::Named { name, .. } | HirType::TypeParam { name, .. } => {
+                out.push(name.clone());
+            }
+            HirType::Generic { name, args, .. } => {
+                out.push(name.clone());
+                args.iter().for_each(|arg| names_in(arg, out));
+            }
+            HirType::Array { inner, .. } | HirType::Option { inner, .. } => names_in(inner, out),
+            HirType::Result { ok, err, .. } => {
+                names_in(ok, out);
+                names_in(err, out);
+            }
+            HirType::Function { params, ret, .. } => {
+                params.iter().for_each(|param| names_in(param, out));
+                if let Some(ret) = ret {
+                    names_in(ret, out);
+                }
+            }
+        }
+    }
+    for item in items {
+        let Item::TypeAlias(decl) = item else {
+            continue;
+        };
+        let name = &decl.name.name;
+        let mut seen = std::collections::HashSet::new();
+        let mut pending = vec![name.clone()];
+        let mut cyclic = false;
+        while let Some(next) = pending.pop() {
+            let Some(aliased) = aliases.get(&next) else {
+                continue;
+            };
+            let mut refs = Vec::new();
+            names_in(aliased, &mut refs);
+            cyclic |= refs.contains(name);
+            pending.extend(refs.into_iter().filter(|r| seen.insert(r.clone())));
+        }
+        if cyclic {
+            diagnostics.push(FluxError::CyclicTypeAlias {
+                name: name.clone(),
+                span: span_to_miette(decl.name.span),
+                source_id: decl.name.span.source,
+            });
+        }
     }
 }
 

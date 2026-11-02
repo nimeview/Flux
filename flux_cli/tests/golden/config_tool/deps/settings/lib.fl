@@ -1,0 +1,50 @@
+// A reusable `key = value` settings parser.
+import collections { len, map_new, map_has }
+
+import str { str_split, str_trim, str_starts_with, parse_int }
+
+import option { Some, None }
+
+import result { Ok, Err }
+
+pub struct Settings {
+    values: Map[String, String]
+}
+
+fn split_entry(line: String, number: Int) -> Result[[String], String] {
+    let parts = str_split(line, "=")
+    if len(parts) != 2 {
+        return Err("line {number}: expected `key = value`")
+    }
+    Ok(parts)
+}
+
+pub fn parse(text: String) -> Result[Settings, String] {
+    let mut values: Map[String, String] = map_new()
+    let mut number = 0
+    for row in str_split(text, "\n") {
+        number = number + 1
+        let line = str_trim(row)
+        if line != "" && !str_starts_with(line, "#") {
+            let parts = split_entry(line, number)?
+            let key = str_trim(parts[0])
+            if map_has(values, key) {
+                return Err("line {number}: duplicate key `{key}`")
+            }
+            values[key] = str_trim(parts[1])
+        }
+    }
+    Ok(Settings { values: values })
+}
+
+pub fn text_of(s: Settings, key: String) -> Option[String] {
+    if map_has(s.values, key) {
+        Some(s.values[key])
+    } else {
+        None
+    }
+}
+
+pub fn int_of(s: Settings, key: String) -> Result[Int, String] {
+    match text_of(s, key) { Some(text) => match parse_int(text) { Ok(n) => Ok(n), Err(_) => Err("`{key}` is not a number: {text}") }, None => Err("missing `{key}`") }
+}

@@ -49,6 +49,10 @@ pub fn monomorphize_program(
     // The cap protects against unbounded polymorphic recursion (for example,
     // a generic function that recursively wraps its type in another array).
     const MAX_MONOMORPHIZATION_PASSES: usize = 256;
+    // Passes alone do not bound the work: types grow with every pass, and a
+    // function can specialize itself in several ways at once.
+    const MAX_SPECIALIZATIONS: usize = 1024;
+    const MAX_SPECIALIZED_TYPE_DEPTH: usize = 32;
     let mut specializations: HashMap<(String, String), String> = HashMap::new();
     for pass in 0..MAX_MONOMORPHIZATION_PASSES {
         let mut created_specialization = false;
@@ -118,6 +122,20 @@ pub fn monomorphize_program(
                     rewrite_matching_calls(program, base_name, inst_name, &concrete, &symbol_types);
                     continue;
                 }
+                let deepest = generic_types.iter().map(type_depth).max().unwrap_or(0);
+                if specializations.len() >= MAX_SPECIALIZATIONS
+                    || deepest > MAX_SPECIALIZED_TYPE_DEPTH
+                {
+                    diagnostics.push(FluxError::TypeMismatch {
+                        expected: "finite generic specialization".into(),
+                        found: format!(
+                            "`{base_name}` needs more than {MAX_SPECIALIZATIONS} specializations or types nested more than {MAX_SPECIALIZED_TYPE_DEPTH} levels"
+                        ),
+                        span: span_to_miette(template.fn_item.span),
+                        source_id: template.fn_item.span.source,
+                    });
+                    return;
+                }
                 let readable_name = format!("{base_name}_{suffix}");
                 // A user may declare `id_Int` alongside `id[T]`. Generated
                 // functions must never silently reuse that unrelated symbol.
@@ -171,6 +189,23 @@ pub fn monomorphize_program(
                 });
             }
         }
+    }
+}
+
+fn type_depth(ty: &Type) -> usize {
+    match ty {
+        Type::Array(inner) | Type::Option(inner) => 1 + type_depth(inner),
+        Type::Result { ok, err } => 1 + type_depth(ok).max(type_depth(err)),
+        Type::Map { key, value } => 1 + type_depth(key).max(type_depth(value)),
+        Type::Func { params, ret } => {
+            1 + params
+                .iter()
+                .map(type_depth)
+                .max()
+                .unwrap_or(0)
+                .max(type_depth(ret))
+        }
+        _ => 0,
     }
 }
 

@@ -234,6 +234,44 @@ pub enum FluxError {
         source_id: SourceId,
     },
 
+    #[error("`{name}` is already imported")]
+    #[diagnostic(
+        code(flux::E004),
+        help("rename this definition, or import only the names you use, as in `import math {{ sqrt }}`")
+    )]
+    ImportedNameTaken {
+        name: String,
+        #[label("this name comes from an import")]
+        span: miette::SourceSpan,
+        source_id: SourceId,
+    },
+
+    #[error("no value of type `{name}` can exist")]
+    #[diagnostic(
+        code(flux::E025),
+        help(
+            "it always contains itself; end the chain with an enum variant, `Option`, or an array"
+        )
+    )]
+    UninhabitedType {
+        name: String,
+        #[label("declared here")]
+        span: miette::SourceSpan,
+        source_id: SourceId,
+    },
+
+    #[error("type alias `{name}` refers to itself")]
+    #[diagnostic(
+        code(flux::E024),
+        help("an alias is another name for a type; use a struct or enum for a recursive type")
+    )]
+    CyclicTypeAlias {
+        name: String,
+        #[label("part of the cycle")]
+        span: miette::SourceSpan,
+        source_id: SourceId,
+    },
+
     #[error("`{callee}` is not a function")]
     #[diagnostic(
         code(flux::E023),
@@ -281,11 +319,14 @@ impl FluxError {
             | Self::InvalidImpl { source_id, .. }
             | Self::InvalidTry { source_id, .. }
             | Self::PrivateImport { source_id, .. }
-            | Self::NotCallable { source_id, .. } => *source_id,
+            | Self::NotCallable { source_id, .. }
+            | Self::CyclicTypeAlias { source_id, .. }
+            | Self::UninhabitedType { source_id, .. }
+            | Self::ImportedNameTaken { source_id, .. } => *source_id,
         }
     }
 
-    /// Stable diagnostic code (`E000`–`E023`).
+    /// Stable diagnostic code (`E000`–`E025`).
     pub fn code(&self) -> &'static str {
         match self {
             Self::Parse { .. } => "E000",
@@ -311,6 +352,9 @@ impl FluxError {
             Self::InvalidTry { .. } => "E021",
             Self::PrivateImport { .. } => "E022",
             Self::NotCallable { .. } => "E023",
+            Self::CyclicTypeAlias { .. } => "E024",
+            Self::UninhabitedType { .. } => "E025",
+            Self::ImportedNameTaken { .. } => "E004",
         }
     }
 
@@ -340,6 +384,9 @@ impl FluxError {
             | Self::InvalidTry { span, .. }
             | Self::PrivateImport { span, .. }
             | Self::NotCallable { span, .. }
+            | Self::CyclicTypeAlias { span, .. }
+            | Self::UninhabitedType { span, .. }
+            | Self::ImportedNameTaken { span, .. }
             | Self::DuplicateDefinition { span, .. } => *span,
         };
         crate::warning::span_from_miette(source_id, miette_span)

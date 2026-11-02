@@ -1,6 +1,6 @@
 //! Statement- and binding-level checking (control flow, mutability, purity).
 
-use super::state::TypeCheckContext;
+use super::state::{Scope, TypeCheckContext};
 
 use std::collections::{HashMap, HashSet};
 
@@ -20,7 +20,7 @@ use super::util::{default_unknown_variants, mentions_empty, types_compatible, un
 fn require_bool(
     ctx: &TypeCheckContext,
     expr: &HirExpr,
-    scope: &mut HashMap<SymbolId, Type>,
+    scope: &mut Scope<'_>,
     names: &HashMap<SymbolId, String>,
     source: SourceId,
     diagnostics: &mut DiagnosticBag,
@@ -42,7 +42,7 @@ fn require_bool(
 pub(super) fn check_binding(
     ctx: &TypeCheckContext,
     binding: &HirBinding,
-    types: &HashMap<SymbolId, Type>,
+    types: &Scope<'_>,
     names: &HashMap<SymbolId, String>,
     source: SourceId,
     diagnostics: &mut DiagnosticBag,
@@ -190,7 +190,7 @@ fn check_derived_expr(
 pub(super) fn check_block(
     ctx: &TypeCheckContext,
     block: &HirBlock,
-    locals: &HashMap<SymbolId, Type>,
+    locals: &Scope<'_>,
     module: &HashMap<SymbolId, Type>,
     names: &HashMap<SymbolId, String>,
     reactive: bool,
@@ -220,7 +220,7 @@ pub(super) fn check_block(
 pub(super) fn check_return_types(
     ctx: &TypeCheckContext,
     block: &HirBlock,
-    locals: &HashMap<SymbolId, Type>,
+    locals: &Scope<'_>,
     expected: &Type,
     names: &HashMap<SymbolId, String>,
     source: SourceId,
@@ -334,7 +334,7 @@ pub(super) fn check_return_types(
 pub(super) fn check_if(
     ctx: &TypeCheckContext,
     stmt: &HirIf,
-    scope: &mut HashMap<SymbolId, Type>,
+    scope: &mut Scope<'_>,
     module: &HashMap<SymbolId, Type>,
     names: &HashMap<SymbolId, String>,
     reactive: bool,
@@ -386,7 +386,7 @@ pub(super) fn check_if(
 pub(super) fn check_stmt(
     ctx: &TypeCheckContext,
     stmt: &HirStmt,
-    scope: &mut HashMap<SymbolId, Type>,
+    scope: &mut Scope<'_>,
     module: &HashMap<SymbolId, Type>,
     names: &HashMap<SymbolId, String>,
     reactive: bool,
@@ -606,7 +606,7 @@ pub(super) fn check_stmt(
             );
         }
         HirStmt::On(o) => {
-            let mut local = module.clone();
+            let mut local = Scope::new(module);
             if let (Some(param), Some(Type::Event(payload))) = (o.param, module.get(&o.event)) {
                 local.insert(param, *payload.clone());
             }

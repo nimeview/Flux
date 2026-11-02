@@ -94,7 +94,19 @@ pub fn try_resolve_file_with_root(
     root_contents: Option<&str>,
     diagnostics: &mut DiagnosticBag,
 ) -> Result<ResolvedProgram, ResolveFailure> {
+    try_resolve_with_overlay(path, root_contents, HashMap::new(), diagnostics)
+}
+
+/// Like [`try_resolve_file_with_root`], reading imported files from `overlay`
+/// (canonical path to contents) when it has them: an editor's unsaved buffers.
+pub fn try_resolve_with_overlay(
+    path: &Path,
+    root_contents: Option<&str>,
+    overlay: HashMap<PathBuf, String>,
+    diagnostics: &mut DiagnosticBag,
+) -> Result<ResolvedProgram, ResolveFailure> {
     let mut loader = ModuleLoader::new(path);
+    loader.overlay = overlay;
     if let Some(manifest) = manifest::check_manifest(&loader.project_root, diagnostics) {
         // A manifest problem would otherwise drop dependencies silently.
         return Err(ResolveFailure {
@@ -123,7 +135,21 @@ pub fn try_resolve_file_with_root(
     }
 }
 
+/// `path` with symlinks resolved; a file that exists only in an editor's
+/// buffer still gets a stable form from its directory.
+pub fn canonical_path(path: &Path) -> PathBuf {
+    if let Ok(canonical) = path.canonicalize() {
+        return canonical;
+    }
+    match (path.parent().map(Path::canonicalize), path.file_name()) {
+        (Some(Ok(parent)), Some(name)) => parent.join(name),
+        _ => path.to_path_buf(),
+    }
+}
+
 struct ModuleLoader {
+    /// Contents to use instead of the file on disk, by canonical path.
+    overlay: HashMap<PathBuf, String>,
     modules: Vec<LoadedModule>,
     seen: HashSet<PathBuf>,
     loading_stack: Vec<PathBuf>,
@@ -144,6 +170,7 @@ impl ModuleLoader {
             .map(|d| (d.name, d.module_root))
             .collect();
         Self {
+            overlay: HashMap::new(),
             modules: Vec::new(),
             seen: HashSet::new(),
             loading_stack: Vec::new(),
@@ -203,7 +230,14 @@ impl ModuleLoader {
         diagnostics: &mut DiagnosticBag,
     ) -> Option<()> {
         let site = import_site.unwrap_or(flux_diagnostics::Span::DUMMY);
-        let canonical = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+        let canonical = path.canonicalize().unwrap_or_else(|_| {
+            let buffered = canonical_path(path);
+            if self.overlay.contains_key(&buffered) {
+                buffered
+            } else {
+                path.to_path_buf()
+            }
+        });
         if self.loading_stack.contains(&canonical) {
             let cycle = self
                 .loading_stack
@@ -227,7 +261,11 @@ impl ModuleLoader {
 
         let contents = match override_contents {
             Some(c) => c.to_string(),
-            None => match fs::read_to_string(&canonical) {
+            None => match self
+                .overlay
+                .get(&canonical)
+                .map_or_else(|| fs::read_to_string(&canonical), |c| Ok(c.clone()))
+            {
                 Ok(c) => c,
                 Err(e) => {
                     diagnostics.push(FluxError::Parse {
@@ -287,12 +325,13 @@ impl ModuleLoader {
                 &package_root,
                 &package_deps,
                 &import,
+                &self.overlay,
                 diagnostics,
             ) else {
                 self.loading_stack.pop();
                 return None;
             };
-            if !import_path.exists() {
+            if !import_path.exists() && !self.overlay.contains_key(&canonical_path(&import_path)) {
                 diagnostics.push(FluxError::Parse {
                     message: format!("module not found: {}", import.path),
                     span: span_to_miette(import.span),
@@ -346,6 +385,7 @@ fn resolve_import_path(
     project_root: &Path,
     path_deps: &HashMap<String, PathBuf>,
     import: &ImportDecl,
+    overlay: &HashMap<PathBuf, String>,
     diagnostics: &mut DiagnosticBag,
 ) -> Option<PathBuf> {
     if import_path.contains("..")
@@ -404,14 +444,15 @@ fn resolve_import_path(
         candidate
     };
 
-    let Ok(canonical) = resolved.canonicalize() else {
+    let canonical = canonical_path(&resolved);
+    if !canonical.exists() && !overlay.contains_key(&canonical) {
         diagnostics.push(FluxError::Parse {
             message: format!("module not found: {import_path}"),
             span: span_to_miette(import.span),
             source_id: import.span.source,
         });
         return None;
-    };
+    }
     let root = project_root
         .canonicalize()
         .unwrap_or_else(|_| project_root.to_path_buf());

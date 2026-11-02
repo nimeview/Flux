@@ -92,7 +92,9 @@ pub fn main_loop(connection: &Connection) -> Result<(), Box<dyn Error + Sync + S
             }
             Message::Notification(not) => match not.method.as_str() {
                 DidOpenTextDocument::METHOD => {
-                    let params: DidOpenTextDocumentParams = serde_json::from_value(not.params)?;
+                    let Some(params) = notification_params::<DidOpenTextDocumentParams>(not) else {
+                        continue;
+                    };
                     let uri = params.text_document.uri;
                     store.open(
                         uri.clone(),
@@ -100,27 +102,41 @@ pub fn main_loop(connection: &Connection) -> Result<(), Box<dyn Error + Sync + S
                         params.text_document.text,
                     );
                     publish_diagnostics(connection, &mut store, &uri)?;
+                    // Its buffer may be what another document was missing.
+                    publish_dependents(connection, &mut store, &uri)?;
                 }
                 DidChangeTextDocument::METHOD => {
-                    let params: DidChangeTextDocumentParams = serde_json::from_value(not.params)?;
+                    let Some(params) = notification_params::<DidChangeTextDocumentParams>(not)
+                    else {
+                        continue;
+                    };
                     let uri = params.text_document.uri;
                     store.apply_changes(&uri, params.text_document.version, params.content_changes);
                     publish_diagnostics(connection, &mut store, &uri)?;
                     publish_dependents(connection, &mut store, &uri)?;
                 }
                 DidSaveTextDocument::METHOD => {
-                    // Imports are read from disk, so a save is when dependents change.
-                    let params: DidSaveTextDocumentParams = serde_json::from_value(not.params)?;
+                    let Some(params) = notification_params::<DidSaveTextDocumentParams>(not) else {
+                        continue;
+                    };
                     let uri = params.text_document.uri;
                     publish_diagnostics(connection, &mut store, &uri)?;
                     publish_dependents(connection, &mut store, &uri)?;
                 }
                 DidCloseTextDocument::METHOD => {
-                    let params: DidCloseTextDocumentParams = serde_json::from_value(not.params)?;
+                    let Some(params) = notification_params::<DidCloseTextDocumentParams>(not)
+                    else {
+                        continue;
+                    };
                     let uri = params.text_document.uri;
+                    // Dependents read this buffer; they now read the file again.
+                    let dependents = store.dependents(&uri);
                     store.close(&uri);
                     for params in close_diagnostics(&mut store, &uri) {
                         send_diagnostics(connection, params)?;
+                    }
+                    for dependent in dependents {
+                        publish_diagnostics(connection, &mut store, &dependent)?;
                     }
                 }
                 _ => {}
@@ -131,7 +147,39 @@ pub fn main_loop(connection: &Connection) -> Result<(), Box<dyn Error + Sync + S
     Ok(())
 }
 
+/// A notification's parameters; one that cannot be read is reported and
+/// skipped, since a client's mistake must not stop the server.
+fn notification_params<P: serde::de::DeserializeOwned>(not: lsp_server::Notification) -> Option<P> {
+    match serde_json::from_value(not.params) {
+        Ok(params) => Some(params),
+        Err(e) => {
+            eprintln!("flux lsp: ignoring malformed {}: {e}", not.method);
+            None
+        }
+    }
+}
+
 fn handle_request(
+    connection: &Connection,
+    store: &mut DocumentStore,
+    req: ServerRequest,
+) -> Result<(), Box<dyn Error + Sync + Send>> {
+    let (id, method) = (req.id.clone(), req.method.clone());
+    match dispatch_request(connection, store, req) {
+        Err(e) if e.is::<serde_json::Error>() => {
+            let response = Response::new_err(
+                id,
+                lsp_server::ErrorCode::InvalidParams as i32,
+                format!("{method}: {e}"),
+            );
+            connection.sender.send(Message::Response(response))?;
+            Ok(())
+        }
+        other => other,
+    }
+}
+
+fn dispatch_request(
     connection: &Connection,
     store: &mut DocumentStore,
     req: ServerRequest,
@@ -271,18 +319,22 @@ pub fn document_diagnostics(store: &mut DocumentStore, uri: &Url) -> Vec<Publish
             ..Default::default()
         });
     }
-    let foreign: HashSet<Url> = by_uri.keys().filter(|u| *u != uri).cloned().collect();
-    for stale in store.replace_foreign_targets(uri, foreign) {
-        by_uri.entry(stale).or_default();
+    let own = by_uri.remove(uri).unwrap_or_default();
+    let reported: HashSet<Url> = by_uri.keys().cloned().collect();
+    let stale = store.replace_foreign(uri, by_uri);
+    let mut out = vec![PublishDiagnosticsParams {
+        version: store.version(uri),
+        uri: uri.clone(),
+        diagnostics: own,
+    }];
+    // An open file's diagnostics come from its own analysis.
+    for target in reported.union(&stale).filter(|t| !store.is_open(t)) {
+        out.push(PublishDiagnosticsParams {
+            version: None,
+            uri: target.clone(),
+            diagnostics: store.foreign_diagnostics(target),
+        });
     }
-    let mut out: Vec<PublishDiagnosticsParams> = by_uri
-        .into_iter()
-        .map(|(target, diagnostics)| PublishDiagnosticsParams {
-            version: store.version(&target),
-            uri: target,
-            diagnostics,
-        })
-        .collect();
     // Root first, then imported files in a stable order.
     out.sort_by_key(|p| (p.uri != *uri, p.uri.to_string()));
     out
@@ -291,19 +343,24 @@ pub fn document_diagnostics(store: &mut DocumentStore, uri: &Url) -> Vec<Publish
 /// Clears diagnostics for a closed document and the imported files it reported on.
 pub fn close_diagnostics(store: &mut DocumentStore, uri: &Url) -> Vec<PublishDiagnosticsParams> {
     let mut targets: Vec<Url> = store
-        .replace_foreign_targets(uri, HashSet::new())
+        .replace_foreign(uri, HashMap::new())
         .into_iter()
         .filter(|target| !store.is_open(target))
         .collect();
     targets.sort_by_key(|u| u.to_string());
-    std::iter::once(uri.clone())
-        .chain(targets)
-        .map(|target| PublishDiagnosticsParams {
+    let mut out = vec![PublishDiagnosticsParams {
+        uri: uri.clone(),
+        diagnostics: Vec::new(),
+        version: None,
+    }];
+    for target in targets {
+        out.push(PublishDiagnosticsParams {
+            diagnostics: store.foreign_diagnostics(&target),
             uri: target,
-            diagnostics: Vec::new(),
             version: None,
-        })
-        .collect()
+        });
+    }
+    out
 }
 
 fn compute_hover(store: &mut DocumentStore, params: HoverParams) -> Option<Hover> {
@@ -440,7 +497,7 @@ fn compute_document_symbols(
     let symbols: Vec<DocumentSymbol> = outline_symbols(hir)
         .into_iter()
         .filter_map(|sym| {
-            let (sl, sc, el, ec) = span_to_lsp_range(&text, &sym.span, &analysis.source_paths)?;
+            let (sl, sc, el, ec) = span_to_lsp_range(&text, &sym.span, &analysis)?;
             Some(DocumentSymbol {
                 name: sym.name,
                 detail: None,
@@ -546,7 +603,7 @@ fn compute_definition(
     let analysis = store.analyze(&uri)?;
     let loc = definition_at_position(&analysis, &text, position.line, position.character)?;
     let (start_line, start_col, end_line, end_col) =
-        span_to_lsp_range(&text, &loc.span, &analysis.source_paths)?;
+        span_to_lsp_range(&text, &loc.span, &analysis)?;
     let target_uri = if loc.path == "<buffer>" {
         uri
     } else {

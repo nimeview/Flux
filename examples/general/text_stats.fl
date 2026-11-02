@@ -1,7 +1,9 @@
 // Text statistics: line, word, and blank-line counts plus the longest line.
 // Usage: flux run text_stats.fl [-- <file>]
 import io { println, eprintln, read_file, args }
+
 import str { str_split, str_trim, str_len, to_string }
+
 import collections { len, filter, get }
 
 fn words(line: String) -> [String] {
@@ -16,8 +18,12 @@ fn report(text: String) -> Int {
     for line in lines {
         let ws = words(line)
         word_count = word_count + len(ws)
-        if len(ws) == 0 { blank = blank + 1 }
-        if str_len(line) > longest { longest = str_len(line) }
+        if len(ws) == 0 {
+            blank = blank + 1
+        }
+        if str_len(line) > longest {
+            longest = str_len(line)
+        }
     }
     println("lines: " + to_string(len(lines)))
     println("words: " + to_string(word_count))
@@ -27,10 +33,7 @@ fn report(text: String) -> Int {
 }
 
 fn main() -> Int {
-    let path = match get(args(), 0) {
-        Some(p) => p,
-        None => "text_stats_input.txt"
-    }
+    let path = match get(args(), 0) { Some(p) => p, None => "text_stats_input.txt" }
     match read_file(path) {
         Ok(text) => report(text),
         Err(e) => {

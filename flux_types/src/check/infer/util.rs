@@ -7,7 +7,7 @@ use flux_hir::{HirExpr, SymbolId};
 
 use crate::types::Type;
 
-use super::super::state::TypeCheckContext;
+use super::super::state::{Scope, TypeCheckContext};
 use super::super::util::{types_compatible, unwrap_value_type};
 use super::expr::infer_expr;
 
@@ -16,7 +16,7 @@ use super::expr::infer_expr;
 pub(super) fn infer_array_elem(
     ctx: &TypeCheckContext,
     arg: Option<&HirExpr>,
-    types: &HashMap<SymbolId, Type>,
+    types: &Scope<'_>,
     names: &HashMap<SymbolId, String>,
     source: SourceId,
     diagnostics: &mut DiagnosticBag,
@@ -45,7 +45,7 @@ pub(super) fn check_callback(
     ctx: &TypeCheckContext,
     cb: &HirExpr,
     expected_params: &[Type],
-    types: &HashMap<SymbolId, Type>,
+    types: &Scope<'_>,
     names: &HashMap<SymbolId, String>,
     source: SourceId,
     diagnostics: &mut DiagnosticBag,

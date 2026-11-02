@@ -87,7 +87,17 @@ pub fn report_warnings(
     report_errors(primary, sources, &bag)
 }
 
-/// Renders every diagnostic against the source its `SourceId` names, falling
+/// More than this of one kind is not useful to read, and rendering each one
+/// takes time proportional to the file.
+const MAX_SHOWN_DIAGNOSTICS: usize = 50;
+
+fn note_hidden(total: usize, kind: &str) {
+    if total > MAX_SHOWN_DIAGNOSTICS {
+        eprintln!("... and {} more {kind}s", total - MAX_SHOWN_DIAGNOSTICS);
+    }
+}
+
+/// Renders diagnostics against the source each `SourceId` names, falling
 /// back to `primary` when that file was never read (e.g. a missing import).
 #[allow(clippy::result_unit_err)]
 pub fn report_errors(
@@ -96,17 +106,19 @@ pub fn report_errors(
     bag: &DiagnosticBag,
 ) -> Result<(), ()> {
     let handler = GraphicalReportHandler::new();
-    for warning in &bag.warnings {
+    for warning in bag.warnings.iter().take(MAX_SHOWN_DIAGNOSTICS) {
         let source = source_for(primary, sources, warning.source_id());
         render_diagnostic(&handler, source, warning.clone())?;
     }
+    note_hidden(bag.warnings.len(), "warning");
     if bag.errors.is_empty() {
         return Ok(());
     }
-    for error in &bag.errors {
+    for error in bag.errors.iter().take(MAX_SHOWN_DIAGNOSTICS) {
         let source = source_for(primary, sources, error.source_id());
         render_diagnostic(&handler, source, error.clone())?;
     }
+    note_hidden(bag.errors.len(), "error");
     Err(())
 }
 

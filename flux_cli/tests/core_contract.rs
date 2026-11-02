@@ -1447,3 +1447,75 @@ fn functions_stay_callable_by_name_and_usable_as_callbacks() {
         Some(12 + 2 + 2)
     );
 }
+
+#[test]
+fn a_type_alias_cycle_is_an_error_not_a_hang_or_crash() {
+    for src in [
+        "type A = A\nfn f(a: A) -> A {\n    a\n}\n",
+        "type A = B\ntype B = A\nlet x: A = 1\n",
+        "type A = [A]\nfn f(a: A) -> A {\n    a\n}\n",
+        "type A = Option[B]\ntype B = Result[A, Int]\nfn f(a: A) -> A {\n    a\n}\n",
+        "type F = fn(F) -> Int\nfn f(a: F) -> Int {\n    1\n}\n",
+    ] {
+        let err = match compile(source_from("<alias>", src)) {
+            Ok(_) => panic!("should not compile: {src}"),
+            Err(err) => err,
+        };
+        assert!(
+            err.diagnostics.errors.iter().any(|e| e.code() == "E024"),
+            "{src}: {:?}",
+            err.diagnostics.errors
+        );
+    }
+    // A chain is fine, and a struct may hold an alias of itself.
+    assert_eq!(
+        run_value("type A = B\ntype B = Int\nlet x: A = 1\n", "x"),
+        RuntimeValue::int_i64(1)
+    );
+    compile(source_from(
+        "<alias>",
+        "type Kids = [Tree]\nstruct Tree {\n    kids: Kids\n}\nfn f(t: Tree) -> Kids {\n    t.kids\n}\n",
+    ))
+    .unwrap_or_else(|e| panic!("{:?}", e.diagnostics.errors));
+}
+
+#[test]
+fn unbounded_generic_specialization_stops_with_an_error() {
+    for src in [
+        "fn f[T](x: T) -> Int {\n    f([x])\n}\nfn main() {\n    let a = f(1)\n}\n",
+        "fn f[T](x: T) -> Int {\n    g([x])\n}\nfn g[U](x: U) -> Int {\n    f([x])\n}\nfn main() {\n    let a = f(1)\n}\n",
+        "import option { Some }\nfn f[T](x: T) -> Int {\n    f([x]) + f(Some(x))\n}\nfn main() {\n    let a = f(1)\n}\n",
+    ] {
+        let start = std::time::Instant::now();
+        let err = match compile(source_from("<mono>", src)) {
+            Ok(_) => panic!("should not compile: {src}"),
+            Err(err) => err,
+        };
+        assert!(
+            err.diagnostics
+                .errors
+                .iter()
+                .any(|e| e.to_string().contains("finite generic specialization")),
+            "{src}: {:?}",
+            err.diagnostics.errors
+        );
+        assert!(start.elapsed().as_secs() < 20, "{src} took too long");
+    }
+}
+
+#[test]
+fn check_rejects_a_const_cycle_like_run_does() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("main.fl");
+    std::fs::write(&path, "const a = b\nconst b = a\n").unwrap();
+    let failure = check_file(&path).err().expect("a cycle does not check");
+    assert!(
+        failure
+            .diagnostics
+            .errors
+            .iter()
+            .any(|e| e.code() == "E010"),
+        "{:?}",
+        failure.diagnostics.errors
+    );
+}

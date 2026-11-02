@@ -246,6 +246,33 @@ Locals used to be keyed by name: every `Load`, `let`, and assignment hashed the 
 
 Behavior is unchanged by construction: a slot is unbound until its binding runs, and an unbound slot reads `name` as a global, exactly as a missed name lookup did. An assignment to a reactive source has no slot and still goes by name, because the VM checked sources first. The pass runs at the end of lowering and again in `Executor::with_mode`, and it is idempotent, so hand-built IR works too. Cached IR is invalidated automatically, because the compiler fingerprint hashes `flux_ir`. The JIT treats the slot forms like their name forms. Tests: `flux_ir/tests/resolve.rs`, plus the existing VM/JIT parity and differential suites.
 
+## Compile time on large programs (2026-11-02)
+
+Turbo Boost off. `flux check` on a generated file of N one-line functions; `flux run` measured with `--no-cache`.
+
+| Program | Before | After |
+|---------|--------|-------|
+| 2,000 functions, `check` | 5.6 s | **0.12 s** |
+| 5,000 functions, `check` | over 25 s | **0.19 s** |
+| 5,000 functions, `run --vm` | 11.5 s | under 1 s |
+| 20,000 functions, `check` | not measured | **0.82 s** |
+
+Three things grew with the square of the program's size:
+- The checker cloned the whole symbol table for every function, block, and arm. `Scope` now shares the program's symbols and copies only the locals.
+- The VM's `validate_program` cloned every allowed name for every expression. `Allowed` shares them in the same way.
+- `flux run` rendered every warning, and each rendering read the file again: 20,000 unused bindings took 23 s. At most 50 diagnostics of a kind are shown now, followed by `... and N more warnings`.
+
+Two more, fixed the same way: JIT compilation copied a set of function names per function (5,000 functions took 10 s), and `flux lsp` searched the file for the line of every diagnostic (20,000 warnings took 14 s); `LineIndex` finds it by binary search.
+
+Memory over long runs, peak RSS for 20,000 and 200,000 events, with strings, arrays, enums, structs, and maps:
+
+| Engine | 20,000 | 200,000 |
+|--------|--------|---------|
+| VM | 3.5 MB | 3.5 MB |
+| JIT | 5.3 MB | 5.3 MB |
+
+Memory does not grow with run length, and time grows linearly.
+
 ## Findings
 
 1. **Arrays were copied quadratically (fixed).** `Value::Array(Vec<Value>)` has full value semantics, so every read of a local array (`len(xs)`, `get(xs, i)`, passing it to a function) deep-clones it, nested structs included. `xs = push(xs, v)` copies it as well, because the old value is still held by `xs` during the call. Doubling the size roughly quadruples the time, for building (`push`: 500 → 0.3 s, 1,000 → 0.9 s, 2,000 → 3.6 s) and for indexed scanning (1,000 → 1.1 s, 2,000 → 4.2 s). Fix:

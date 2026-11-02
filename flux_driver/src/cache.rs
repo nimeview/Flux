@@ -20,6 +20,8 @@ const CACHE_MAGIC: &[u8; 6] = b"FLXIR\0";
 /// Blob layout version: magic, version, fingerprint length + bytes, SHA-256 of
 /// the payload, payload.
 const CACHE_VERSION: u8 = 3;
+/// Most compiled programs a project's cache directory keeps.
+const MAX_CACHE_ENTRIES: usize = 64;
 
 /// Identity of the compiler that wrote a cache entry; see `build.rs`.
 pub const COMPILER_FINGERPRINT: &str = env!("FLUX_COMPILER_FINGERPRINT");
@@ -101,6 +103,30 @@ impl CompileCache {
         self.entries.insert(key.to_string(), data.clone());
         if ensure_project_dirs(&self.project_root).is_ok() {
             let _ = fs::write(self.cache_path(key), data);
+            self.prune();
+        }
+    }
+
+    /// Keeps the newest [`MAX_CACHE_ENTRIES`]. Every edit and every compiler
+    /// build makes new entries, and nothing else ever removes the old ones.
+    fn prune(&self) {
+        let Ok(entries) = fs::read_dir(self.cache_dir()) else {
+            return;
+        };
+        let mut files: Vec<(std::time::SystemTime, PathBuf)> = entries
+            .flatten()
+            .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "ir"))
+            .filter_map(|entry| {
+                let modified = entry.metadata().ok()?.modified().ok()?;
+                Some((modified, entry.path()))
+            })
+            .collect();
+        if files.len() <= MAX_CACHE_ENTRIES {
+            return;
+        }
+        files.sort();
+        for (_, path) in &files[..files.len() - MAX_CACHE_ENTRIES] {
+            let _ = fs::remove_file(path);
         }
     }
 

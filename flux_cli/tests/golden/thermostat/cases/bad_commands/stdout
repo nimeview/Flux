@@ -1,0 +1,7 @@
+heater on, 1 to go
+display: 200
+heater changes: 1
+heater off
+display: 300
+heater changes: 2
+done

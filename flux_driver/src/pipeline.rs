@@ -367,12 +367,22 @@ pub fn compile_file(path: &Path, options: CompileOptions) -> Result<Compiled, Co
 
 /// Analyze a document for diagnostics / hover (follows imports when `path` is set).
 pub fn analyze_document(path: Option<&Path>, contents: &str) -> Analyzed {
+    analyze_document_with(path, contents, HashMap::new())
+}
+
+/// Like [`analyze_document`], reading imports from `overlay` (canonical path
+/// to contents) when it has them: an editor's unsaved buffers.
+pub fn analyze_document_with(
+    path: Option<&Path>,
+    contents: &str,
+    overlay: HashMap<PathBuf, String>,
+) -> Analyzed {
     let mut diagnostics = DiagnosticBag::new();
     let source_id = SourceId(0);
 
     let mut failed_sources = Vec::new();
     let resolved_opt = path.and_then(|p| {
-        try_resolve_file_with_root(p, Some(contents), &mut diagnostics)
+        flux_resolve::try_resolve_with_overlay(p, Some(contents), overlay, &mut diagnostics)
             .map_err(|failure| failed_sources = failure.sources)
             .ok()
     });
@@ -592,6 +602,16 @@ fn finish_lower(
     };
 
     if options.phase == CompilePhase::Check {
+        // Lowering finds what only it can see, such as a cycle among
+        // initializers; `check` must not pass what `run` rejects.
+        if flux_ir::lower_to_ir(&hir, source.id, diagnostics).is_none() || diagnostics.has_errors()
+        {
+            return Err(CompileFailed::new(
+                source,
+                sources,
+                std::mem::take(diagnostics),
+            ));
+        }
         return Ok(Artifacts {
             source,
             sources,

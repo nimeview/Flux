@@ -1,0 +1,110 @@
+// Totals sales records by region and prints the regions, largest first.
+// Each input line is `region,item,quantity,unit price`; `#` starts a comment line.
+import io { println, eprintln, args, read_file }
+
+import collections { get, len, push, map_new, map_has, map_keys, map, filter, reduce }
+
+import str { str_split, str_trim, str_starts_with, parse_int, parse_float }
+
+import option { Some, None }
+
+import result { Ok, Err }
+
+struct Sale {
+    region: String,
+    item: String,
+    quantity: Int,
+    price: Float
+}
+
+struct Total {
+    region: String,
+    amount: Float,
+    units: Int
+}
+
+fn parse_sale(row: String, number: Int) -> Result[Sale, String] {
+    let cols = map(str_split(row, ","), |c: String| str_trim(c))
+    if len(cols) != 4 {
+        return Err("line {number}: expected 4 fields, found {len(cols)}")
+    }
+    let quantity = match parse_int(cols[2]) {
+        Ok(q) => q,
+        Err(e) => return Err("line {number}: {e}")
+    }
+    let price = match parse_float(cols[3]) {
+        Ok(p) => p,
+        Err(e) => return Err("line {number}: {e}")
+    }
+    Ok(Sale { region: cols[0], item: cols[1], quantity: quantity, price: price })
+}
+
+fn parse_sales(text: String) -> Result[[Sale], String] {
+    let mut sales: [Sale] = []
+    let mut number = 0
+    for row in str_split(text, "\n") {
+        number = number + 1
+        let line = str_trim(row)
+        if line != "" && !str_starts_with(line, "#") {
+            let sale = parse_sale(line, number)?
+            sales = push(sales, sale)
+        }
+    }
+    Ok(sales)
+}
+
+fn sort_by(items: [Total], before: fn(Total, Total) -> Bool) -> [Total] {
+    let mut out = items
+    let mut i = 1
+    while i < len(out) {
+        let mut j = i
+        while j > 0 && before(out[j], out[j - 1]) {
+            let held = out[j]
+            out[j] = out[j - 1]
+            out[j - 1] = held
+            j = j - 1
+        }
+        i = i + 1
+    }
+    out
+}
+
+fn totals(sales: [Sale]) -> [Total] {
+    let mut by_region: Map[String, Total] = map_new()
+    for sale in sales {
+        let so_far = if map_has(by_region, sale.region) { by_region[sale.region] } else { Total { region: sale.region, amount: 0.0, units: 0 } }
+        by_region[sale.region] = Total { region: sale.region, amount: so_far.amount + sale.quantity as Float * sale.price, units: so_far.units + sale.quantity }
+    }
+    map(map_keys(by_region), |key: String| by_region[key])
+}
+
+fn report(text: String, min_units: Int) -> Result[Int, String] {
+    let sales = parse_sales(text)?
+    let kept = filter(totals(sales), |t: Total| t.units >= min_units)
+    for t in sort_by(kept, |a: Total, b: Total| a.amount > b.amount) {
+        println("{t.region}: {t.units} units, {t.amount}")
+    }
+    let units = reduce(kept, 0, |sum: Int, t: Total| sum + t.units)
+    println("{len(kept)} regions, {units} units")
+    Ok(len(kept))
+}
+
+fn run(argv: [String]) -> Result[Int, String] {
+    let path = match get(argv, 0) {
+        Some(p) => p,
+        None => return Err("usage: sales <file> [min units]")
+    }
+    let min_units = match get(argv, 1) { Some(m) => parse_int(m)?, None => 0 }
+    let text = read_file(path)?
+    report(text, min_units)
+}
+
+fn main() -> Int {
+    match run(args()) {
+        Ok(_) => 0,
+        Err(e) => {
+            eprintln("error: {e}")
+            1
+        }
+    }
+}

@@ -1,48 +1,10 @@
 //! JIT host imports — thin `extern "C"` shims over `flux_value` heap stores.
 
-use std::sync::{Mutex, OnceLock};
-
 use flux_value::{
     array_finish, array_get, array_len, array_push, enum_payload, enum_variant_is, get_string,
     intern_string, make_int_range_array, store_enum, tag_kind, tagged_to_value, value_to_tagged,
     TaggedVal, TAG_ENUM, TAG_FLOAT, TAG_INT, TAG_STRING,
 };
-
-type EmitHook = Box<dyn Fn(u64, TaggedVal) + Send>;
-
-#[derive(Default)]
-struct EmitState {
-    queue: Vec<(u64, TaggedVal)>,
-    hook: Option<EmitHook>,
-}
-
-fn emit_state() -> &'static Mutex<EmitState> {
-    static STATE: OnceLock<Mutex<EmitState>> = OnceLock::new();
-    STATE.get_or_init(|| Mutex::new(EmitState::default()))
-}
-
-pub fn set_emit_hook(hook: Option<EmitHook>) {
-    emit_state()
-        .lock()
-        .expect("flux_jit emit mutex poisoned")
-        .hook = hook;
-}
-
-pub fn take_emit_events() -> Vec<(u64, TaggedVal)> {
-    std::mem::take(
-        &mut emit_state()
-            .lock()
-            .expect("flux_jit emit mutex poisoned")
-            .queue,
-    )
-}
-
-pub fn clear_stores_for_tests() {
-    flux_value::clear_for_tests();
-    let mut guard = emit_state().lock().expect("flux_jit emit mutex poisoned");
-    guard.queue.clear();
-    guard.hook = None;
-}
 
 #[no_mangle]
 pub extern "C" fn flux_jit_array_push(tag: u64, data: u64) {
@@ -141,16 +103,6 @@ pub extern "C" fn flux_jit_enum_variant_eq(enum_id: u64, variant_name_id: u64) -
 #[no_mangle]
 pub extern "C" fn flux_jit_enum_payload_get(enum_id: u64) -> TaggedVal {
     enum_payload(enum_id).unwrap_or(TaggedVal::UNIT)
-}
-
-#[no_mangle]
-pub extern "C" fn flux_jit_emit(event_idx: u64, tag: u64, data: u64) {
-    let tv = TaggedVal { tag, data };
-    let mut guard = emit_state().lock().expect("flux_jit emit mutex poisoned");
-    guard.queue.push((event_idx, tv));
-    if let Some(ref f) = guard.hook {
-        f(event_idx, tv);
-    }
 }
 
 #[no_mangle]

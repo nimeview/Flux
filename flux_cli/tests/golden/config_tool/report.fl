@@ -1,0 +1,18 @@
+// How the tool prints what it read.
+pub struct Server {
+    name: String,
+    port: Int,
+    workers: Int
+}
+
+fn plural(n: Int, word: String) -> String {
+    if n == 1 {
+        "{n} {word}"
+    } else {
+        "{n} {word}s"
+    }
+}
+
+pub fn describe(s: Server) -> String {
+    "{s.name} on port {s.port} with {plural(s.workers, "worker")}"
+}

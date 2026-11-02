@@ -708,7 +708,7 @@ fn expr_fmt(expr: &flux_syntax::Expr) -> String {
                 flux_syntax::UnaryOp::Neg => "-",
                 flux_syntax::UnaryOp::Not => "!",
             };
-            format!("{op}{}", expr_fmt(expr))
+            format!("{op}{}", operand_fmt(expr, PREC_UNARY))
         }
         flux_syntax::Expr::Binary {
             op, left, right, ..
@@ -728,14 +728,21 @@ fn expr_fmt(expr: &flux_syntax::Expr) -> String {
                 flux_syntax::BinaryOp::Div => "/",
                 flux_syntax::BinaryOp::Rem => "%",
             };
-            format!("{} {op} {}", expr_fmt(left), expr_fmt(right))
+            // The grammar's chains are left-associative: `a - (b - c)` keeps
+            // its parentheses and `(a - b) - c` does not need them.
+            let level = binary_prec(expr);
+            format!(
+                "{} {op} {}",
+                left_operand_fmt(left, level),
+                operand_fmt(right, level + 1)
+            )
         }
         flux_syntax::Expr::Call { callee, args, .. } => {
             let args = args.iter().map(expr_fmt).collect::<Vec<_>>().join(", ");
-            format!("{}({args})", expr_fmt(callee))
+            format!("{}({args})", postfix_base_fmt(callee))
         }
         flux_syntax::Expr::Field { base, field, .. } => {
-            format!("{}.{}", expr_fmt(base), field)
+            format!("{}.{}", postfix_base_fmt(base), field)
         }
         flux_syntax::Expr::Closure { params, body, .. } => {
             let ps = params
@@ -799,30 +806,77 @@ fn expr_fmt(expr: &flux_syntax::Expr) -> String {
             format!("match {} {{ {arms} }}", expr_fmt(scrutinee))
         }
         flux_syntax::Expr::Cast { expr, ty, .. } => {
-            format!("{} as {ty}", expr_fmt(expr))
+            format!("{} as {ty}", left_operand_fmt(expr, PREC_CAST))
         }
-        flux_syntax::Expr::Index { base, index, .. } => match base.as_ref() {
-            flux_syntax::Expr::Binary { .. }
-            | flux_syntax::Expr::Unary { .. }
-            | flux_syntax::Expr::Cast { .. }
-            | flux_syntax::Expr::If { .. }
-            | flux_syntax::Expr::Match { .. }
-            | flux_syntax::Expr::Closure { .. } => {
-                format!("({})[{}]", expr_fmt(base), expr_fmt(index))
-            }
-            _ => format!("{}[{}]", expr_fmt(base), expr_fmt(index)),
-        },
-        // `?` binds tighter than any operator: `(a + b)?` keeps its parentheses.
-        flux_syntax::Expr::Try { expr, .. } => match expr.as_ref() {
-            flux_syntax::Expr::Binary { .. }
-            | flux_syntax::Expr::Unary { .. }
-            | flux_syntax::Expr::Cast { .. }
-            | flux_syntax::Expr::If { .. }
-            | flux_syntax::Expr::Match { .. }
-            | flux_syntax::Expr::Closure { .. } => format!("({})?", expr_fmt(expr)),
-            _ => format!("{}?", expr_fmt(expr)),
-        },
+        flux_syntax::Expr::Index { base, index, .. } => {
+            format!("{}[{}]", postfix_base_fmt(base), expr_fmt(index))
+        }
+        flux_syntax::Expr::Try { expr, .. } => format!("{}?", postfix_base_fmt(expr)),
     }
+}
+
+// Binding strength, from the grammar's expression rules (weakest first).
+const PREC_CLOSURE: u8 = 0;
+const PREC_CAST: u8 = 7;
+const PREC_UNARY: u8 = 8;
+const PREC_POSTFIX: u8 = 9;
+const PREC_PRIMARY: u8 = 10;
+
+fn binary_prec(expr: &flux_syntax::Expr) -> u8 {
+    use flux_syntax::BinaryOp::*;
+    match expr {
+        flux_syntax::Expr::Binary { op, .. } => match op {
+            Or => 1,
+            And => 2,
+            Eq | Ne => 3,
+            Lt | Le | Gt | Ge => 4,
+            Add | Sub => 5,
+            Mul | Div | Rem => 6,
+        },
+        _ => PREC_PRIMARY,
+    }
+}
+
+fn expr_prec(expr: &flux_syntax::Expr) -> u8 {
+    match expr {
+        flux_syntax::Expr::Binary { .. } => binary_prec(expr),
+        // A negative literal prints like a unary minus.
+        flux_syntax::Expr::Int { value, .. } if *value < 0 => PREC_UNARY,
+        flux_syntax::Expr::Float { value, .. } if *value < 0.0 => PREC_UNARY,
+        // A closure's body takes everything after it.
+        flux_syntax::Expr::Closure { .. } => PREC_CLOSURE,
+        flux_syntax::Expr::Cast { .. } => PREC_CAST,
+        flux_syntax::Expr::Unary { .. } => PREC_UNARY,
+        flux_syntax::Expr::Call { .. }
+        | flux_syntax::Expr::Field { .. }
+        | flux_syntax::Expr::Index { .. }
+        | flux_syntax::Expr::Try { .. } => PREC_POSTFIX,
+        _ => PREC_PRIMARY,
+    }
+}
+
+/// `expr` where the grammar needs at least `min`, with parentheses if weaker.
+fn operand_fmt(expr: &flux_syntax::Expr, min: u8) -> String {
+    if expr_prec(expr) < min {
+        format!("({})", expr_fmt(expr))
+    } else {
+        expr_fmt(expr)
+    }
+}
+
+/// An operand something follows: an `if` or `match` there keeps its
+/// parentheses, so a statement that starts with one stays an expression.
+fn left_operand_fmt(expr: &flux_syntax::Expr, min: u8) -> String {
+    match expr {
+        flux_syntax::Expr::If { .. } | flux_syntax::Expr::Match { .. } => {
+            format!("({})", expr_fmt(expr))
+        }
+        _ => operand_fmt(expr, min),
+    }
+}
+
+fn postfix_base_fmt(expr: &flux_syntax::Expr) -> String {
+    left_operand_fmt(expr, PREC_POSTFIX)
 }
 
 fn let_pattern_fmt(pattern: &flux_syntax::LetPattern) -> String {
@@ -839,10 +893,33 @@ fn let_pattern_fmt(pattern: &flux_syntax::LetPattern) -> String {
     }
 }
 
+/// A suffixed literal parses as a cast, which a pattern cannot be written as.
+fn literal_pattern_fmt(value: &flux_syntax::Expr) -> String {
+    if let flux_syntax::Expr::Cast { expr, ty, .. } = value {
+        let suffix = match ty.as_str() {
+            "Int8" => Some("i8"),
+            "Int16" => Some("i16"),
+            "Int32" => Some("i32"),
+            "Int64" => Some("i64"),
+            "UInt8" => Some("u8"),
+            "UInt16" => Some("u16"),
+            "UInt32" => Some("u32"),
+            "UInt64" => Some("u64"),
+            "Float32" => Some("f32"),
+            "Float64" => Some("f64"),
+            _ => None,
+        };
+        if let Some(suffix) = suffix {
+            return format!("{}{suffix}", expr_fmt(expr));
+        }
+    }
+    expr_fmt(value)
+}
+
 fn match_pattern_fmt(pattern: &flux_syntax::MatchPattern) -> String {
     match pattern {
         flux_syntax::MatchPattern::Simple(v) => v.name.clone(),
-        flux_syntax::MatchPattern::Literal(value) => expr_fmt(value),
+        flux_syntax::MatchPattern::Literal(value) => literal_pattern_fmt(value),
         flux_syntax::MatchPattern::Tuple {
             variant,
             nested: Some(inner),

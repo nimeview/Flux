@@ -12,6 +12,36 @@ use crate::types::Type;
 
 use super::resolve::{enum_payload_to_type, resolve_hir_type_simple};
 
+/// The types visible to some code: the program's symbols, shared, plus its
+/// own locals. Each block gets a copy of its scope, so that copy must not
+/// include the whole program: checking was quadratic in the number of items.
+#[derive(Debug, Clone)]
+pub(crate) struct Scope<'a> {
+    module: &'a HashMap<SymbolId, Type>,
+    locals: HashMap<SymbolId, Type>,
+}
+
+impl<'a> Scope<'a> {
+    pub(crate) fn new(module: &'a HashMap<SymbolId, Type>) -> Self {
+        Self {
+            module,
+            locals: HashMap::new(),
+        }
+    }
+
+    pub(crate) fn get(&self, id: &SymbolId) -> Option<&Type> {
+        self.locals.get(id).or_else(|| self.module.get(id))
+    }
+
+    pub(crate) fn insert(&mut self, id: SymbolId, ty: Type) {
+        self.locals.insert(id, ty);
+    }
+
+    pub(crate) fn module(&self) -> &'a HashMap<SymbolId, Type> {
+        self.module
+    }
+}
+
 /// Lookup tables populated from a single HIR program for one type-check pass.
 #[derive(Debug, Default, Clone)]
 pub struct TypeCheckContext {
@@ -83,11 +113,25 @@ impl TypeCheckContext {
         // named type is a placeholder `Enum { name, variants: [] }`; replace
         // those with the registered struct/enum (bounded for recursive types,
         // which `expand` continues on demand).
-        let registered = ctx.user_types.clone();
-        for ty in ctx.user_types.values_mut() {
-            *ty = fill_user_types(ty, &registered, 4);
+        let mut registered = ctx.user_types.clone();
+        for (name, aliased) in &ctx.type_aliases {
+            registered
+                .entry(name.clone())
+                .or_insert_with(|| resolve_hir_type_simple(aliased));
         }
-        let registered = ctx.user_types.clone();
+        let aliases = registered.clone();
+        for ty in ctx.user_types.values_mut() {
+            *ty = fill_user_types(ty, &aliases, 4);
+        }
+        let mut registered = ctx.user_types.clone();
+        for (name, aliased) in &ctx.type_aliases {
+            registered.entry(name.clone()).or_insert_with(|| {
+                aliases
+                    .get(name)
+                    .cloned()
+                    .unwrap_or_else(|| resolve_hir_type_simple(aliased))
+            });
+        }
         for ty in ctx.enum_payloads.values_mut() {
             *ty = fill_user_types(ty, &registered, 4);
         }

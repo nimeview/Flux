@@ -19,14 +19,14 @@ use flux_hir::{HirBlock, HirElse, HirIf, HirStmt, SymbolId};
 use crate::types::Type;
 
 use super::resolve::resolve_hir_type;
-use super::state::TypeCheckContext;
+use super::state::{Scope, TypeCheckContext};
 
 pub(super) use expr::infer_expr;
 
 pub(super) fn infer_block_return(
     ctx: &TypeCheckContext,
     block: &HirBlock,
-    types: &HashMap<SymbolId, Type>,
+    types: &Scope<'_>,
     names: &HashMap<SymbolId, String>,
     source: SourceId,
     diagnostics: &mut DiagnosticBag,
@@ -77,7 +77,7 @@ pub(super) fn infer_block_return(
 fn infer_if_value(
     ctx: &TypeCheckContext,
     stmt: &HirIf,
-    scope: &HashMap<SymbolId, Type>,
+    scope: &Scope<'_>,
     names: &HashMap<SymbolId, String>,
     source: SourceId,
     diagnostics: &mut DiagnosticBag,

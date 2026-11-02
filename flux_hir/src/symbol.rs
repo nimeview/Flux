@@ -58,6 +58,8 @@ pub struct SymbolTable {
     /// Enum variant name → enum type name.
     pub enum_variants: HashMap<String, String>,
     pub closure_counter: u32,
+    /// Names that imports brought into the module's scope.
+    pub imported_names: std::collections::HashSet<String>,
     /// Parameter types of non-generic functions, so a closure argument can
     /// take its parameter types from `f: fn(String) -> Int`.
     pub fn_signatures: HashMap<String, Vec<flux_syntax::TypeName>>,
@@ -108,6 +110,7 @@ impl SymbolTable {
             all_symbols: HashMap::new(),
             enum_variants: HashMap::new(),
             closure_counter: 0,
+            imported_names: std::collections::HashSet::new(),
             fn_signatures: HashMap::new(),
             closure_frames: Vec::new(),
             pending_fns: Vec::new(),
@@ -287,6 +290,7 @@ impl SymbolTable {
     /// a module's own items). The alias carries the target's kind, so reading
     /// an imported source or calling an imported `rfn` stays reactive.
     pub fn reexport_alias(&mut self, bare_name: &str, symbol: SymbolId, span: Span) {
+        self.imported_names.insert(bare_name.to_string());
         let kind = self
             .all_symbols
             .get(&symbol)

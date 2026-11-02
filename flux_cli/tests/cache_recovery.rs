@@ -163,3 +163,16 @@ fn cache_file_names_are_hashes_not_source_text() {
         );
     }
 }
+
+#[test]
+fn the_project_cache_keeps_a_bounded_number_of_entries() {
+    let dir = tempfile::tempdir().unwrap();
+    fs::write(dir.path().join("flux.toml"), "[package]\nname = \"t\"\n").unwrap();
+    let mut cache = CompileCache::for_project(dir.path().to_path_buf());
+    for i in 0..200 {
+        cache.put(&format!("key-{i}"), vec![0; 8]);
+    }
+    let kept = fs::read_dir(cache.cache_dir()).unwrap().count();
+    assert!(kept <= 64, "{kept} entries");
+    assert!(kept > 0);
+}
