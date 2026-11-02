@@ -2,6 +2,7 @@
 name = "flux_runtime"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
 
 [dependencies]
 flux_ir  = { path = "../flux_ir" }

@@ -2,6 +2,7 @@
 name = "flux_types"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
 
 [dependencies]
 flux_diagnostics = { path = "../flux_diagnostics" }

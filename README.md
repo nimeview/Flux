@@ -127,4 +127,11 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for details.
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+Flux is licensed under the [Apache License, Version 2.0](LICENSE). You may use,
+modify, and distribute it, including for commercial purposes, under that
+license's terms. Preserve the required license, copyright, and attribution
+notices; see [NOTICE](NOTICE) for project attribution.
+
+Earlier revisions were released under the MIT License. Copies obtained under
+MIT remain available under those terms; this revision is licensed under
+Apache-2.0.

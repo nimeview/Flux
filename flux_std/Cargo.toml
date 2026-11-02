@@ -2,6 +2,7 @@
 name = "flux_std"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
 
 [dependencies]
 flux_value = { path = "../flux_value" }
