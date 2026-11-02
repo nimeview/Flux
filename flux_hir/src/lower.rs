@@ -276,6 +276,24 @@ fn lower_program_inner(
 }
 
 pub(super) fn declare_item(item: &Item, symbols: &mut SymbolTable) -> Option<Symbol> {
+    if let Item::Fn(FnDecl {
+        name,
+        params,
+        type_params,
+        ..
+    })
+    | Item::RFn(RFnDecl {
+        name,
+        params,
+        type_params,
+        ..
+    }) = item
+    {
+        if type_params.is_empty() {
+            let types = params.iter().map(|p| p.ty.clone()).collect();
+            symbols.fn_signatures.insert(name.name.clone(), types);
+        }
+    }
     match item {
         Item::Event(EventDecl { name, .. }) => symbols
             .declare(&name.name, SymbolKind::Event, name.span)

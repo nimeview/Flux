@@ -8,11 +8,13 @@ use flux_syntax::UnaryOp;
 
 use crate::types::{resolve_type_name, Type};
 
+use super::super::resolve::resolve_hir_type;
 use super::super::state::TypeCheckContext;
 use super::super::util::{
     lookup_name, numeric_type, trait_dispatch_tag, types_compatible, unwrap_value_type,
 };
 use super::builtins::infer_builtin_call;
+use super::infer_block_return;
 use super::ops::infer_binary;
 
 fn bind_match_arm_locals(
@@ -117,8 +119,8 @@ fn infer_arm_body(
 }
 
 /// The payload type of `variant` in `ty` (an enum, `Option`, or `Result`).
-fn variant_payload_type(ty: &Type, variant: &str) -> Option<Type> {
-    match (unwrap_value_type(ty), variant) {
+fn variant_payload_type(ctx: &TypeCheckContext, ty: &Type, variant: &str) -> Option<Type> {
+    match (ctx.expand(unwrap_value_type(ty)), variant) {
         (Type::Option(inner), "Some") => Some(*inner),
         (Type::Result { ok, .. }, "Ok") => Some(*ok),
         (Type::Result { err, .. }, "Err") => Some(*err),
@@ -131,12 +133,12 @@ fn variant_payload_type(ty: &Type, variant: &str) -> Option<Type> {
 }
 
 /// Whether the pattern shapes together match every value of `ty`.
-fn shapes_cover(shapes: &[&flux_hir::PatShape], ty: &Type) -> bool {
+fn shapes_cover(ctx: &TypeCheckContext, shapes: &[&flux_hir::PatShape], ty: &Type) -> bool {
     use flux_hir::PatShape;
     if shapes.iter().any(|s| matches!(s, PatShape::Any)) {
         return true;
     }
-    let variants: Vec<String> = match unwrap_value_type(ty) {
+    let variants: Vec<String> = match ctx.expand(unwrap_value_type(ty)) {
         Type::Option(_) => vec!["Some".into(), "None".into()],
         Type::Result { .. } => vec!["Ok".into(), "Err".into()],
         Type::Enum { variants, .. } => variants.into_iter().map(|(name, _)| name).collect(),
@@ -160,7 +162,8 @@ fn shapes_cover(shapes: &[&flux_hir::PatShape], ty: &Type) -> bool {
             return true;
         }
         let inner: Vec<&PatShape> = payloads.iter().filter_map(|p| p.as_deref()).collect();
-        variant_payload_type(ty, variant).is_some_and(|payload| shapes_cover(&inner, &payload))
+        variant_payload_type(ctx, ty, variant)
+            .is_some_and(|payload| shapes_cover(ctx, &inner, &payload))
     })
 }
 
@@ -241,7 +244,7 @@ pub(crate) fn infer_expr(
                 }
                 // Not a method of any impl, and not a struct field to call.
                 let is_field = matches!(
-                    unwrap_value_type(&base_ty),
+                    ctx.expand(unwrap_value_type(&base_ty)),
                     Type::Struct { ref fields, .. } if fields.iter().any(|(n, _)| n == field)
                 );
                 if !is_field && !base_ty.is_error() {
@@ -273,7 +276,7 @@ pub(crate) fn infer_expr(
                 }
             }
             let callee_ty = infer_expr(ctx, callee, types, names, source, diagnostics)?;
-            match callee_ty {
+            match unwrap_value_type(&callee_ty) {
                 Type::Func { params, ret } => {
                     if params.len() != args.len() {
                         diagnostics.push(FluxError::TypeMismatch {
@@ -297,7 +300,21 @@ pub(crate) fn infer_expr(
                     }
                     Some(*ret)
                 }
-                _ => Some(Type::Error),
+                found if found.is_error() => Some(Type::Error),
+                _ => {
+                    diagnostics.push(FluxError::NotCallable {
+                        callee: match callee.as_ref() {
+                            HirExpr::Field { field, .. } => field.clone(),
+                            HirExpr::Ident { symbol, .. } => lookup_name(names, *symbol)
+                                .cloned()
+                                .unwrap_or_else(|| "this value".to_string()),
+                            _ => "this value".to_string(),
+                        },
+                        span: span_to_miette(*span),
+                        source_id: span.source,
+                    });
+                    Some(Type::Error)
+                }
             }
         }
         HirExpr::Unary { op, expr, .. } => {
@@ -418,7 +435,7 @@ pub(crate) fn infer_expr(
             span,
         } => {
             let scrut_ty = infer_expr(ctx, scrutinee, types, names, source, diagnostics)?;
-            let scrut_value_ty = unwrap_value_type(&scrut_ty);
+            let scrut_value_ty = ctx.expand(unwrap_value_type(&scrut_ty));
             let variants: Option<Vec<String>> = match &scrut_value_ty {
                 Type::Enum { variants, .. } => {
                     Some(variants.iter().map(|(name, _)| name.clone()).collect())
@@ -518,9 +535,9 @@ pub(crate) fn infer_expr(
             // A variant is also covered when its nested-pattern arms together
             // cover its payload (`Some(A)`, `Some(B)` for `Option[AB]`).
             for (variant, shapes) in &nested_arms {
-                let payload = variant_payload_type(&scrut_value_ty, variant);
+                let payload = variant_payload_type(ctx, &scrut_value_ty, variant);
                 let refs: Vec<&flux_hir::PatShape> = shapes.iter().collect();
-                if payload.is_some_and(|ty| shapes_cover(&refs, &ty)) {
+                if payload.is_some_and(|ty| shapes_cover(ctx, &refs, &ty)) {
                     covered_variants.insert(variant.clone());
                 }
             }
@@ -713,7 +730,7 @@ pub(crate) fn infer_expr(
         }
         HirExpr::Field { base, field, span } => {
             let base_ty = infer_expr(ctx, base, types, names, source, diagnostics)?;
-            let inner = unwrap_value_type(&base_ty);
+            let inner = ctx.expand(unwrap_value_type(&base_ty));
             if let Type::Struct { ref fields, .. } = inner {
                 if let Some((_, ft)) = fields.iter().find(|(n, _)| n == field) {
                     return Some(ft.clone());
@@ -727,7 +744,37 @@ pub(crate) fn infer_expr(
             });
             Some(Type::Error)
         }
-        HirExpr::Closure { fn_symbol, .. } => types.get(fn_symbol).cloned(),
+        HirExpr::Closure {
+            fn_symbol,
+            captures,
+            ..
+        } => {
+            let Some(closure) = ctx.capturing_closure(*fn_symbol) else {
+                return types.get(fn_symbol).cloned();
+            };
+            // The captures have the types of the creation site's scope, by
+            // position: a generic function's instances rename their locals.
+            let mut scope = types.clone();
+            for (inner, outer) in closure.captures.iter().zip(captures) {
+                if let Some(ty) = types.get(outer) {
+                    scope.insert(*inner, ty.clone());
+                }
+            }
+            let mut params = Vec::with_capacity(closure.params.len());
+            for p in &closure.params {
+                let ty = resolve_hir_type(ctx, &p.ty, diagnostics).unwrap_or(Type::Error);
+                scope.insert(p.name, ty.clone());
+                params.push(ty);
+            }
+            // A `?` in the body would not leave the enclosing function.
+            let outer_return = ctx.fn_return.replace(None);
+            let ret = infer_block_return(ctx, &closure.body, &scope, names, source, diagnostics);
+            *ctx.fn_return.borrow_mut() = outer_return;
+            Some(Type::Func {
+                params,
+                ret: Box::new(ret.unwrap_or(Type::Unit)),
+            })
+        }
         HirExpr::Index { base, index, span } => {
             let base_ty = infer_expr(ctx, base, types, names, source, diagnostics)?;
             let index_ty = infer_expr(ctx, index, types, names, source, diagnostics)?;

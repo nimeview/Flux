@@ -234,6 +234,18 @@ pub enum FluxError {
         source_id: SourceId,
     },
 
+    #[error("`{callee}` is not a function")]
+    #[diagnostic(
+        code(flux::E023),
+        help("only functions, closures, and values of a function type such as `fn(Int) -> Int` can be called")
+    )]
+    NotCallable {
+        callee: String,
+        #[label("called here")]
+        span: miette::SourceSpan,
+        source_id: SourceId,
+    },
+
     #[error("{message}")]
     #[diagnostic(code(flux::E020))]
     InvalidImpl {
@@ -268,11 +280,12 @@ impl FluxError {
             | Self::UnknownMethod { source_id, .. }
             | Self::InvalidImpl { source_id, .. }
             | Self::InvalidTry { source_id, .. }
-            | Self::PrivateImport { source_id, .. } => *source_id,
+            | Self::PrivateImport { source_id, .. }
+            | Self::NotCallable { source_id, .. } => *source_id,
         }
     }
 
-    /// Stable diagnostic code (`E000`–`E022`).
+    /// Stable diagnostic code (`E000`–`E023`).
     pub fn code(&self) -> &'static str {
         match self {
             Self::Parse { .. } => "E000",
@@ -297,6 +310,7 @@ impl FluxError {
             Self::InvalidImpl { .. } => "E020",
             Self::InvalidTry { .. } => "E021",
             Self::PrivateImport { .. } => "E022",
+            Self::NotCallable { .. } => "E023",
         }
     }
 
@@ -325,6 +339,7 @@ impl FluxError {
             | Self::InvalidImpl { span, .. }
             | Self::InvalidTry { span, .. }
             | Self::PrivateImport { span, .. }
+            | Self::NotCallable { span, .. }
             | Self::DuplicateDefinition { span, .. } => *span,
         };
         crate::warning::span_from_miette(source_id, miette_span)

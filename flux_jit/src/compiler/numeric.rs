@@ -43,7 +43,12 @@ pub(crate) fn is_numeric_code(code: &[Inst], jit_fns: &HashSet<String>) -> bool 
         | Inst::BindLocal { .. } => true,
         // A struct-variant field (`Shape::Rect { w, h }`) has no lowering.
         Inst::VariantPayloadGet { field: Some(_) } => false,
-        Inst::Take(_) | Inst::TakeLocal { .. } | Inst::Block(_) | Inst::Try => false,
+        Inst::Take(_)
+        | Inst::TakeLocal { .. }
+        | Inst::Block(_)
+        | Inst::Try
+        | Inst::MakeClosure { .. }
+        | Inst::CallValue { .. } => false,
         Inst::MakeUserEnum { .. } => true,
         Inst::MakeUserStruct { .. } | Inst::FieldGet(_) => false,
     })

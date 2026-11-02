@@ -462,6 +462,12 @@ pub enum TypeName {
         err: Box<TypeName>,
         span: Span,
     },
+    /// `fn(A, B) -> C`; without `->` it returns `Unit`.
+    Function {
+        params: Vec<TypeName>,
+        ret: Option<Box<TypeName>>,
+        span: Span,
+    },
 }
 
 #[derive(Debug, Clone)]

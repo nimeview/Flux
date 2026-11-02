@@ -153,6 +153,12 @@ pub(crate) fn types_compatible(expected: &Type, found: &Type) -> bool {
     }
     match (&expected, &found) {
         (Type::Int, Type::Int64) | (Type::Int64, Type::Int) => true,
+        // A named type is itself at any depth: a recursive type's expansion
+        // ends in a placeholder (see `TypeCheckContext::expand`).
+        (
+            Type::Struct { name: e, .. } | Type::Enum { name: e, .. },
+            Type::Struct { name: f, .. } | Type::Enum { name: f, .. },
+        ) if !e.is_empty() && e == f => true,
         (Type::Float, Type::Float64) | (Type::Float64, Type::Float) => true,
         // Compatibility is used for assignments, arguments, and returns. The
         // runtime does not insert implicit casts, so accepting a numeric type
@@ -161,6 +167,23 @@ pub(crate) fn types_compatible(expected: &Type, found: &Type) -> bool {
         // result explicitly; value boundaries require an explicit `as` cast.
         (Type::Cell(e), Type::Cell(f)) | (Type::Read(e), Type::Read(f)) => types_compatible(e, f),
         (Type::Option(e), Type::Option(f)) => types_compatible(e, f),
+        (
+            Type::Func {
+                params: e_params,
+                ret: e_ret,
+            },
+            Type::Func {
+                params: f_params,
+                ret: f_ret,
+            },
+        ) => {
+            e_params.len() == f_params.len()
+                && e_params
+                    .iter()
+                    .zip(f_params)
+                    .all(|(e, f)| types_compatible(e, f))
+                && types_compatible(e_ret, f_ret)
+        }
         // A part no constructor could know (`[]`, `None`, `Ok`'s error, …)
         // fits any type in either direction; `refine_unknown` fills it in.
         (_, Type::Empty) | (Type::Empty, _) => true,

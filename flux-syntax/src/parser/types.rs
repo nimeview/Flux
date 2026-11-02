@@ -47,6 +47,19 @@ pub(super) fn parse_type_name(
                 span,
             }
         }
+        Rule::function_type => {
+            let mut params = Vec::new();
+            let mut ret = None;
+            for part in pair.into_inner() {
+                if part.as_rule() == Rule::function_ret {
+                    let inner = part.into_inner().next().expect("function result");
+                    ret = Some(Box::new(parse_type_name(source_id, inner)));
+                } else {
+                    params.push(parse_type_name(source_id, part));
+                }
+            }
+            TypeName::Function { params, ret, span }
+        }
         Rule::generic_type => {
             let mut inner = pair.into_inner();
             let name = parse_ident(source_id, inner.next().expect("generic name")).name;

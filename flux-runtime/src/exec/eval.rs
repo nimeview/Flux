@@ -16,6 +16,28 @@ use super::values::{
 };
 use super::{Executor, FlowControl, Locals};
 
+/// A function value: a function's name, or a closure with its captures.
+struct Callback {
+    function: String,
+    captured: Vec<RuntimeValue>,
+}
+
+impl Callback {
+    fn of(value: &RuntimeValue) -> Option<Self> {
+        match value {
+            RuntimeValue::String(name) => Some(Self {
+                function: name.clone(),
+                captured: Vec::new(),
+            }),
+            RuntimeValue::Closure(closure) => Some(Self {
+                function: closure.function.clone(),
+                captured: closure.captured.clone(),
+            }),
+            _ => None,
+        }
+    }
+}
+
 impl Executor {
     pub(super) fn eval_expr(&mut self, code: &[Inst], locals: &mut Locals) -> RuntimeValue {
         // Reuse an operand stack: allocating one per expression dominated
@@ -209,6 +231,20 @@ impl Executor {
                         debug_assert_vm(false, "Select: missing branch value on stack");
                     }
                 }
+                Inst::CallValue { argc } => {
+                    let args = stack.split_off(stack.len().saturating_sub(*argc));
+                    let callee = stack_pop(stack, "CallValue function");
+                    let Some(callback) = Callback::of(&callee) else {
+                        debug_assert_vm(false, &format!("CallValue: not a function: {callee:?}"));
+                        self.raise(flux_value::ArithError::Internal);
+                        return RuntimeValue::Unit;
+                    };
+                    let result = self.call_callback(&callback, &args);
+                    if self.trap.is_some() || self.pending_flow.is_some() {
+                        return RuntimeValue::Unit;
+                    }
+                    stack.push(result);
+                }
                 Inst::Call { name, argc } => {
                     debug_assert_vm(stack.len() >= *argc, "stack underflow in Call arguments");
                     let mut args = stack.split_off(stack.len().saturating_sub(*argc));
@@ -329,6 +365,16 @@ impl Executor {
                     }
                     stack.push(RuntimeValue::user_struct(type_name.clone(), map));
                 }
+                Inst::MakeClosure { name, captures } => {
+                    let start = stack.len().saturating_sub(*captures);
+                    let captured = stack.split_off(start);
+                    stack.push(RuntimeValue::Closure(std::sync::Arc::new(
+                        flux_value::ClosureValue {
+                            function: name.clone(),
+                            captured,
+                        },
+                    )));
+                }
                 Inst::FieldGet(field) => {
                     let val = stack_pop_with(stack, || format!("FieldGet `{field}`"));
                     if let RuntimeValue::UserStruct(s) = val {
@@ -384,6 +430,17 @@ impl Executor {
         RuntimeValue::Unit
     }
 
+    fn call_callback(&mut self, callback: &Callback, args: &[RuntimeValue]) -> RuntimeValue {
+        if callback.captured.is_empty() {
+            return self.call_function(&callback.function, args);
+        }
+        // A closure's function takes its captures after its own parameters.
+        let mut all = Vec::with_capacity(args.len() + callback.captured.len());
+        all.extend_from_slice(args);
+        all.extend_from_slice(&callback.captured);
+        self.call_function(&callback.function, &all)
+    }
+
     pub(crate) fn call_function(&mut self, name: &str, args: &[RuntimeValue]) -> RuntimeValue {
         // Higher-order builtins are handled here so they can invoke user functions/closures.
         if flux_std::is_hof(name) {
@@ -399,21 +456,19 @@ impl Executor {
                             return RuntimeValue::Unit;
                         }
                     };
-                    let fn_name = match args.get(1) {
-                        Some(RuntimeValue::String(s)) => s.clone(),
-                        other => {
-                            debug_assert_vm(
-                                false,
-                                &format!(
-                                    "map: expected function name as second argument, got {other:?}"
-                                ),
-                            );
-                            return RuntimeValue::Array(arr);
-                        }
+                    let Some(callback) = args.get(1).and_then(Callback::of) else {
+                        debug_assert_vm(
+                            false,
+                            &format!(
+                                "map: expected a function as second argument, got {:?}",
+                                args.get(1)
+                            ),
+                        );
+                        return RuntimeValue::Array(arr);
                     };
                     let mut result = Vec::with_capacity(arr.len());
                     for item in arr.iter() {
-                        result.push(self.call_function(&fn_name, std::slice::from_ref(item)));
+                        result.push(self.call_callback(&callback, std::slice::from_ref(item)));
                     }
                     RuntimeValue::array(result)
                 }
@@ -428,9 +483,9 @@ impl Executor {
                             return RuntimeValue::Unit;
                         }
                     };
-                    let fn_name = match args.get(1) {
-                        Some(RuntimeValue::String(s)) => s.clone(),
-                        _ => {
+                    let callback = match args.get(1).and_then(Callback::of) {
+                        Some(callback) => callback,
+                        None => {
                             let filtered = arr
                                 .iter()
                                 .filter(|v| match v {
@@ -446,7 +501,7 @@ impl Executor {
                     let mut result = Vec::new();
                     for item in arr.iter() {
                         if self
-                            .call_function(&fn_name, std::slice::from_ref(item))
+                            .call_callback(&callback, std::slice::from_ref(item))
                             .as_bool()
                             .unwrap_or(false)
                         {
@@ -466,9 +521,9 @@ impl Executor {
                             return RuntimeValue::Unit;
                         }
                     };
-                    let fn_name = match args.get(2) {
-                        Some(RuntimeValue::String(s)) => s.clone(),
-                        _ => {
+                    let callback = match args.get(2).and_then(Callback::of) {
+                        Some(callback) => callback,
+                        None => {
                             let init = match args.get(1) {
                                 Some(v) => v.as_int().unwrap_or(0),
                                 _ => 0,
@@ -482,7 +537,7 @@ impl Executor {
                     let init = args.get(1).cloned().unwrap_or(RuntimeValue::Unit);
                     let mut acc = init;
                     for item in arr.iter() {
-                        acc = self.call_function(&fn_name, &[acc, item.clone()]);
+                        acc = self.call_callback(&callback, &[acc, item.clone()]);
                     }
                     acc
                 }

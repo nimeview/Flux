@@ -785,6 +785,9 @@ dependencies = [
 [[package]]
 name = "flux_value"
 version = "0.1.0"
+dependencies = [
+ "stacker",
+]
 
 [[package]]
 name = "flux_wasm"

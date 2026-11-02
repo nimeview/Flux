@@ -30,6 +30,14 @@ pub(super) fn effectful_functions(
             effectful.insert(function.name);
         }
     }
+    // A binding that holds a function has that function's effects when called.
+    for item in &program.items {
+        if let HirItem::Binding(binding) = item {
+            let mut held = HashSet::new();
+            functions_held_by(&binding.value, &mut held);
+            calls.insert(binding.name, held);
+        }
+    }
     loop {
         let newly_effectful: Vec<_> = calls
             .iter()
@@ -43,6 +51,34 @@ pub(super) fn effectful_functions(
             return effectful;
         }
         effectful.extend(newly_effectful);
+    }
+}
+
+/// Functions that `expr` builds into its value. A call's result is left out:
+/// `let x = loud(1)` holds a number, and reading it later has no effect.
+fn functions_held_by(expr: &HirExpr, held: &mut HashSet<SymbolId>) {
+    match expr {
+        HirExpr::Ident { symbol, .. } => {
+            held.insert(*symbol);
+        }
+        HirExpr::Closure { fn_symbol, .. } => {
+            held.insert(*fn_symbol);
+        }
+        HirExpr::Array { elems, .. } => {
+            for elem in elems {
+                functions_held_by(elem, held);
+            }
+        }
+        HirExpr::StructLit { fields, .. } => {
+            for (_, value) in fields {
+                functions_held_by(value, held);
+            }
+        }
+        HirExpr::EnumVariant {
+            payload: Some(value),
+            ..
+        } => functions_held_by(value, held),
+        _ => {}
     }
 }
 
@@ -206,7 +242,10 @@ fn scan_expr(
         HirExpr::Int { .. }
         | HirExpr::Float { .. }
         | HirExpr::Bool { .. }
-        | HirExpr::String { .. }
-        | HirExpr::Ident { .. } => {}
+        | HirExpr::String { .. } => {}
+        // A function passed along may be called by whatever receives it.
+        HirExpr::Ident { symbol, .. } => {
+            calls.insert(*symbol);
+        }
     }
 }

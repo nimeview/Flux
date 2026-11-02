@@ -87,21 +87,20 @@ pub(super) fn parse_expr(source_id: SourceId, pair: pest::iterators::Pair<'_, Ru
         Rule::primary_expr => parse_expr(source_id, pair.into_inner().next().expect("primary")),
         Rule::closure_expr => {
             let span = span_of(source_id, &pair);
-            let mut inner = pair.into_inner();
-            let params = inner
-                .find(|p| p.as_rule() == Rule::closure_params)
-                .map(|p| {
-                    p.into_inner()
-                        .map(|param| parse_closure_param(source_id, param))
-                        .collect()
-                })
-                .unwrap_or_default();
-            let body = Box::new(parse_expr(
-                source_id,
-                inner
-                    .find(|p| p.as_rule() == Rule::expr)
-                    .expect("closure body"),
-            ));
+            let mut params = Vec::new();
+            let mut body = None;
+            for part in pair.into_inner() {
+                match part.as_rule() {
+                    Rule::closure_params => {
+                        params = part
+                            .into_inner()
+                            .map(|param| parse_closure_param(source_id, param))
+                            .collect();
+                    }
+                    _ => body = Some(part),
+                }
+            }
+            let body = Box::new(parse_expr(source_id, body.expect("closure body")));
             Expr::Closure { params, body, span }
         }
         Rule::array_lit => {

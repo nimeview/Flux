@@ -414,7 +414,12 @@ pub(crate) fn lower_insts(
                 stack.push((results[0], results[1]));
             }
             // Ineligible (see `numeric.rs`); the VM runs these.
-            Inst::Take(_) | Inst::TakeLocal { .. } | Inst::Block(_) | Inst::Try => return None,
+            Inst::Take(_)
+            | Inst::TakeLocal { .. }
+            | Inst::Block(_)
+            | Inst::Try
+            | Inst::MakeClosure { .. }
+            | Inst::CallValue { .. } => return None,
             Inst::BindLocal { name, .. } => {
                 let val = stack.pop()?;
                 locals.set(name, val, b);

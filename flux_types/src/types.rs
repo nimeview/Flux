@@ -110,25 +110,18 @@ impl Type {
             Type::Result { ok, err } => {
                 format!("Result<{}, {}>", ok.display(), err.display())
             }
-            Type::Struct { name, fields } => {
+            // A user type is known by its name, which also keeps recursive
+            // types readable. Only a struct-variant payload has no name.
+            Type::Struct { name, .. } | Type::Enum { name, .. } if !name.is_empty() => name.clone(),
+            Type::Struct { fields, .. } => {
                 let fs = fields
                     .iter()
                     .map(|(n, t)| format!("{n}: {}", t.display()))
                     .collect::<Vec<_>>()
                     .join(", ");
-                format!("{name} {{ {fs} }}")
+                format!("{{ {fs} }}")
             }
-            Type::Enum { name, variants } => {
-                let vs = variants
-                    .iter()
-                    .map(|(n, p)| match p {
-                        Some(t) => format!("{n}({})", t.display()),
-                        None => n.clone(),
-                    })
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                format!("enum {name} {{ {vs} }}")
-            }
+            Type::Enum { .. } => "enum".into(),
             Type::Var(name) => name.clone(),
             Type::Func { params, ret } => {
                 let ps = params

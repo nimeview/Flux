@@ -21,6 +21,9 @@ pub struct TypeCheckContext {
     trait_impls: HashMap<(String, String), SymbolId>,
     builtin_symbols: std::collections::HashSet<SymbolId>,
     effectful_functions: std::collections::HashSet<SymbolId>,
+    /// Closures with captures: checked where they are created, because their
+    /// captures' types are those of that scope.
+    capturing_closures: HashMap<SymbolId, flux_hir::HirFn>,
     pub(crate) const_bindings: std::collections::HashSet<String>,
     /// `recv.method(…)` call spans resolved to their impl function.
     pub(crate) method_calls: std::cell::RefCell<HashMap<flux_diagnostics::Span, SymbolId>>,
@@ -78,7 +81,8 @@ impl TypeCheckContext {
 
         // Field and payload types were resolved without the user types, so a
         // named type is a placeholder `Enum { name, variants: [] }`; replace
-        // those with the registered struct/enum (bounded for recursive types).
+        // those with the registered struct/enum (bounded for recursive types,
+        // which `expand` continues on demand).
         let registered = ctx.user_types.clone();
         for ty in ctx.user_types.values_mut() {
             *ty = fill_user_types(ty, &registered, 4);
@@ -95,6 +99,14 @@ impl TypeCheckContext {
             .filter_map(|(id, symbol)| {
                 (symbol.kind == SymbolKind::Builtin && flux_std::is_builtin_fn(&symbol.name))
                     .then_some(*id)
+            })
+            .collect();
+        ctx.capturing_closures = program
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                HirItem::Fn(f) if !f.captures.is_empty() => Some((f.name, f.clone())),
+                _ => None,
             })
             .collect();
         ctx.effectful_functions =
@@ -121,8 +133,24 @@ impl TypeCheckContext {
             .copied()
     }
 
+    /// `ty` with a placeholder at its top replaced by the registered type.
+    /// User types expand a few levels deep, so a recursive type ends in a
+    /// placeholder; anything that looks inside a type expands it first.
+    pub(crate) fn expand(&self, ty: Type) -> Type {
+        match &ty {
+            Type::Enum { name, variants } if variants.is_empty() => {
+                self.user_type(name).cloned().unwrap_or(ty)
+            }
+            _ => ty,
+        }
+    }
+
     pub fn is_builtin_symbol(&self, id: SymbolId) -> bool {
         self.builtin_symbols.contains(&id)
+    }
+
+    pub(crate) fn capturing_closure(&self, id: SymbolId) -> Option<&flux_hir::HirFn> {
+        self.capturing_closures.get(&id)
     }
 
     pub fn is_effectful_function(&self, id: SymbolId) -> bool {
@@ -158,6 +186,10 @@ fn fill_user_types(ty: &Type, registered: &HashMap<String, Type>, depth: usize) 
         Type::Result { ok, err } => Type::Result {
             ok: Box::new(next(ok)),
             err: Box::new(next(err)),
+        },
+        Type::Func { params, ret } => Type::Func {
+            params: params.iter().map(next).collect(),
+            ret: Box::new(next(ret)),
         },
         other => other.clone(),
     }

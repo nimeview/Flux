@@ -304,7 +304,7 @@ pub fn typecheck_program(
             HirItem::Binding(b) => {
                 check_binding(&ctx, b, &types, &program.names, source, diagnostics);
             }
-            HirItem::Fn(f) if f.type_params.is_empty() => {
+            HirItem::Fn(f) if f.type_params.is_empty() && f.captures.is_empty() => {
                 let mut local = types.clone();
                 let mut immutable_locals = HashSet::new();
                 for p in &f.params {

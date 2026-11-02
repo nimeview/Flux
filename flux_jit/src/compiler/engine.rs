@@ -472,6 +472,12 @@ impl JitEngine {
         for (i, watch) in program.watches.iter().enumerate() {
             call_scratch_pairs = call_scratch_pairs.max(max_call_argc_in_stmts(&watch.body));
             let key = format!("__watch_{i}");
+            // The VM runs handlers at the `emit`, before the next statement;
+            // compiled code could only run them after the whole body.
+            if stmts_emit(&watch.body) {
+                engine.note_fallback(&key, "emits_events");
+                continue;
+            }
             if !stmts_numeric(&watch.body, &jit_fn_names) {
                 engine.note_fallback(&key, "non_numeric_watch");
                 continue;
@@ -498,6 +504,10 @@ impl JitEngine {
         for (i, handler) in program.on_handlers.iter().enumerate() {
             call_scratch_pairs = call_scratch_pairs.max(max_call_argc_in_stmts(&handler.body));
             let key = format!("__on_{i}");
+            if stmts_emit(&handler.body) {
+                engine.note_fallback(&key, "emits_events");
+                continue;
+            }
             if !stmts_numeric(&handler.body, &jit_fn_names) {
                 engine.note_fallback(&key, "non_numeric_handler");
                 continue;

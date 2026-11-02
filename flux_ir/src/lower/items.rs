@@ -18,6 +18,11 @@ pub(super) fn lower_fn(f: &HirFn, name: &str, program: &HirProgram) -> CompiledF
             .params
             .iter()
             .filter_map(|p| runtime_symbol_name(program, &p.name))
+            .chain(
+                f.captures
+                    .iter()
+                    .filter_map(|id| runtime_symbol_name(program, id)),
+            )
             .collect(),
         body: lower_block(&f.body, program),
     }

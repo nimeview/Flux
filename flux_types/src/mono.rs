@@ -151,7 +151,7 @@ pub fn monomorphize_program(
                 }
                 let mut inst = instantiate_fn(&template.fn_item, sym, &subst);
                 inst.type_params.clear();
-                remap_instantiated_symbols(&mut inst, program, &mut next_id);
+                remap_instantiated_symbols(&mut inst, &subst, program, &mut next_id);
                 program.items.push(HirItem::Fn(inst));
                 created_specialization = true;
                 rewrite_matching_calls(program, base_name, &inst_name, &concrete, &symbol_types);
@@ -209,6 +209,11 @@ fn type_to_hir_type(ty: &Type, span: flux_diagnostics::Span) -> HirType {
             name: name.clone(),
             span,
         },
+        Type::Func { params, ret } => HirType::Function {
+            params: params.iter().map(|p| type_to_hir_type(p, span)).collect(),
+            ret: Some(Box::new(type_to_hir_type(ret, span))),
+            span,
+        },
         other => HirType::Named {
             name: other.display(),
             span,
@@ -226,6 +231,10 @@ fn normalize_mono_type(ty: Type) -> Type {
             ok: Box::new(normalize_mono_type(*ok)),
             err: Box::new(normalize_mono_type(*err)),
         },
+        Type::Func { params, ret } => Type::Func {
+            params: params.into_iter().map(normalize_mono_type).collect(),
+            ret: Box::new(normalize_mono_type(*ret)),
+        },
         other => other,
     }
 }
@@ -240,7 +249,10 @@ fn infer_mono_type(
         HirExpr::Float { .. } => Some(Type::Float),
         HirExpr::Bool { .. } => Some(Type::Bool),
         HirExpr::String { .. } => Some(Type::String),
-        HirExpr::Ident { symbol, .. } => symbols.get(symbol).cloned(),
+        HirExpr::Ident { symbol, .. } => symbols
+            .get(symbol)
+            .cloned()
+            .or_else(|| function_type(symbol, symbols, program)),
         HirExpr::Snap { expr, .. } => infer_mono_type(expr, symbols, program),
         HirExpr::Array { elems, .. } => {
             let first = elems.first()?;
@@ -301,23 +313,16 @@ fn infer_mono_type(
             Type::Option(inner) => Some(*inner),
             _ => None,
         },
-        HirExpr::StructLit { name, .. } => program.items.iter().find_map(|item| match item {
-            HirItem::Struct(s) if program.names.get(&s.name).map(String::as_str) == Some(name) => {
-                Some(Type::Struct {
-                    name: name.clone(),
-                    fields: s
-                        .fields
-                        .iter()
-                        .filter_map(|(field, ty)| {
-                            Some((field.clone(), hir_type_to_mono_type(ty, program)?))
-                        })
-                        .collect(),
-                })
-            }
-            _ => None,
-        }),
+        HirExpr::StructLit { name, .. } => resolve_type_name(name, program),
         HirExpr::Field { base, field, .. } => {
-            let Type::Struct { fields, .. } = infer_mono_type(base, symbols, program)? else {
+            let base = match infer_mono_type(base, symbols, program)? {
+                // The end of a recursive type's expansion.
+                Type::Enum { name, variants } if variants.is_empty() => {
+                    resolve_type_name(&name, program)?
+                }
+                other => other,
+            };
+            let Type::Struct { fields, .. } = base else {
                 return None;
             };
             fields
@@ -335,33 +340,7 @@ fn infer_mono_type(
             }
             result
         }
-        HirExpr::EnumVariant { enum_name, .. } => {
-            program.items.iter().find_map(|item| match item {
-                HirItem::Enum(e)
-                    if program.names.get(&e.name).map(String::as_str) == Some(enum_name) =>
-                {
-                    Some(Type::Enum {
-                        name: enum_name.clone(),
-                        variants: e
-                            .variants
-                            .iter()
-                            .map(|(name, payload)| {
-                                (
-                                    name.clone(),
-                                    payload.as_ref().and_then(|p| match p {
-                                        flux_hir::HirEnumPayload::Tuple(ty) => {
-                                            hir_type_to_mono_type(ty, program)
-                                        }
-                                        flux_hir::HirEnumPayload::Struct(_) => None,
-                                    }),
-                                )
-                            })
-                            .collect(),
-                    })
-                }
-                _ => None,
-            })
-        }
+        HirExpr::EnumVariant { enum_name, .. } => resolve_type_name(enum_name, program),
         HirExpr::Call { callee, args, .. } => {
             let HirExpr::Ident { symbol, .. } = callee.as_ref() else {
                 return None;
@@ -406,17 +385,63 @@ fn infer_mono_type(
                 }),
             }
         }
-        HirExpr::Closure { .. } => None,
+        HirExpr::Closure { fn_symbol, .. } => function_type(fn_symbol, symbols, program),
     }
 }
 
+/// The type of the declared function `symbol`, as a value.
+fn function_type(
+    symbol: &SymbolId,
+    symbols: &HashMap<SymbolId, Type>,
+    program: &HirProgram,
+) -> Option<Type> {
+    program.items.iter().find_map(|item| match item {
+        HirItem::Fn(function) if function.name == *symbol && function.type_params.is_empty() => {
+            let params = function
+                .params
+                .iter()
+                .map(|p| hir_type_to_mono_type(&p.ty, program))
+                .collect::<Option<Vec<_>>>()?;
+            let ret = match &function.ret {
+                Some(ret) => hir_type_to_mono_type(ret, program)?,
+                None => match function.body.stmts.last() {
+                    Some(HirStmt::Expr(expr)) => infer_mono_type(expr, symbols, program)?,
+                    _ => Type::Unit,
+                },
+            };
+            Some(Type::Func {
+                params,
+                ret: Box::new(ret),
+            })
+        }
+        _ => None,
+    })
+}
+
 fn resolve_type_name(name: &str, program: &HirProgram) -> Option<Type> {
+    resolve_named(name, program, &mut Vec::new())
+}
+
+fn hir_type_to_mono_type(ty: &HirType, program: &HirProgram) -> Option<Type> {
+    hir_to_mono(ty, program, &mut Vec::new())
+}
+
+/// `expanding`: the named types being expanded. A recursive reference to one
+/// stays a placeholder `Enum { name, variants: [] }`, or this would not end.
+fn resolve_named(name: &str, program: &HirProgram, expanding: &mut Vec<String>) -> Option<Type> {
     if let Ok(ty) =
         crate::types::resolve_type_name(name, flux_diagnostics::Span::new(SourceId(0), 0, 0))
     {
         return Some(normalize_mono_type(ty));
     }
-    program
+    if expanding.iter().any(|open| open == name) {
+        return Some(Type::Enum {
+            name: name.into(),
+            variants: vec![],
+        });
+    }
+    expanding.push(name.into());
+    let found = program
         .items
         .iter()
         .find_map(|item| match item {
@@ -427,7 +452,7 @@ fn resolve_type_name(name: &str, program: &HirProgram) -> Option<Type> {
                         .fields
                         .iter()
                         .filter_map(|(field, ty)| {
-                            Some((field.clone(), hir_type_to_mono_type(ty, program)?))
+                            Some((field.clone(), hir_to_mono(ty, program, expanding)?))
                         })
                         .collect(),
                 })
@@ -443,7 +468,7 @@ fn resolve_type_name(name: &str, program: &HirProgram) -> Option<Type> {
                                 variant.clone(),
                                 payload.as_ref().and_then(|payload| match payload {
                                     flux_hir::HirEnumPayload::Tuple(ty) => {
-                                        hir_type_to_mono_type(ty, program)
+                                        hir_to_mono(ty, program, expanding)
                                     }
                                     flux_hir::HirEnumPayload::Struct(_) => None,
                                 }),
@@ -458,34 +483,46 @@ fn resolve_type_name(name: &str, program: &HirProgram) -> Option<Type> {
             program
                 .type_aliases
                 .get(name)
-                .and_then(|aliased| hir_type_to_mono_type(aliased, program))
-        })
+                .and_then(|aliased| hir_to_mono(aliased, program, expanding))
+        });
+    expanding.pop();
+    found
 }
 
-fn hir_type_to_mono_type(ty: &HirType, program: &HirProgram) -> Option<Type> {
+fn hir_to_mono(ty: &HirType, program: &HirProgram, expanding: &mut Vec<String>) -> Option<Type> {
     match ty {
-        HirType::Named { name, .. } => resolve_type_name(name, program),
+        HirType::Named { name, .. } => resolve_named(name, program, expanding),
         HirType::TypeParam { .. } => None,
-        HirType::Array { inner, .. } => Some(Type::Array(Box::new(hir_type_to_mono_type(
-            inner, program,
+        HirType::Array { inner, .. } => Some(Type::Array(Box::new(hir_to_mono(
+            inner, program, expanding,
         )?))),
-        HirType::Option { inner, .. } => Some(Type::Option(Box::new(hir_type_to_mono_type(
-            inner, program,
+        HirType::Option { inner, .. } => Some(Type::Option(Box::new(hir_to_mono(
+            inner, program, expanding,
         )?))),
         HirType::Result { ok, err, .. } => Some(Type::Result {
-            ok: Box::new(hir_type_to_mono_type(ok, program)?),
-            err: Box::new(hir_type_to_mono_type(err, program)?),
+            ok: Box::new(hir_to_mono(ok, program, expanding)?),
+            err: Box::new(hir_to_mono(err, program, expanding)?),
         }),
         HirType::Generic { name, args, .. } if name == "Option" && args.len() == 1 => Some(
-            Type::Option(Box::new(hir_type_to_mono_type(&args[0], program)?)),
+            Type::Option(Box::new(hir_to_mono(&args[0], program, expanding)?)),
         ),
         HirType::Generic { name, args, .. } if name == "Result" && args.len() == 2 => {
             Some(Type::Result {
-                ok: Box::new(hir_type_to_mono_type(&args[0], program)?),
-                err: Box::new(hir_type_to_mono_type(&args[1], program)?),
+                ok: Box::new(hir_to_mono(&args[0], program, expanding)?),
+                err: Box::new(hir_to_mono(&args[1], program, expanding)?),
             })
         }
-        HirType::Generic { name, .. } => resolve_type_name(name, program),
+        HirType::Function { params, ret, .. } => Some(Type::Func {
+            params: params
+                .iter()
+                .map(|p| hir_to_mono(p, program, expanding))
+                .collect::<Option<Vec<_>>>()?,
+            ret: Box::new(match ret {
+                Some(ret) => hir_to_mono(ret, program, expanding)?,
+                None => Type::Unit,
+            }),
+        }),
+        HirType::Generic { name, .. } => resolve_named(name, program, expanding),
     }
 }
 
@@ -544,6 +581,23 @@ fn unify_generic_type(
             unify_generic_type(ok, actual_ok, type_params, program, substitutions)?;
             unify_generic_type(err, actual_err, type_params, program, substitutions)
         }
+        (
+            HirType::Function { params, ret, .. },
+            Type::Func {
+                params: actual_params,
+                ret: actual_ret,
+            },
+        ) if params.len() == actual_params.len() => {
+            for (param, actual) in params.iter().zip(actual_params) {
+                unify_generic_type(param, actual, type_params, program, substitutions)?;
+            }
+            match ret {
+                Some(ret) => {
+                    unify_generic_type(ret, actual_ret, type_params, program, substitutions)
+                }
+                None => (**actual_ret == Type::Unit).then_some(()),
+            }
+        }
         (HirType::Generic { name, args, .. }, Type::Option(actual_inner))
             if name == "Option" && args.len() == 1 =>
         {
@@ -562,7 +616,12 @@ fn unify_generic_type(
     }
 }
 
-fn remap_instantiated_symbols(function: &mut HirFn, program: &mut HirProgram, next_id: &mut u32) {
+fn remap_instantiated_symbols(
+    function: &mut HirFn,
+    subst: &HashMap<&str, HirType>,
+    program: &mut HirProgram,
+    next_id: &mut u32,
+) {
     let mut declared = std::collections::HashSet::new();
     for param in &function.params {
         declared.insert(param.name);
@@ -587,7 +646,20 @@ fn remap_instantiated_symbols(function: &mut HirFn, program: &mut HirProgram, ne
         program.symbols.insert(new_id, new_symbol);
         remap.insert(id, new_id);
     }
-    remap_function_symbols(function, &remap);
+    remap_function_symbols(
+        function,
+        &Remap {
+            symbols: &remap,
+            types: subst,
+        },
+    );
+}
+
+/// What a generic function's instance changes in its copy of the body: fresh
+/// symbols for its locals, and concrete types for its type parameters.
+struct Remap<'a> {
+    symbols: &'a HashMap<SymbolId, SymbolId>,
+    types: &'a HashMap<&'a str, HirType>,
 }
 
 fn collect_block_local_declarations(
@@ -720,24 +792,27 @@ fn collect_expr_local_declarations(expr: &HirExpr, out: &mut std::collections::H
     }
 }
 
-fn remap_function_symbols(function: &mut HirFn, remap: &HashMap<SymbolId, SymbolId>) {
+fn remap_function_symbols(function: &mut HirFn, remap: &Remap<'_>) {
     for param in &mut function.params {
         remap_id(&mut param.name, remap);
     }
     remap_block_symbols(&mut function.body, remap);
 }
 
-fn remap_id(id: &mut SymbolId, remap: &HashMap<SymbolId, SymbolId>) {
-    if let Some(mapped) = remap.get(id) {
+fn remap_id(id: &mut SymbolId, remap: &Remap<'_>) {
+    if let Some(mapped) = remap.symbols.get(id) {
         *id = *mapped;
     }
 }
 
-fn remap_block_symbols(block: &mut flux_hir::HirBlock, remap: &HashMap<SymbolId, SymbolId>) {
+fn remap_block_symbols(block: &mut flux_hir::HirBlock, remap: &Remap<'_>) {
     for stmt in &mut block.stmts {
         match stmt {
             HirStmt::Let(binding) => {
                 remap_id(&mut binding.name, remap);
+                if let Some(ty) = &mut binding.ty {
+                    *ty = substitute_hir_type(ty, remap.types);
+                }
                 remap_expr_symbols(&mut binding.value, remap);
             }
             HirStmt::Assign(assign) => {
@@ -779,7 +854,7 @@ fn remap_block_symbols(block: &mut flux_hir::HirBlock, remap: &HashMap<SymbolId,
     }
 }
 
-fn remap_if_symbols(if_stmt: &mut flux_hir::HirIf, remap: &HashMap<SymbolId, SymbolId>) {
+fn remap_if_symbols(if_stmt: &mut flux_hir::HirIf, remap: &Remap<'_>) {
     remap_expr_symbols(&mut if_stmt.cond, remap);
     remap_block_symbols(&mut if_stmt.then_branch, remap);
     if let Some(else_branch) = &mut if_stmt.else_branch {
@@ -790,7 +865,7 @@ fn remap_if_symbols(if_stmt: &mut flux_hir::HirIf, remap: &HashMap<SymbolId, Sym
     }
 }
 
-fn remap_expr_symbols(expr: &mut HirExpr, remap: &HashMap<SymbolId, SymbolId>) {
+fn remap_expr_symbols(expr: &mut HirExpr, remap: &Remap<'_>) {
     match expr {
         HirExpr::Ident { symbol, .. } => remap_id(symbol, remap),
         HirExpr::Snap { expr, .. }
@@ -857,8 +932,13 @@ fn remap_expr_symbols(expr: &mut HirExpr, remap: &HashMap<SymbolId, SymbolId>) {
         HirExpr::Int { .. }
         | HirExpr::Float { .. }
         | HirExpr::Bool { .. }
-        | HirExpr::String { .. }
-        | HirExpr::Closure { .. } => {}
+        | HirExpr::String { .. } => {}
+        // Its body keeps its own symbols; only what it loads here is this function's.
+        HirExpr::Closure { captures, .. } => {
+            for capture in captures {
+                remap_id(capture, remap);
+            }
+        }
     }
 }
 
@@ -984,6 +1064,16 @@ fn substitute_hir_type(ty: &HirType, subst: &HashMap<&str, HirType>) -> HirType 
                 .collect(),
             span: *span,
         },
+        HirType::Function { params, ret, span } => HirType::Function {
+            params: params
+                .iter()
+                .map(|p| substitute_hir_type(p, subst))
+                .collect(),
+            ret: ret
+                .as_ref()
+                .map(|r| Box::new(substitute_hir_type(r, subst))),
+            span: *span,
+        },
         other => other.clone(),
     }
 }
@@ -1001,6 +1091,7 @@ fn instantiate_fn(template: &HirFn, name: SymbolId, subst: &HashMap<&str, HirTyp
                 span: p.span,
             })
             .collect(),
+        captures: template.captures.clone(),
         ret: template.ret.as_ref().map(|t| substitute_hir_type(t, subst)),
         body: template.body.clone(),
         reactive: template.reactive,

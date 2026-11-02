@@ -322,6 +322,19 @@ impl Executor {
         if self.trap.is_some() {
             return;
         }
+        // A handler that emits nests like a call, under the same limit.
+        if self.call_depth >= flux_value::MAX_CALL_DEPTH {
+            self.raise(flux_value::ArithError::CallDepthExceeded);
+            return;
+        }
+        self.call_depth += 1;
+        stacker::maybe_grow(64 * 1024, 2 * 1024 * 1024, || {
+            self.run_event_handlers(event, payload)
+        });
+        self.call_depth -= 1;
+    }
+
+    fn run_event_handlers(&mut self, event: &str, payload: RuntimeValue) {
         let Some(&event_id) = self.graph.name_to_id.get(event) else {
             return;
         };
@@ -340,6 +353,10 @@ impl Executor {
             })
             .collect();
 
+        // The body that emitted is unfinished: its writes stay pending.
+        // (Taken only when present: an event must not drop the set's capacity.)
+        let outer_writes =
+            (!self.mutated_sources.is_empty()).then(|| std::mem::take(&mut self.mutated_sources));
         let was_deferred = self.defer_propagation;
         self.defer_propagation = true;
         for idx in handler_indices {
@@ -359,6 +376,9 @@ impl Executor {
             self.flush_propagation();
         }
         self.defer_propagation = was_deferred;
+        if let Some(outer_writes) = outer_writes {
+            self.mutated_sources.extend(outer_writes);
+        }
     }
 
     pub fn set_source(&mut self, name: &str, value: RuntimeValue) {
@@ -368,7 +388,8 @@ impl Executor {
         if !self.graph.set_by_name(name, value) {
             return;
         }
-        if self.defer_propagation {
+        // A handler or watch body writes as a batch, applied when it ends.
+        if self.defer_propagation || self.in_watch {
             self.mutated_sources.insert(name.to_string());
             return;
         }
@@ -660,44 +681,62 @@ impl Executor {
     ) {
     }
 
+    /// Runs the watches affected by `changed_nodes`, then those affected by
+    /// what they wrote, until nothing is left to run. Each watch runs at most
+    /// once per call, so a cycle of watches ends.
     fn run_watches(&mut self) {
         if self.trap.is_some() {
             return;
         }
         self.in_watch = true;
-        let changed = std::mem::take(&mut self.changed_nodes);
-        let run_all = changed.is_empty();
-
-        let watch_indices: Vec<usize> = self
-            .graph
-            .nodes
-            .iter()
-            .filter_map(|node| {
-                let NodeKind::Effect { meta } = &node.kind else {
-                    return None;
-                };
-                if meta.handler_kind != HandlerKind::Watch {
-                    return None;
-                }
-                let watch = &self.program.watches[meta.handler_index];
-                if !run_all && !watch_should_run(watch, &changed) {
-                    return None;
-                }
-                if let Some(target) = &watch.target {
-                    self.graph.get_by_name(target)?;
-                }
-                Some(meta.handler_index)
-            })
-            .collect();
-
-        for idx in watch_indices {
-            let body = self.program.watches[idx].body.clone();
-            if !self.try_run_jit_watch(idx, &body) {
-                self.run_stmts(&body, &mut Locals::default());
-            }
-            if self.trap.is_some() {
-                self.set_trap_context("`watch`", None);
+        // Nothing changed means the first run: every watch runs once.
+        let mut run_all = self.changed_nodes.is_empty();
+        let mut ran = HashSet::new();
+        loop {
+            if !run_all && self.changed_nodes.is_empty() {
                 break;
+            }
+            let changed = std::mem::take(&mut self.changed_nodes);
+            let watch_indices: Vec<usize> = self
+                .graph
+                .nodes
+                .iter()
+                .filter_map(|node| {
+                    let NodeKind::Effect { meta } = &node.kind else {
+                        return None;
+                    };
+                    if meta.handler_kind != HandlerKind::Watch || ran.contains(&meta.handler_index)
+                    {
+                        return None;
+                    }
+                    let watch = &self.program.watches[meta.handler_index];
+                    if !run_all && !watch_should_run(watch, &changed) {
+                        return None;
+                    }
+                    if let Some(target) = &watch.target {
+                        self.graph.get_by_name(target)?;
+                    }
+                    Some(meta.handler_index)
+                })
+                .collect();
+            run_all = false;
+            if watch_indices.is_empty() {
+                break;
+            }
+            for idx in watch_indices {
+                ran.insert(idx);
+                let body = self.program.watches[idx].body.clone();
+                if !self.try_run_jit_watch(idx, &body) {
+                    self.run_stmts(&body, &mut Locals::default());
+                }
+                if self.trap.is_none() {
+                    self.flush_propagation();
+                }
+                if self.trap.is_some() {
+                    self.set_trap_context("`watch`", None);
+                    self.in_watch = false;
+                    return;
+                }
             }
         }
         self.in_watch = false;

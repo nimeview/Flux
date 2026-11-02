@@ -175,6 +175,12 @@ fn type_key(ty: &HirType) -> String {
         HirType::Array { inner, .. } => format!("[{}]", type_key(inner)),
         HirType::Option { inner, .. } => format!("Option[{}]", type_key(inner)),
         HirType::Result { ok, err, .. } => format!("Result[{}, {}]", type_key(ok), type_key(err)),
+        HirType::Function { params, ret, .. } => format!(
+            "fn({}) -> {}",
+            params.iter().map(type_key).collect::<Vec<_>>().join(", "),
+            ret.as_ref()
+                .map_or_else(|| "Unit".to_string(), |r| type_key(r))
+        ),
     }
 }
 
@@ -191,6 +197,13 @@ fn type_name_str(ty: &TypeName) -> String {
         TypeName::Option { inner, .. } => format!("Option_{}", type_name_str(inner)),
         TypeName::Result { ok, err, .. } => {
             format!("Result_{}_{}", type_name_str(ok), type_name_str(err))
+        }
+        TypeName::Function { params, ret, .. } => {
+            let params: Vec<String> = params.iter().map(type_name_str).collect();
+            let ret = ret
+                .as_ref()
+                .map_or_else(|| "Unit".to_string(), |r| type_name_str(r));
+            format!("Fn_{}_{ret}", params.join("_"))
         }
     }
 }

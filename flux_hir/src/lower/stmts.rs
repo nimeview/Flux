@@ -401,6 +401,9 @@ fn unsupported_in_arm_block(
 ) -> Option<&'static str> {
     match stmt {
         Stmt::Let(_) | Stmt::Expr(_) => None,
+        // A closure's value is its body's value, and nothing checks a `return`
+        // against the function type it is used as.
+        Stmt::Return(_) if symbols.in_closure() => Some("`return` inside a closure"),
         Stmt::Return(_)
         | Stmt::Break(_)
         | Stmt::Continue(_)
@@ -451,6 +454,16 @@ fn lower_stmt(
             span,
         }) => {
             let sym = resolve_name(&name.name, *span, symbols, diagnostics)?;
+            // A closure holds a copy of what it captures: a write could not
+            // reach the original.
+            if symbols.is_captured(sym) {
+                diagnostics.push(FluxError::AssignToImmutableLocal {
+                    name: name.name.clone(),
+                    span: span_to_miette(*span),
+                    source_id: span.source,
+                });
+                return None;
+            }
             let mut reads_reactive = false;
             let scope = tracking_scope(ctx);
             let mut value = lower_expr(value, symbols, scope, diagnostics, &mut reads_reactive)?;

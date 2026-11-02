@@ -28,13 +28,15 @@ pub fn value_to_tagged(v: &Value) -> TaggedVal {
             TaggedVal::from_array_id(crate::heap::store_array(items))
         }
         Value::UserEnum(e) => {
-            let p = e.payload.as_ref().map(value_to_tagged);
+            let p = crate::deep_recursion(|| e.payload.as_ref().map(value_to_tagged));
             TaggedVal::from_enum_id(store_enum(&e.type_name, &e.variant, p))
         }
         Value::Unit => TaggedVal::UNIT,
-        Value::UserStruct(_) | Value::Option(_) | Value::Result(_) | Value::Map(_) => {
-            TaggedVal::UNIT
-        }
+        Value::UserStruct(_)
+        | Value::Closure(_)
+        | Value::Option(_)
+        | Value::Result(_)
+        | Value::Map(_) => TaggedVal::UNIT,
     }
 }
 
@@ -50,8 +52,14 @@ pub fn is_tag_representable(v: &Value) -> bool {
         | Value::String(_)
         | Value::Unit => true,
         Value::Array(items) => items.iter().all(is_tag_representable),
-        Value::UserEnum(e) => e.payload.as_ref().is_none_or(is_tag_representable),
-        Value::UserStruct(_) | Value::Option(_) | Value::Result(_) | Value::Map(_) => false,
+        Value::UserEnum(e) => {
+            crate::deep_recursion(|| e.payload.as_ref().is_none_or(is_tag_representable))
+        }
+        Value::UserStruct(_)
+        | Value::Closure(_)
+        | Value::Option(_)
+        | Value::Result(_)
+        | Value::Map(_) => false,
     }
 }
 
@@ -82,7 +90,8 @@ pub fn tagged_to_value(tv: TaggedVal) -> Value {
             .unwrap_or(Value::Unit),
         TAG_ENUM => get_enum(tv.data)
             .map(|(type_name, variant, payload)| {
-                Value::user_enum(type_name, variant, payload.map(tagged_to_value))
+                let payload = crate::deep_recursion(|| payload.map(tagged_to_value));
+                Value::user_enum(type_name, variant, payload)
             })
             .unwrap_or(Value::Unit),
         _ => Value::Unit,

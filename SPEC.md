@@ -27,6 +27,8 @@ Flux is a statically typed language with **built-in reactivity**: module-level b
 
 Generics: `fn id[T](x: T) -> T` — monomorphized at compile time per call site.
 
+**Recursive types.** A struct or enum may refer to itself or to another user type that leads back to it, directly (`enum T { Leaf, Wrap(T) }`), through another type (`enum L { Nil, Cons(Node) }` with `struct Node { value: Int, next: L }`), or through `Option` and arrays (`struct Tree { kids: [Tree] }`). User types are compared by name. A value can be nested as deep as a program builds it; dropping, comparing, and printing it do not overflow the stack.
+
 ### Casts
 
 `expr as Type` converts between numeric types when the conversion is defined (e.g. `x as Int32`, `n as Float64`). Numeric values can also be cast to `Bool` or `Char` where valid; `Bool` and `Char` can be cast to numeric types. Unrelated casts such as `true as String` are compile errors. The checker uses a promotion lattice for mixed arithmetic; use explicit casts when you need a specific width.
@@ -130,6 +132,10 @@ Arithmetic (`+ - * / %`), comparisons, boolean ops (`&&`, `||`, `!`), `if e { a 
 
 `|x| expr` or `|x: T| expr`. Parameter types are inferred from the call site (e.g. the array element type for `map`/`filter`/`reduce` callbacks) when not explicitly annotated, falling back to `Int`. Closures may capture module-level **Source** or **Derived** bindings from their enclosing scope (e.g. `filter(nums, |x| x > threshold)` or `filter(nums, |x| x > doubled)`); capturing **Derived** bindings is supported when the closure is used in a reactive (derived) context. A closure that captures a reactive binding is itself reactive: calls that use it are re-evaluated whenever captured dependencies change.
 
+A closure may also use the locals and parameters of the code around it (`map(xs, |x| x + k)`). They are captured **by value when the closure is created**: a later assignment to the local does not change what the closure sees, and assigning to a captured local inside the closure is **E009**. Module bindings are not copied: they are read when the closure runs, as above.
+
+**Function values.** A function type is written `fn(A, B) -> C`; without `->` the function returns `Unit`. A declared function's name and a closure are values of such a type: they can be passed, returned, and stored in bindings, arrays, and struct fields, and called (`let add2 = adder(2)` then `add2(5)`; `adder(3)(5)`; `(op.f)(3)` or `op.f(3)`). Two function types match when their parameters and results do. Functions have no `==` and no text form. Calling anything else is **E023**. A closure passed directly to a function takes its unannotated parameter types from that function's declared `fn(...)` parameter. A closure's value is its body's value, so `return` inside a closure is a compile error. A callee is evaluated before its arguments. A derived value depends on what a function value it uses reads, and a function with side effects cannot reach a derived value as a value either (**E017**).
+
 ### Trait method dispatch
 
 `impl Trait for Type { fn method(self: Type, ...) -> U { ... } }` methods can be called with `expr.method(args)` syntax (e.g. `(42).to_string()`, `shape.area()`). Dispatch is static. The typechecker resolves the receiver's type (a literal, a variable, a parameter, any expression; primitives, structs, and enums) against the `impl` blocks and compiles the call as a direct call to that impl, so several types can implement the same method name.
@@ -147,6 +153,10 @@ An `impl` must match its trait (**E020**): the trait must be declared, and the i
 | Closure (captures a source or derived) | Any | Tracked |
 
 `watch` and `on` are only valid at module level; using them inside a `fn` or `rfn` body is a compile error (**E011**).
+
+**Writes and settling.** Assignments in an `on` or `watch` body take effect on the source at once, but they propagate as a batch when the body ends: until then, a derived value read in the body keeps its old value. When the body ends, derived values recompute. Watches that depend on what changed then run, and what they write settles the same way, within the same event. Each watch runs at most once per settling, so a cycle of watches ends: a change that reaches a watch that has already run does not run it again. Assigning a source its current value still counts as a change for watches that depend on it.
+
+**`emit`.** Handlers run at the `emit`, in declaration order, before the next statement. Their writes settle when each handler ends. The writes of the body that emitted stay pending until that body ends. Nested `emit`s count toward the call depth limit, so an unbounded chain is the runtime error `call depth limit exceeded`.
 
 ### Type aliases
 
@@ -347,6 +357,7 @@ These limits keep extreme programs a language error rather than a native stack o
 | E020 | `impl` does not match its trait (unknown trait, missing, extra, or mismatched method) |
 | E021 | Invalid `?` (see §5, "The `?` operator") |
 | E022 | Importing a name the module declares without `pub` |
+| E023 | Calling something that is not a function |
 
 A UTF-8 byte-order mark at the start of a file is ignored, like whitespace.
 

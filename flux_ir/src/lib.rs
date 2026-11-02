@@ -138,8 +138,19 @@ pub enum Inst {
         fields: Vec<String>,
     },
     FieldGet(String),
+    /// Pops `captures` values and pushes a closure over function `name`,
+    /// which takes them after its own parameters.
+    MakeClosure {
+        name: String,
+        captures: usize,
+    },
     Call {
         name: String,
+        argc: usize,
+    },
+    /// Calls a function value: pops `argc` arguments, then the function (its
+    /// name, or a closure); pushes the result.
+    CallValue {
         argc: usize,
     },
     /// Explicit cast to a named type (`x as Int32`).

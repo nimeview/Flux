@@ -165,17 +165,38 @@ pub(super) fn lower_expr(
                 None
             };
             let lowered_callee = lower_expr(callee, symbols, scope, diagnostics, reads_reactive)?;
+            let signature = match callee.as_ref() {
+                Expr::Ident { name, .. } => symbols.fn_signatures.get(name).cloned(),
+                _ => None,
+            };
             let lowered_args = args
                 .iter()
-                .filter_map(|a| match a {
-                    Expr::Closure { params, body, span } => lower_closure(
-                        params,
-                        body,
-                        *span,
-                        closure_hints.as_deref().unwrap_or(&[]),
-                        symbols,
-                        diagnostics,
-                    ),
+                .enumerate()
+                .filter_map(|(i, a)| match a {
+                    Expr::Closure { params, body, span } => {
+                        let declared: Option<Vec<Option<TypeName>>> = signature
+                            .as_ref()
+                            .and_then(|sig| sig.get(i))
+                            .and_then(|ty| match ty {
+                                TypeName::Function { params, .. } => {
+                                    Some(params.iter().cloned().map(Some).collect())
+                                }
+                                _ => None,
+                            });
+                        let hints = declared
+                            .as_deref()
+                            .or(closure_hints.as_deref())
+                            .unwrap_or(&[]);
+                        lower_closure(
+                            params,
+                            body,
+                            *span,
+                            hints,
+                            symbols,
+                            diagnostics,
+                            reads_reactive,
+                        )
+                    }
                     _ => lower_expr(a, symbols, scope, diagnostics, reads_reactive),
                 })
                 .collect();
@@ -295,9 +316,15 @@ pub(super) fn lower_expr(
                 span: *span,
             })
         }
-        Expr::Closure { params, body, span } => {
-            lower_closure(params, body, *span, &[], symbols, diagnostics)
-        }
+        Expr::Closure { params, body, span } => lower_closure(
+            params,
+            body,
+            *span,
+            &[],
+            symbols,
+            diagnostics,
+            reads_reactive,
+        ),
         Expr::Cast { expr, ty, span } => {
             let inner = lower_expr(expr, symbols, scope, diagnostics, reads_reactive)?;
             Some(HirExpr::Cast {
@@ -337,6 +364,7 @@ pub(super) fn lower_expr(
 /// type comes from (in priority order): an explicit annotation (`|x: String|`), a
 /// positional hint inferred from the call-site context (see `hint_types_for_call`),
 /// or a fallback of `Int` for backward compatibility with untyped closures.
+#[allow(clippy::too_many_arguments)]
 fn lower_closure(
     params: &[flux_syntax::ClosureParam],
     body: &Expr,
@@ -344,6 +372,7 @@ fn lower_closure(
     hints: &[Option<TypeName>],
     symbols: &mut SymbolTable,
     diagnostics: &mut DiagnosticBag,
+    reads_reactive: &mut bool,
 ) -> Option<HirExpr> {
     let closure_name = symbols.fresh_closure_name();
     let _ = symbols.declare(
@@ -379,7 +408,8 @@ fn lower_closure(
     // `flux_ir::lower::collect_expr_reads` inlines the closure body's reads into the
     // calling derived's static dependencies, so e.g. `filter(items, |x| x > threshold)`
     // correctly recomputes when the captured `threshold` source changes.
-    if let Some(f) = lower_fn_inner(
+    symbols.open_closure();
+    let lowered = lower_fn_inner(
         &closure_name,
         &[],
         &fn_params,
@@ -389,12 +419,18 @@ fn lower_closure(
         symbols,
         diagnostics,
         true,
-    ) {
+    );
+    let uses = symbols.close_closure();
+    *reads_reactive |= uses.reads_reactive;
+    let captures = uses.captures;
+    if let Some(mut f) = lowered {
+        f.captures = captures.clone();
         symbols.pending_fns.push(HirItem::Fn(f));
     }
     let sym = resolve_name(&closure_name, span, symbols, diagnostics)?;
     Some(HirExpr::Closure {
         fn_symbol: sym,
+        captures,
         span,
     })
 }
@@ -519,15 +555,25 @@ fn lower_interpolated_string(
 }
 
 pub(super) fn lower_param_type(ty: &TypeName, type_params: &[String]) -> HirType {
-    if let TypeName::Simple { name, span } = ty {
-        if type_params.iter().any(|p| p == name) {
-            return HirType::TypeParam {
+    match ty {
+        TypeName::Simple { name, span } if type_params.iter().any(|p| p == name) => {
+            HirType::TypeParam {
                 name: name.clone(),
                 span: *span,
-            };
+            }
         }
+        TypeName::Function { params, ret, span } => HirType::Function {
+            params: params
+                .iter()
+                .map(|p| lower_param_type(p, type_params))
+                .collect(),
+            ret: ret
+                .as_ref()
+                .map(|r| Box::new(lower_param_type(r, type_params))),
+            span: *span,
+        },
+        _ => lower_type(ty),
     }
-    lower_type(ty)
 }
 
 fn is_reactive_kind(kind: SymbolKind) -> bool {
@@ -543,8 +589,11 @@ pub(super) fn resolve_name(
     symbols: &mut SymbolTable,
     diagnostics: &mut DiagnosticBag,
 ) -> Option<SymbolId> {
-    match symbols.lookup(name) {
-        Some(sym) => Some(sym.id),
+    match symbols.lookup(name).map(|sym| sym.id) {
+        Some(id) => {
+            symbols.note_use(id);
+            Some(id)
+        }
         None => {
             diagnostics.push(FluxError::UndefinedName {
                 name: name.to_string(),

@@ -65,6 +65,16 @@ pub(super) fn resolve_hir_type(
             ok: Box::new(resolve_hir_type(ctx, ok, diagnostics)?),
             err: Box::new(resolve_hir_type(ctx, err, diagnostics)?),
         }),
+        HirType::Function { params, ret, .. } => Some(Type::Func {
+            params: params
+                .iter()
+                .map(|p| resolve_hir_type(ctx, p, diagnostics))
+                .collect::<Option<Vec<_>>>()?,
+            ret: Box::new(match ret {
+                Some(ret) => resolve_hir_type(ctx, ret, diagnostics)?,
+                None => Type::Unit,
+            }),
+        }),
         HirType::Generic { name, args, span } => {
             if name == "Option" && args.len() == 1 {
                 Some(Type::Option(Box::new(resolve_hir_type(
@@ -141,6 +151,13 @@ pub(crate) fn resolve_hir_type_simple(ty: &HirType) -> Type {
         HirType::Result { ok, err, .. } => Type::Result {
             ok: Box::new(resolve_hir_type_simple(ok)),
             err: Box::new(resolve_hir_type_simple(err)),
+        },
+        HirType::Function { params, ret, .. } => Type::Func {
+            params: params.iter().map(resolve_hir_type_simple).collect(),
+            ret: Box::new(
+                ret.as_ref()
+                    .map_or(Type::Unit, |r| resolve_hir_type_simple(r)),
+            ),
         },
         HirType::Generic { name, args, .. } => {
             if name == "Option" && args.len() == 1 {

@@ -123,6 +123,8 @@ fn collect_expr_reads(
     match expr {
         HirExpr::Ident { symbol, .. } => {
             set.insert(*symbol);
+            // An `rfn` used as a value may run anywhere its value goes.
+            collect_rfn_reads(symbol, program, reactive_fns, set);
         }
         HirExpr::Snap { expr, .. } => collect_expr_reads(expr, program, reactive_fns, set),
         HirExpr::Call { callee, args, .. } => {
@@ -130,23 +132,12 @@ fn collect_expr_reads(
                 collect_expr_reads(a, program, reactive_fns, set);
             }
             match callee.as_ref() {
-                HirExpr::Ident { symbol, .. } => {
-                    if let Some(name) = program.names.get(symbol) {
-                        if let Some(rfn) = reactive_fns.get(name) {
-                            // Recursive functions: inline each body once per walk.
-                            if INLINING.with(|s| s.borrow_mut().insert(name.clone())) {
-                                for stmt in &rfn.body.stmts {
-                                    collect_stmt_reads(stmt, program, reactive_fns, set);
-                                }
-                                INLINING.with(|s| s.borrow_mut().remove(name));
-                            }
-                        }
-                    }
-                }
                 HirExpr::Field { base, .. } => {
                     collect_expr_reads(base, program, reactive_fns, set);
                 }
-                _ => {}
+                // A function value in a binding is a read of that binding,
+                // which depends on what its closure reads.
+                callee => collect_expr_reads(callee, program, reactive_fns, set),
             }
         }
         // Closures passed as HOF callbacks (e.g. `filter(items, |x| x > threshold)`)
@@ -191,7 +182,10 @@ fn collect_expr_reads(
                 collect_expr_reads(e, program, reactive_fns, set);
             }
         }
-        HirExpr::EnumVariant { .. } => {}
+        HirExpr::EnumVariant {
+            payload: Some(value),
+            ..
+        } => collect_expr_reads(value, program, reactive_fns, set),
         HirExpr::Match {
             scrutinee, arms, ..
         } => {
@@ -210,5 +204,26 @@ fn collect_expr_reads(
             collect_expr_reads(base, program, reactive_fns, set);
         }
         _ => {}
+    }
+}
+
+fn collect_rfn_reads(
+    symbol: &SymbolId,
+    program: &HirProgram,
+    reactive_fns: &HashMap<String, &HirFn>,
+    set: &mut HashSet<SymbolId>,
+) {
+    let Some(name) = program.names.get(symbol) else {
+        return;
+    };
+    let Some(rfn) = reactive_fns.get(name) else {
+        return;
+    };
+    // Recursive functions: inline each body once per walk.
+    if INLINING.with(|s| s.borrow_mut().insert(name.clone())) {
+        for stmt in &rfn.body.stmts {
+            collect_stmt_reads(stmt, program, reactive_fns, set);
+        }
+        INLINING.with(|s| s.borrow_mut().remove(name));
     }
 }

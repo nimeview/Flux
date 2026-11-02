@@ -1404,3 +1404,46 @@ fn a_local_may_shadow_a_module_const_and_be_assigned() {
         .iter()
         .any(|e| matches!(e, FluxError::AssignToImmutableLocal { .. })));
 }
+
+#[test]
+fn calling_something_that_is_not_a_function_is_e023() {
+    // These used to compile and evaluate to `()`, whatever the declared type.
+    // A value of function type can be called; see `program_model.rs`.
+    let cases = [
+        (
+            "an integer local",
+            "fn main() {\n    let f = 3\n    let y = f(4)\n    let z = y\n}\n",
+        ),
+        ("a parameter", "fn g(p: Int) -> Int {\n    p(1)\n}\n"),
+        ("a module binding", "let n = 3\nlet m = n(1)\nlet k = m\n"),
+        (
+            "a struct field",
+            "struct S {\n    x: Int\n}\nfn g(s: S) -> Int {\n    s.x(1)\n}\n",
+        ),
+    ];
+    for (what, src) in cases {
+        let err = match compile(source_from("<call>", src)) {
+            Ok(_) => panic!("{what}: should not compile"),
+            Err(err) => err,
+        };
+        assert!(
+            err.diagnostics.errors.iter().any(|e| e.code() == "E023"),
+            "{what}: {:?}",
+            err.diagnostics.errors
+        );
+    }
+}
+
+#[test]
+fn functions_stay_callable_by_name_and_usable_as_callbacks() {
+    let src = "import collections { map, reduce }\n\
+        fn d(x: Int) -> Int {\n    x * 2\n}\n\
+        fn id[T](x: T) -> T {\n    x\n}\n\
+        rfn r(x: Int) -> Int {\n    x + 1\n}\n\
+        fn run() -> Int {\n    let f = d\n    let xs = map([1, 2], f)\n    let ys = map(xs, d)\n    reduce(ys, id(0), |a, b| a + b) + d(1) + (|x: Int| x + 1)(1)\n}\n";
+    let mut compiled = compile(source_from("<callbacks>", src)).expect("compiles");
+    assert_eq!(
+        compiled.executor.call("run", &[]).expect("runs").as_int(),
+        Some(12 + 2 + 2)
+    );
+}

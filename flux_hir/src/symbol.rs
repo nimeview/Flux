@@ -31,6 +31,22 @@ pub enum BindingKind {
     Derived,
 }
 
+/// A closure being lowered: symbols older than `first_own_id` belong to the
+/// code around it.
+#[derive(Debug)]
+struct ClosureFrame {
+    first_own_id: u32,
+    captures: Vec<SymbolId>,
+    reads_reactive: bool,
+}
+
+/// What lowering a closure found about its body.
+pub struct ClosureUses {
+    pub captures: Vec<SymbolId>,
+    /// It reads a source or derived value.
+    pub reads_reactive: bool,
+}
+
 #[derive(Debug, Default)]
 pub struct SymbolTable {
     next_id: u32,
@@ -42,6 +58,11 @@ pub struct SymbolTable {
     /// Enum variant name → enum type name.
     pub enum_variants: HashMap<String, String>,
     pub closure_counter: u32,
+    /// Parameter types of non-generic functions, so a closure argument can
+    /// take its parameter types from `f: fn(String) -> Int`.
+    pub fn_signatures: HashMap<String, Vec<flux_syntax::TypeName>>,
+    /// Closures being lowered, innermost last; see [`Self::note_use`].
+    closure_frames: Vec<ClosureFrame>,
     pub pending_fns: Vec<crate::nodes::HirItem>,
     pub pending_bindings: Vec<crate::nodes::HirItem>,
     /// Every `impl` seen, checked against its trait once all traits are lowered.
@@ -87,6 +108,8 @@ impl SymbolTable {
             all_symbols: HashMap::new(),
             enum_variants: HashMap::new(),
             closure_counter: 0,
+            fn_signatures: HashMap::new(),
+            closure_frames: Vec::new(),
             pending_fns: Vec::new(),
             pending_bindings: Vec::new(),
             pending_impls: Vec::new(),
@@ -178,6 +201,61 @@ impl SymbolTable {
         self.all_symbols.insert(id, symbol);
         self.hidden_builtins.insert(name.to_string(), id);
         id
+    }
+
+    pub fn open_closure(&mut self) {
+        self.closure_frames.push(ClosureFrame {
+            first_own_id: self.next_id,
+            captures: Vec::new(),
+            reads_reactive: false,
+        });
+    }
+
+    /// Ends the innermost closure and returns what it uses.
+    pub fn close_closure(&mut self) -> ClosureUses {
+        let frame = self.closure_frames.pop();
+        ClosureUses {
+            reads_reactive: frame.as_ref().is_some_and(|f| f.reads_reactive),
+            captures: frame.map(|f| f.captures).unwrap_or_default(),
+        }
+    }
+
+    /// Records that the current code uses `id`: a local from outside a closure
+    /// being lowered is captured by it, and by each closure in between; a
+    /// source or derived value makes them all reactive.
+    pub fn note_use(&mut self, id: SymbolId) {
+        let kind = self.all_symbols.get(&id).map(|s| s.kind);
+        if matches!(
+            kind,
+            Some(
+                SymbolKind::Source | SymbolKind::Derived | SymbolKind::Function { reactive: true }
+            )
+        ) && !self.constants.contains(&id)
+        {
+            for frame in &mut self.closure_frames {
+                frame.reads_reactive = true;
+            }
+            return;
+        }
+        if !matches!(kind, Some(SymbolKind::Local { .. } | SymbolKind::Param)) {
+            return;
+        }
+        for frame in &mut self.closure_frames {
+            if id.0 < frame.first_own_id && !frame.captures.contains(&id) {
+                frame.captures.push(id);
+            }
+        }
+    }
+
+    pub fn in_closure(&self) -> bool {
+        !self.closure_frames.is_empty()
+    }
+
+    /// Whether `id` is a local captured by the innermost closure being lowered.
+    pub fn is_captured(&self, id: SymbolId) -> bool {
+        self.closure_frames
+            .last()
+            .is_some_and(|frame| frame.captures.contains(&id))
     }
 
     pub fn lookup(&self, name: &str) -> Option<&Symbol> {

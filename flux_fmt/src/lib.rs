@@ -661,6 +661,17 @@ fn type_name_fmt(ty: &flux_syntax::TypeName) -> String {
         flux_syntax::TypeName::Result { ok, err, .. } => {
             format!("Result[{}, {}]", type_name_fmt(ok), type_name_fmt(err))
         }
+        flux_syntax::TypeName::Function { params, ret, .. } => {
+            let params = params
+                .iter()
+                .map(type_name_fmt)
+                .collect::<Vec<_>>()
+                .join(", ");
+            match ret {
+                Some(ret) => format!("fn({params}) -> {}", type_name_fmt(ret)),
+                None => format!("fn({params})"),
+            }
+        }
     }
 }
 

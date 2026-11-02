@@ -145,7 +145,7 @@ fn enums_structs_and_generics_check_their_shapes() {
         "type mismatch: expected `field `y``, found `missing field`",
         "type mismatch: expected `field from x, y`, found `z`",
         "type mismatch: expected `Int64`, found `String`",
-        "type mismatch: expected `field `w``, found `P { x: Int64, y: Int64 }`",
+        "type mismatch: expected `field `w``, found `P`",
     ] {
         assert!(errs.iter().any(|(_, m)| m == want), "{want}: {errs:?}");
     }

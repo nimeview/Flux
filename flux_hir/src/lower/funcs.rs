@@ -110,6 +110,7 @@ pub(super) fn lower_fn_inner(
         name: sym_id,
         type_params: type_params.to_vec(),
         params: hir_params,
+        captures: Vec::new(),
         ret: ret.map(|t| lower_param_type(t, type_params)),
         body: hir_body,
         reactive,

@@ -49,6 +49,8 @@ pub enum Value {
     /// copy). They are immutable once built, so copies share them, like arrays.
     UserStruct(std::sync::Arc<StructValue>),
     UserEnum(std::sync::Arc<EnumValue>),
+    /// A closure with captures; one without is its function's name, a `String`.
+    Closure(std::sync::Arc<ClosureValue>),
     Option(Option<Box<Value>>),
     Result(Result<Box<Value>, Box<Value>>),
     /// `Map[K, V]`, ordered by key; each entry keeps the key's own value
@@ -58,16 +60,79 @@ pub enum Value {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct ClosureValue {
+    pub function: String,
+    pub captured: Vec<Value>,
+}
+
+#[derive(Debug, Clone)]
 pub struct StructValue {
     pub type_name: String,
     pub fields: HashMap<String, Value>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub struct EnumValue {
     pub type_name: String,
     pub variant: String,
     pub payload: Option<Value>,
+}
+
+/// Runs `f`, which recurses into a struct or enum's parts, on a stack that
+/// grows when low. A recursive type's value can be nested as deep as a loop
+/// builds it (no call limit applies), and a native overflow aborts the process.
+pub(crate) fn deep_recursion<R>(f: impl FnOnce() -> R) -> R {
+    stacker::maybe_grow(64 * 1024, 1024 * 1024, f)
+}
+
+impl PartialEq for StructValue {
+    fn eq(&self, other: &Self) -> bool {
+        deep_recursion(|| self.type_name == other.type_name && self.fields == other.fields)
+    }
+}
+
+impl PartialEq for EnumValue {
+    fn eq(&self, other: &Self) -> bool {
+        deep_recursion(|| {
+            self.type_name == other.type_name
+                && self.variant == other.variant
+                && self.payload == other.payload
+        })
+    }
+}
+
+impl Value {
+    /// Whether dropping this value can recurse into further values.
+    fn holds_values(&self) -> bool {
+        !matches!(
+            self,
+            Self::Int { .. }
+                | Self::Float { .. }
+                | Self::Char(_)
+                | Self::Bool(_)
+                | Self::String(_)
+                | Self::Unit
+        )
+    }
+}
+
+// Dropping the last reference to a long recursive value recurses through it.
+impl Drop for StructValue {
+    fn drop(&mut self) {
+        if self.fields.values().any(Value::holds_values) {
+            let fields = std::mem::take(&mut self.fields);
+            deep_recursion(|| drop(fields));
+        }
+    }
+}
+
+impl Drop for EnumValue {
+    fn drop(&mut self) {
+        if self.payload.as_ref().is_some_and(Value::holds_values) {
+            let payload = self.payload.take();
+            deep_recursion(|| drop(payload));
+        }
+    }
 }
 
 /// A map key: integers (any width, by value), `String`, `Bool`, or `Char`.
@@ -169,6 +234,7 @@ impl Value {
             Self::Array(_) => "Array",
             Self::UserStruct(_) => "Struct",
             Self::UserEnum(_) => "Enum",
+            Self::Closure(_) => "Closure",
             Self::Option(_) => "Option",
             Self::Result(_) => "Result",
             Self::Map(_) => "Map",

@@ -184,7 +184,9 @@ param = { ident ~ ":" ~ type_name }
 expr_list = { expr ~ ("," ~ expr)* }
 
 type_ann = { ":" ~ type_name }
-type_name = { generic_type | result_type | option_type | array_type | simple_type }
+type_name = { function_type | generic_type | result_type | option_type | array_type | simple_type }
+function_type = { "fn" ~ "(" ~ (type_name ~ ("," ~ type_name)*)? ~ ")" ~ ("->" ~ function_ret)? }
+function_ret = { type_name }
 generic_type = { ident ~ "[" ~ type_name ~ ("," ~ type_name)* ~ "]" }
 option_type = { "Option" ~ "[" ~ type_name ~ "]" }
 result_type = { "Result" ~ "[" ~ type_name ~ "," ~ type_name ~ "]" }

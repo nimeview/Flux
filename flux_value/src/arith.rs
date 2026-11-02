@@ -294,18 +294,18 @@ pub fn values_equal(a: &Value, b: &Value) -> bool {
         (Value::Result(Ok(x)), Value::Result(Ok(y)))
         | (Value::Result(Err(x)), Value::Result(Err(y))) => values_equal(x, y),
         (Value::Result(_), Value::Result(_)) => false,
-        (Value::UserStruct(a), Value::UserStruct(b)) => {
+        (Value::UserStruct(a), Value::UserStruct(b)) => crate::deep_recursion(|| {
             a.type_name == b.type_name
                 && a.fields.len() == b.fields.len()
                 && a.fields
                     .iter()
                     .all(|(k, v)| b.fields.get(k).is_some_and(|w| values_equal(v, w)))
-        }
-        (Value::UserEnum(a), Value::UserEnum(b)) => {
+        }),
+        (Value::UserEnum(a), Value::UserEnum(b)) => crate::deep_recursion(|| {
             a.type_name == b.type_name
                 && a.variant == b.variant
                 && both(a.payload.as_ref(), b.payload.as_ref())
-        }
+        }),
         (Value::Map(x), Value::Map(y)) => {
             x.len() == y.len()
                 && x.iter()

@@ -101,7 +101,19 @@ fn check_derived_expr(
             for arg in args {
                 check_derived_expr(ctx, arg, names, diagnostics);
             }
-            check_derived_expr(ctx, callee, names, diagnostics);
+            if !matches!(callee.as_ref(), HirExpr::Ident { .. }) {
+                check_derived_expr(ctx, callee, names, diagnostics);
+            }
+        }
+        // A function with effects passed as a value would run them here too.
+        HirExpr::Ident { symbol, span } => {
+            if ctx.is_effectful_function(*symbol) {
+                diagnostics.push(FluxError::SideEffectInDerived {
+                    name: names.get(symbol).cloned().unwrap_or_default(),
+                    span: span_to_miette(*span),
+                    source_id: span.source,
+                });
+            }
         }
         HirExpr::Unary { expr, .. } => check_derived_expr(ctx, expr, names, diagnostics),
         HirExpr::Binary { left, right, .. }
@@ -131,9 +143,12 @@ fn check_derived_expr(
         HirExpr::Int { .. }
         | HirExpr::Float { .. }
         | HirExpr::Bool { .. }
-        | HirExpr::String { .. }
-        | HirExpr::Ident { .. }
-        | HirExpr::EnumVariant { .. } => {}
+        | HirExpr::String { .. } => {}
+        HirExpr::EnumVariant { payload, .. } => {
+            if let Some(value) = payload {
+                check_derived_expr(ctx, value, names, diagnostics);
+            }
+        }
         HirExpr::StructLit { fields, .. } => {
             for (_, e) in fields {
                 check_derived_expr(ctx, e, names, diagnostics);
@@ -157,7 +172,9 @@ fn check_derived_expr(
         HirExpr::Cast { expr, .. } | HirExpr::ToText { expr, .. } | HirExpr::Try { expr, .. } => {
             check_derived_expr(ctx, expr, names, diagnostics)
         }
-        HirExpr::Closure { fn_symbol, span } => {
+        HirExpr::Closure {
+            fn_symbol, span, ..
+        } => {
             if ctx.is_effectful_function(*fn_symbol) {
                 diagnostics.push(FluxError::SideEffectInDerived {
                     name: names.get(fn_symbol).cloned().unwrap_or_default(),

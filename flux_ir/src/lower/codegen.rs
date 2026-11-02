@@ -202,10 +202,6 @@ fn emit_expr(expr: &HirExpr, program: &HirProgram, code: &mut Vec<Inst>) {
         }
         HirExpr::Call { callee, args, .. } => {
             if let HirExpr::Field { base, field, .. } = callee.as_ref() {
-                emit_expr(base, program, code);
-                for arg in args {
-                    emit_expr(arg, program, code);
-                }
                 // Checked programs reach here with method calls already
                 // rewritten to direct calls (`flux_types::resolve_method_calls`).
                 // Otherwise use the literal receiver's type, or the only impl
@@ -224,36 +220,45 @@ fn emit_expr(expr: &HirExpr, program: &HirProgram, code: &mut Vec<Inst>) {
                     }
                 };
                 if let Some(name) = fn_id.and_then(|id| runtime_symbol_name(program, &id)) {
+                    emit_expr(base, program, code);
+                    for arg in args {
+                        emit_expr(arg, program, code);
+                    }
                     code.push(Inst::Call {
                         name,
                         argc: 1 + args.len(),
                     });
+                    return;
                 }
+            }
+            // A declared function is called by name.
+            let direct = match callee.as_ref() {
+                HirExpr::Ident { symbol, .. } if is_function_symbol(symbol, program) => {
+                    runtime_symbol_name(program, symbol)
+                }
+                HirExpr::Closure {
+                    fn_symbol,
+                    captures,
+                    ..
+                } if captures.is_empty() => runtime_symbol_name(program, fn_symbol),
+                _ => None,
+            };
+            if let Some(name) = direct {
+                for arg in args {
+                    emit_expr(arg, program, code);
+                }
+                code.push(Inst::Call {
+                    name,
+                    argc: args.len(),
+                });
                 return;
             }
-            if let HirExpr::Closure { fn_symbol, .. } = callee.as_ref() {
-                if let Some(name) = runtime_symbol_name(program, fn_symbol) {
-                    for arg in args {
-                        emit_expr(arg, program, code);
-                    }
-                    code.push(Inst::Call {
-                        name,
-                        argc: args.len(),
-                    });
-                }
-                return;
+            // Any other callee is a value, evaluated before the arguments.
+            emit_expr(callee, program, code);
+            for arg in args {
+                emit_expr(arg, program, code);
             }
-            if let HirExpr::Ident { symbol, .. } = callee.as_ref() {
-                if let Some(name) = runtime_symbol_name(program, symbol) {
-                    for arg in args {
-                        emit_expr(arg, program, code);
-                    }
-                    code.push(Inst::Call {
-                        name,
-                        argc: args.len(),
-                    });
-                }
-            }
+            code.push(Inst::CallValue { argc: args.len() });
         }
         HirExpr::Array { elems, .. } => {
             for elem in elems {
@@ -363,10 +368,37 @@ fn emit_expr(expr: &HirExpr, program: &HirProgram, code: &mut Vec<Inst>) {
             emit_expr(base, program, code);
             code.push(Inst::FieldGet(field.clone()));
         }
-        HirExpr::Closure { fn_symbol, .. } => {
+        HirExpr::Closure {
+            fn_symbol,
+            captures,
+            ..
+        } => {
             if let Some(name) = runtime_symbol_name(program, fn_symbol) {
-                code.push(Inst::Const(IrValue::String(name)));
+                if captures.is_empty() {
+                    code.push(Inst::Const(IrValue::String(name)));
+                } else {
+                    emit_captures(captures, program, code);
+                    code.push(Inst::MakeClosure {
+                        name,
+                        captures: captures.len(),
+                    });
+                }
             }
         }
     }
+}
+
+fn emit_captures(captures: &[flux_hir::SymbolId], program: &HirProgram, code: &mut Vec<Inst>) {
+    for capture in captures {
+        if let Some(name) = runtime_symbol_name(program, capture) {
+            code.push(Inst::Load(name));
+        }
+    }
+}
+
+fn is_function_symbol(symbol: &flux_hir::SymbolId, program: &HirProgram) -> bool {
+    matches!(
+        program.symbols.get(symbol).map(|s| s.kind),
+        Some(flux_hir::SymbolKind::Function { .. } | flux_hir::SymbolKind::Builtin) | None
+    )
 }

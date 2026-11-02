@@ -110,6 +110,10 @@ pub struct HirFn {
     pub name: SymbolId,
     pub type_params: Vec<String>,
     pub params: Vec<HirParam>,
+    /// For a closure: the outer locals its body reads. At run time they
+    /// follow `params`; their types come from the closure's creation site,
+    /// matching `HirExpr::Closure::captures` by position.
+    pub captures: Vec<SymbolId>,
     pub ret: Option<HirType>,
     pub body: HirBlock,
     pub reactive: bool,
@@ -256,6 +260,8 @@ pub enum HirExpr {
     },
     Closure {
         fn_symbol: SymbolId,
+        /// Locals of the code around it, copied when the closure is created.
+        captures: Vec<SymbolId>,
         span: Span,
     },
     Unary {
@@ -408,6 +414,12 @@ pub enum HirType {
         err: Box<HirType>,
         span: Span,
     },
+    /// `ret` is `None` for `fn(A)`, which returns `Unit`.
+    Function {
+        params: Vec<HirType>,
+        ret: Option<Box<HirType>>,
+        span: Span,
+    },
 }
 
 impl HirExpr {
@@ -459,6 +471,11 @@ pub fn lower_type(ty: &TypeName) -> HirType {
         TypeName::Result { ok, err, span } => HirType::Result {
             ok: Box::new(lower_type(ok)),
             err: Box::new(lower_type(err)),
+            span: *span,
+        },
+        TypeName::Function { params, ret, span } => HirType::Function {
+            params: params.iter().map(lower_type).collect(),
+            ret: ret.as_ref().map(|r| Box::new(lower_type(r))),
             span: *span,
         },
     }
