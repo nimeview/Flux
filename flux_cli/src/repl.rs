@@ -146,7 +146,7 @@ fn handle_command(line: &str, session: &mut ReplSession) -> CommandResult {
                :emit <Event> [v]  — emit an event with an optional payload\n\
                :quit              — exit\n\
              \n\
-             Bindings (v2 syntax):\n\
+             Bindings:\n\
                let mut count = 0     — mutable source binding\n\
                count = count + 1     — assign only inside on/watch\n\
                let doubled = count * 2   — derived (immutable)\n\

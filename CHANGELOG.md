@@ -1,150 +1,40 @@
 # Changelog
 
-All notable changes to Flux are documented here.
+Notable changes to Flux. The versioning policy is in [`RELEASE.md`](RELEASE.md).
 
-## [Unreleased] — v0.4
+## [0.1.0] - 2026-11-03
 
-### Added
-- **JIT Phase 1–4**: tag-aware int/float slots, `JitStats` + `flux run --jit --verbose`, `If`/`While`/`For`/`emit` in JIT handlers, static `LazyIf` dep tracking, per-thread JIT compile cache, `flux repl --jit`, `flux.toml [run] jit`, `FLUX_JIT=1`
-- **JIT strings + enums**: string const/concat/equality (tag 5), user enum match with payload (tag 6); dedicated CI job on macOS + Linux (`cargo test -p flux_jit`, `cargo test -p flux_cli --test jit`)
-- **`flux_value` unification**: `TaggedVal`, tag constants, heap stores, and `value_to_tagged` / `tagged_to_value` live in `flux_value`; JIT host stores use `Mutex` (thread-safe across workers)
-- **Syntax v2**: unified `let` / `let mut` / `const` / `derived` module bindings (replaces bare `x = 0` and `set`)
-- Stdlib I/O: `read_line`, `read_file`, `write_file`, `append_file`, `file_exists`
-- Error **E016** (`let` without `mut` reassigned) and **E017** (side effects in derived)
-- Dependency-aware compile cache (invalidates when any imported `.fl` changes)
-- LSP snippets for `let mut` and `derived`
+The first version whose language surface is declared stable. The earlier history is in the git log.
 
-### Changed (breaking)
-- Removed top-level `binding` (`x = 0`) and `set` statement syntax
-- Module reassignment only via `let mut` sources in `on`/`watch`
-- All bundled programs migrated to v2 syntax
+### Language
 
-### Added (general-purpose programs)
-- String escapes `\n \t \r \0 \\ \" \{ \}`; any other `\x` is a parse error
-- `str` module: `to_string`, `parse_int`, `parse_float` (strict; `Result` on bad input)
-- `collections.get(xs, i) -> Option[T]` for bounds-checked element access
-- Literal match patterns: `0 =>`, `-1 =>`, `"y" =>`, `true =>` (compared with `==`; a catch-all arm is still required)
-- Program entry point: `fn main()` / `fn main() -> Int` runs after module init; its result is the exit status and no binding dump is printed. `io.eprint`/`eprintln` (stderr) and `io.args()` (arguments after `--`). `const` bindings are readable from pure functions
-- `[]` takes its element type from context (annotation, argument, return, `push`); an unannotated `let xs = []` is a clear error
-- `examples/general/`: text statistics, record aggregation, config validation
-- A trailing `if … else` is a function's value; `match` arms may be blocks `p => { stmts…; value }`
-- `None`, `Ok(x)`, `Err(e)` take their missing type from context (return type, argument, annotation, other branches); bare `None` is now the Option value (it evaluated to the string `"None"`)
+- Functions, `if`/`while`/`for`, `match` with guards and nested patterns, and a value for every block.
+- `Int8` to `Int64`, `UInt8` to `UInt64`, `Float32`, `Float64`, `Bool`, `Char`, `String`, arrays, `Map`, `Option`, `Result`, `struct`, `enum`, recursive types, type aliases, generics, closures, function types, and traits with static dispatch.
+- Expected failures as values with `?`, which requires an exact error type. Runtime errors with a file, line, and column trace.
+- Reactive values: `let mut`, `derived`, `event`, `on`, `watch`, `rfn`, and `snap`.
+- Modules with `pub`, and local packages with `flux.lock`.
+- Checked integer arithmetic and casts, with documented limits on recursion, collection size, and nesting.
 
-### Added (tooling)
-- `flux test [filter] [--jit]`: runs `fn test_*()` functions in isolation with per-test results and a non-zero exit on failure
-- `flux.lock` pins the transitive path-dependency tree by content; `--locked` on `run`/`check`/`test` refuses a missing or stale lock
-- `examples/packages`: a `geometry` library (with tests) consumed by `shapes_app` through a locked path dependency
-- `flux init --lib` creates a library package (`lib.fl`, `lib_test.fl`); `RELEASE.md` gains the versioning and compatibility policy
+### Tools
 
-### Changed
-- Floats always display a decimal point (`5.0`, not `5`)
-- A line starting with a binary `-` is a compile error instead of silently subtracting from the line above
-- Module initializers run in dependency order (also through called functions); fixes a `const` computed from a later `const` reading as uninitialized when a function used it during init
-- `true`/`false` end at a word boundary (`let trueish = 1` parses); E002 suggests `const` when a pure function reads an immutable module `let`
-- `flux init` refuses a directory that already has `flux.toml` (it used to overwrite `flux.toml` and the entry file); `flux.lock` checksums ignore CRLF vs LF
-- Keywords `as`, `in`, `if` (guard), and `else` end at a word boundary: `3` followed by a line `assert_eq(…)` no longer parses as the cast `3 as sert_eq…`
-- `assert` / `assert_eq` failures are the runtime error `assertion failed[: a != b]` instead of crashing the `flux` process
-- Modules have their own namespaces: a module's private items, its own imports (including stdlib), and transitive path dependencies now work (previously only the selected `pub` items of directly imported modules were copied into the root's scope). `watch`/`on` in an imported module is now an error instead of being dropped silently. Type names remain program-global.
-- `flux.toml`: a registry/version dependency, a missing path dependency, or invalid TOML is an error instead of being ignored
+- `flux init`, `run`, `check`, `test`, `fmt`, `lock`, `repl`, and `lsp-server`.
+- Standard library: `io`, `collections`, `math`, `str`, `option`, `result`, `testing`.
+- A `dist` build profile with link-time optimization.
 
-### Performance
-- Arrays are shared copy-on-write (`Arc`), so reading, indexing, or passing an array no longer copies it, and `xs = push(xs, v)` appends in place. Building and scanning an array is linear instead of quadratic: the `structs_match` benchmark went from 26.6 s to 0.12 s. Value semantics are unchanged (see `PERFORMANCE.md`).
-- VM: function calls no longer clone the function's IR; operand stacks are reused; locals use a fast hasher and are looked up once per `Load`; `Int64` arithmetic and comparison have a direct path. `compute_loop` runs about 2× faster, `recursion` about 3.7×, and `collections` about 2.8×.
-- JIT: function bodies with loops, early `return`, recursion, and calls to earlier functions now compile: `compute_loop` 485 → 2.2 ms, `fib(20)` 138 → 0.2 ms.
+### Experimental
 
-### Fixed
-- Trait methods on structs and enums, and on any variable or parameter receiver, now type-check and dispatch to the receiver's impl. They failed with ``expected `field `m`` ``, and codegen picked the first impl with that method name, whatever the type. An `impl` that does not match its trait is **E020** (it was accepted silently), and a missing method is **E019**
-- A generic function called inside an array, struct literal, enum payload, `as`, `snap`, or match guard is now instantiated (it was `undefined name`)
-- An arm for an unknown enum variant is one error, without a cascade that leaked `undefined name `symbol #SymbolId(…)``; an error the checker finds twice at the same place is reported once
-- `pop(xs)` returns `xs` without its last element, as SPEC states (`fn([T]) -> [T]`); it returned `[rest, last]`, which contradicted its checked type
-- `min`/`max`/`clamp` with an integer that does not fit the promoted width (`min(-1, 0u64)`) is the runtime error `integer overflow`, like `-1 + 0u64`; it silently produced `()`
-- **JIT:** reassigning a local inside a loop hung (the loop condition never saw the new value); `return` continued with the next statement; an `on` handler with a payload that called a function wrote past the JIT slot buffer (segfault). An assignment the JIT cannot place now falls back to the VM instead of being dropped
-- **`if … else` statements silently dropped every statement in `else` / `else if` bodies** (parser); `fmt` now prints whole `else if` chains
-- Assigning a local inside a fn no longer turns a same-named module binding into a reactive source (E016); `else if` bodies are scanned for source reassignments
-- Callback params of `map`/`filter`/`reduce` infer from typed fn params and annotated locals (no longer fall back to `Int`)
-- Diagnostics from imported modules render against their own file, line, and snippet (CLI and LSP); missing-module and cyclic-import errors point at the `import`
-- LSP positions use UTF-16 code units; diagnostics for imported files are published on their own URI and cleared on close; saving an import refreshes open dependents
-- JIT no longer leaks tagged arrays/enums/strings per evaluation (scoped heap reclamation)
-- `range` cannot overflow near `Int64` limits; more than 10,000,000 elements is the runtime error `allocation limit exceeded`
-- Compile cache: entries are scoped to a compiler fingerprint and checksummed; corrupt, truncated, foreign, or invalid entries recompile; cache files are never named after source text
-- `flux fmt` no longer drops comments (it refuses to format a file with a comment inside a declaration), and no longer emits unparsable `on` handlers, trailing struct/enum commas, `2.0` as `2`, or imports without their `as` alias
-- `print`/`println` write a string's text instead of its quoted form
-- `""` is a plain empty string (was an empty interpolation that broke `let mut s = ""` inside handlers)
-- `flux run`/`check` find `flux.toml` from subdirectories; the `flux init` template is warning-free and shows events, derived values, and `watch`
-- `flux wasm` fails with an explicit "experimental stub" error instead of reporting success, and no longer runs the program
-- Compile cache stale hits when dependency modules change
-- Full file compilation now regenerates or reuses IR after an analysis-cache hit
-- Standard-library imports no longer hide local modules with the same name
-- JIT Cranelift `bitcast` memflags (float/int slots compile correctly); `/` matches VM float promotion
+- `--jit`, a Cranelift backend that must match the VM or fall back to it.
+- `flux wasm`, a stub that always fails.
+- `flux migrate`.
 
----
+### Decided just before this release
 
-## [0.3] — tooling + higher-order
+Each of these can change what an existing program does:
 
-### Added
-- Higher-order functions: `map`, `filter`, `reduce` with closure arguments
-- Trait method dispatch (`expr.method()`) verified end-to-end
-- `flux run` reads `flux.toml` entry point when invoked without a file argument
-- `flux check` reads `flux.toml` entry point when invoked without a file argument
-- `flux lsp-server` — stdio LSP with diagnostics, hover, and basic completion
-- `flux_driver` — unified compile pipeline for CLI, LSP, and REPL
-- Compile cache read + validate (IR metadata keyed by source hash)
-- `TypeCheckContext` — explicit per-pass type registries (no `thread_local`)
-- GitHub Actions CI (`cargo test`, clippy, rustfmt)
-
-### Fixed
-- `map` was a pass-through stub — now applies fn to each element
-- `filter` now accepts a predicate closure instead of truthy filter
-- `reduce` now accepts an accumulator function instead of int-only fold
-- Closure parameters hardcoded to `Int` — now inferred from call context
-- Compile cache deadlock when validating cached IR
-
-### Planned for v1.0 (not yet implemented)
-- Match guards, destructuring `let`, string interpolation
-- `const` module bindings, `type` aliases
-- Qualified module names (`import math as m`)
-- `flux_value` unified runtime value type
-- LSP go-to-definition, member completion after `.`
-- Package path dependencies in `flux.toml`
-
----
-
-## [0.2.0] — JIT + stdlib + tooling
-
-### Added
-- Cranelift JIT backend (`flux run --jit`) for numeric hot paths
-- Standard library: `print`, `println`, `len`, `range`, `push`, `pop`, `map` (stub), `filter`, `reduce`, `str_len`, `str_split`, `str_contains`, `str_trim`, `Some`, `None`, `Ok`, `Err`
-- Source formatter (`flux fmt`)
-- LSP JSON diagnostics API (`flux lsp`)
-- `flux init` — creates `flux.toml` + `main.fl`
-- Compile cache (SHA256 → `<project>/.flux/cache/*.ir`)
-- Struct and enum literals with field access and pattern matching
-- Generics (`fn id[T](x: T) -> T`) — monomorphized at compile time
-- Traits and impl blocks (`trait Display`, `impl Display for Int`)
-- Closures (`|x| x + 1`)
-- Multi-file module imports (`import path { sym }`)
-- WASM backend stub (`flux wasm`)
-
----
-
-## [0.1.0] — Language core + VM
-
-### Added
-- Reactive binding model: source bindings, derived bindings, dependency graph
-- `watch` blocks with dependency filtering
-- `on Event` / `emit Event` — event-driven handlers
-- `rfn` reactive functions with static dependency tracking
-- `snap()` in pure `fn` contexts
-- Pure functions `fn`, return type inference
-- Arithmetic, comparison, boolean operators, short-circuit `&&`/`||`
-- `if/else` (expression and statement), `while`, `for x in expr`
-- `return`, `break`, `continue`
-- `let`/`set` local bindings
-- Array literals and `for i in [arr]` iteration
-- Module-level `if` for conditional initialization
-- String concatenation with `+`
-- Stack VM executor
-- REPL with `:type`, `:types`, `:help`, `:clear`, `:show`
-- `flux run` and `flux check` CLI commands
-- Error codes E000–E009 with miette diagnostics
-- ~20 integration test programs (`programs/ok/`, `programs/fail/`)
+- A function's value comes only from its last statement. `let`, an assignment, a loop, or an `if` without `else` gives `Unit`.
+- A `reduce` callback must return the exact type of the initial value.
+- A letter, digit, or `_` right after a number is a parse error.
+- `Ok`, `Err`, `Some`, and `None` need no import. A module's own item, variant, or local of that name takes priority.
+- Inside a function, a `match` arm may `emit` and assign a source.
+- `true` and `false` arms cover `Bool`.
+- Number literals such as `1e3`, `1_000`, and `0xff`, and ordering of strings by code point, are new.

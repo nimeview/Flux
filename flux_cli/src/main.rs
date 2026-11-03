@@ -121,7 +121,7 @@ enum Commands {
         /// Path to the source file
         file: String,
     },
-    /// Migrate v1 binding syntax to v2 (`let` / `let mut`)
+    /// Experimental: rewrite an older binding syntax to `let` / `let mut`
     Migrate {
         /// File or directory to migrate (prints diff to stdout by default)
         path: String,

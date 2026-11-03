@@ -38,7 +38,6 @@ Experimental, not covered by stability:
 
 Deferred and not claimed:
 - a package registry, version dependencies, and remote fetching. They come only after their security, integrity, and offline behavior are specified; a version dependency is an error today;
-- non-`String` interpolation (`"{n}"`); use `to_string(n)`;
 - module-scoped type names (`struct`/`enum`/`trait` names are program-global).
 
 ## Versioning and compatibility

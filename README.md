@@ -1,137 +1,80 @@
 # Flux
 
-Flux is a **reactive programming language** with a clean compiler pipeline written in Rust. Module-level bindings form a dependency graph that propagates changes automatically — like a spreadsheet, but as a general-purpose language.
-
-## Quick start
-
-```bash
-# Run tests
-cargo test
-
-# Execute a program
-cargo run -p flux_cli -- run programs/ok/basics/basics.fl
-
-# A program with `fn main() -> Int` runs it, prints only its own output, and exits with its result
-cargo run -p flux_cli -- run examples/general/text_stats.fl -- examples/general/text_stats_input.txt
-
-# Run the entry point declared in ./flux.toml (no file argument needed)
-cargo run -p flux_cli -- run
-
-# With Cranelift JIT (numeric hot paths): add --jit; --quiet drops the banner, --verbose adds events/effects
-cargo run -p flux_cli -- run --verbose programs/demo/counter.fl
-
-# Run every `fn test_*()` in the project (assert / assert_eq from `math`)
-cargo run -p flux_cli -- test
-
-# Projects with path dependencies keep a flux.lock; --locked fails if it is stale (use in CI)
-cargo run -p flux_cli -- check --locked
-
-# Library + app example: examples/packages/geometry is a path dependency of shapes_app
-(cd examples/packages/shapes_app && cargo run -q -p flux_cli -- run --locked)
-(cd examples/packages/geometry && cargo run -q -p flux_cli -- test)
-
-# Type-check only (import-aware)
-cargo run -p flux_cli -- check programs/ok/basics/basics.fl
-
-# Format source (stdout), or --write to format in place
-cargo run -p flux_cli -- fmt programs/ok/basics/basics.fl --write
-
-# New project (flux.toml + main.fl)
-cargo run -p flux_cli -- init my_app
-
-# LSP-style diagnostics (JSON, one-shot)
-cargo run -p flux_cli -- lsp programs/ok/basics/basics.fl
-
-# Full language server (diagnostics + hover + completion, stdio)
-cargo run -p flux_cli -- lsp-server
-
-# Interactive REPL (`:emit Event [payload]` fires events against the live session)
-cargo run -p flux_cli -- repl
-```
-
-See [SPEC.md](SPEC.md) for the language specification and [RELEASE.md](RELEASE.md) for the release gate, supported platforms, and which features are experimental (`--jit`) or stubs (`flux wasm`).
-
-## Editor setup
-
-`flux lsp-server` speaks the Language Server Protocol over stdio and provides diagnostics (with precise ranges, refreshed on every edit), hover (binding/function/event types), and completion (keywords, snippets, and module-level bindings). To wire it up in Cursor or VS Code, point a generic LSP client extension (e.g. "Generic LSP Client") at:
-
-```
-command: cargo
-args: ["run", "-p", "flux_cli", "--", "lsp-server"]
-filetypes: ["flux"]
-```
-
-or build a release binary first (`cargo build --release -p flux_cli`) and point the client at `target/release/flux lsp-server` for faster startup.
-
-## Example
+Flux is a small, statically typed language with reactive values built in. Write ordinary functions, structs, and enums, and when some values depend on others, declare that once: Flux keeps them up to date, the way cells in a spreadsheet do.
 
 ```flux
-event Click
+import io { println }
 
-let mut count = 0
-let doubled = count * 2
+event Deposit(amount: Int)
 
-on Click { count = count + 1 }
+let mut balance = 0
 
-watch count {
-    // runs when `count` changes
+let doubled = balance * 2
+
+on Deposit { amount ->
+    balance = balance + amount
+}
+
+watch balance {
+    println("balance={balance} doubled={doubled}")
+}
+
+fn main() {
+    emit Deposit(50)
 }
 ```
 
-## Language features
-
-| Feature | Syntax |
-|---------|--------|
-| Mutable source | `let mut x = 5` |
-| Derived binding | `let y = x * 2` or `derived y = x * 2` |
-| Immutable source | `let version = 1` or `const VERSION = 1` |
-| Function | `fn add(a: Int, b: Int) -> Int { a + b }` |
-| Reactive function | `rfn scale(x: Int) { x * base }` |
-| Events | `event Click` / `on Click { ... }` / `emit Click` |
-| Watch | `watch x { ... }` |
-| Snapshot | `snap(x)` in pure `fn` |
-| Arrays & loops | `for i in [1, 2, 3] { ... }` |
-| Struct / enum / match | `struct Point { x: Int }` / `match c { Red => 1 }` |
-| Generics | `fn id[T](x: T) -> T { x }` |
-| Traits & impl | `trait Display { ... }` / `impl Display for Int { ... }` / `x.method()` |
-| Closures | `\|x\| x * 2`, capturing module `Source` bindings |
-| Higher-order fns | `map(xs, f)`, `filter(xs, f)`, `reduce(xs, init, f)` |
-| Control flow | `return`, `break`, `continue` |
-| Modules | `import math { double }` |
-| Stdlib | `print`, `println`, `len`, `range`, `push`, `pop`, `map`, `filter`, `reduce`, `str_*`, `read_line`, `read_file`, `write_file`, `append_file`, `file_exists`, `Option`, `Result` |
-
-## Compiler pipeline
-
-```
-.fl → Parser → Resolver → HIR → Monomorphize → Types → IR → VM/JIT
+```output
+balance=0 doubled=0
+balance=50 doubled=100
 ```
 
-See [ARCHITECTURE.md](ARCHITECTURE.md) for details.
+Types are checked before anything runs, expected failures are values (`Result`, `Option`, `?`), and bugs stop the program with a trace that gives the file, line, and column. There is a virtual machine, which defines what programs mean, and an experimental JIT that must match it.
 
-## Project structure
+## Quick start
 
-| Crate | Role |
-|-------|------|
-| `flux-syntax` | Pest parser + AST |
-| `flux_hir` | HIR lowering, scopes, symbols |
-| `flux_types` | Type inference and checking |
-| `flux_ir` | Stack-machine bytecode |
-| `flux-runtime` | Reactive graph + VM executor |
-| `flux_jit` | Cranelift JIT backend |
-| `flux_std` | Standard library builtins |
-| `flux_resolve` | Module import resolution |
-| `flux_fmt` | Source formatter |
-| `flux_lsp` | Diagnostics API + stdio Language Server (hover, completion) |
-| `flux_wasm` | WASM backend stub |
-| `flux_cli` | CLI (`run`, `check`, `fmt`, `init`, `lsp`, `lsp-server`, `repl`) |
+You need a recent Rust toolchain.
+
+```bash
+cargo build --release -p flux_cli
+target/release/flux init my_app
+cd my_app
+../target/release/flux run
+```
+
+| Command | What it does |
+|---|---|
+| `flux run [file]` | compile and run |
+| `flux check [file]` | check without running |
+| `flux test [filter]` | run every `fn test_*()` in the project |
+| `flux fmt file --write` | format a file |
+| `flux lock [--check]` | manage `flux.lock` for path dependencies |
+| `flux repl` | interactive shell |
+| `flux lsp-server` | language server for editors |
+
+## Documentation
+
+- **The book**, in [`docs/flux`](docs/flux/src/SUMMARY.md), teaches the language. Read it there, or build it with [mdBook](https://rust-lang.github.io/mdBook/): `mdbook serve docs/flux`. The test suite runs every example in it.
+- [`SPEC.md`](SPEC.md) is the exact reference for the language.
+- [`CHANGELOG.md`](CHANGELOG.md) lists what changed.
+- [`ARCHITECTURE.md`](ARCHITECTURE.md) explains how the compiler is put together.
+- [`PERFORMANCE.md`](PERFORMANCE.md) records measurements and how to reproduce them.
+- [`RELEASE.md`](RELEASE.md) gives the release gate and the versioning policy.
+
+## Status
+
+Version 0.1. The language surface is stable on Linux and macOS, while the JIT, `flux wasm`, and `flux migrate` are experimental. There is no package registry yet, only local path dependencies. See [Status and limits](docs/flux/src/status.md).
+
+## Working on Flux
+
+```bash
+cargo test --workspace --all-targets --locked
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets --locked -- -D warnings
+```
+
+`cargo build --profile dist -p flux_cli` builds the binary to distribute, with link-time optimization. It takes several minutes, so use `--release` day to day.
 
 ## License
 
-Flux is licensed under the [Apache License, Version 2.0](LICENSE). You may use,
-modify, and distribute it, including for commercial purposes, under that
-license's terms. Preserve the required license, copyright, and attribution
-notices; see [NOTICE](NOTICE) for project attribution.
-
-Earlier revisions were released under the MIT License. Copies obtained under
-MIT remain available under those terms; this revision is licensed under
-Apache-2.0.
+Apache-2.0. See [`LICENSE`](LICENSE) and [`NOTICE`](NOTICE).
