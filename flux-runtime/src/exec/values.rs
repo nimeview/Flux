@@ -1,9 +1,7 @@
 //! Pure value helpers used by the VM interpreter: binary operators, variant
 //! inspection, IR value conversions and small predicates.
 
-use std::collections::HashSet;
-
-use flux_ir::{CompiledWatch, IrValue};
+use flux_ir::IrValue;
 use flux_value::{ArithError, NumOp};
 
 use crate::graph::RuntimeValue;
@@ -133,14 +131,6 @@ pub(super) fn arith_binop(stack: &mut Vec<RuntimeValue>, op: NumOp) -> Result<()
     Ok(())
 }
 
-pub(super) fn watch_should_run(watch: &CompiledWatch, changed: &HashSet<String>) -> bool {
-    if let Some(target) = &watch.target {
-        changed.contains(target)
-    } else {
-        watch.deps.iter().any(|dep| changed.contains(dep))
-    }
-}
-
 pub(super) fn to_runtime(v: &IrValue) -> RuntimeValue {
     match v {
         IrValue::Int(n) => i64::try_from(*n)
@@ -167,4 +157,18 @@ pub(super) fn code_has_lazy_if(code: &[flux_ir::Inst]) -> bool {
 
 pub(super) fn eval_const(expr: &Option<IrValue>) -> Option<RuntimeValue> {
     expr.as_ref().map(to_runtime)
+}
+
+/// A function's name as the source wrote it (`__mod_1__f`, `__closure_0`).
+pub(super) fn display_fn_name(name: &str) -> String {
+    if name.starts_with("__closure_") {
+        return "<closure>".to_string();
+    }
+    match name
+        .strip_prefix("__mod_")
+        .and_then(|rest| rest.split_once("__"))
+    {
+        Some((_, base)) => base.to_string(),
+        None => name.to_string(),
+    }
 }

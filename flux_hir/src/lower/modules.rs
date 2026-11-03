@@ -142,7 +142,6 @@ pub(super) fn lower_module_items(
         }
         let saved_aliases = std::mem::take(&mut symbols.module_aliases);
         let saved_qualified = std::mem::take(&mut symbols.qualified_symbols);
-        let saved_hints = symbols.array_elem_hints.clone();
         symbols.push(ScopeKind::Module);
 
         for (import, target) in module.imports.iter().zip(&module.import_targets) {
@@ -200,7 +199,6 @@ pub(super) fn lower_module_items(
         }
 
         symbols.pop();
-        symbols.array_elem_hints = saved_hints;
         symbols.module_aliases = saved_aliases;
         symbols.qualified_symbols = saved_qualified;
     }

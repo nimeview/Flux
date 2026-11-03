@@ -222,7 +222,7 @@ fn validate_code(code: &[Inst], mut allowed: Allowed<'_>, context: &str) -> Resu
             }
             // Its `let`s stay visible to the rest of the arm.
             Inst::Block(stmts) => {
-                for stmt in stmts {
+                for stmt in &stmts.stmts {
                     validate_stmt(stmt, &mut allowed, context)?;
                 }
             }

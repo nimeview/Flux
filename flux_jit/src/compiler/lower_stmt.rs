@@ -41,11 +41,12 @@ pub(crate) fn lower_stmts(
                 )?;
             }
             IrStmt::Let { name, expr, .. } => {
-                last = lower_insts(
+                let value = lower_insts(
                     expr, layout, slots_ptr, ptr_ty, host_slots, jit_fns, host_funcs, tables,
                     locals, module, b,
                 )?;
-                locals.set(name, last, b);
+                locals.set(name, value, b);
+                last = (unit_tag, unit_data);
             }
             IrStmt::Assign { target, expr, .. } => {
                 let (tag, data) = lower_insts(
@@ -60,7 +61,7 @@ pub(crate) fn lower_stmts(
                     // Never drop an assignment: let the VM run this body.
                     return None;
                 }
-                last = (tag, data);
+                last = (unit_tag, unit_data);
             }
             // Ineligible: the VM runs handlers at the `emit` (see `numeric.rs`).
             IrStmt::Emit { .. } => return None,
@@ -91,10 +92,15 @@ pub(crate) fn lower_stmts(
                 );
                 b.switch_to_block(then_bb);
                 b.seal_block(then_bb);
-                let (then_t, then_d) = lower_stmts(
+                let mut then_value = lower_stmts(
                     then_body, layout, slots_ptr, ptr_ty, host_slots, jit_fns, host_funcs, tables,
                     locals, module, b,
                 )?;
+                // Without `else`, the statement has no value.
+                if else_body.is_none() {
+                    then_value = (unit_tag, unit_data);
+                }
+                let (then_t, then_d) = then_value;
                 b.ins().jump(
                     merge_bb,
                     &[BlockArg::Value(then_t), BlockArg::Value(then_d)],
@@ -137,7 +143,7 @@ pub(crate) fn lower_stmts(
                 );
                 b.switch_to_block(body_bb);
                 b.seal_block(body_bb);
-                last = lower_stmts(
+                lower_stmts(
                     body, layout, slots_ptr, ptr_ty, host_slots, jit_fns, host_funcs, tables,
                     locals, module, b,
                 )?;
@@ -145,6 +151,7 @@ pub(crate) fn lower_stmts(
                 b.switch_to_block(exit_bb);
                 b.seal_block(header_bb);
                 b.seal_block(exit_bb);
+                last = (unit_tag, unit_data);
             }
             IrStmt::For {
                 var, iter, body, ..
@@ -181,7 +188,7 @@ pub(crate) fn lower_stmts(
                 let item = (results[0], results[1]);
                 locals.set(var, item, b);
                 let _ = arr_tag;
-                last = lower_stmts(
+                lower_stmts(
                     body, layout, slots_ptr, ptr_ty, host_slots, jit_fns, host_funcs, tables,
                     locals, module, b,
                 )?;
@@ -192,6 +199,7 @@ pub(crate) fn lower_stmts(
                 b.switch_to_block(exit_bb);
                 b.seal_block(header_bb);
                 b.seal_block(exit_bb);
+                last = (unit_tag, unit_data);
             }
             IrStmt::Return { expr } => {
                 let (tag, data) = if let Some(code) = expr {

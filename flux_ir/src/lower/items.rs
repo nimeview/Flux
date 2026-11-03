@@ -2,9 +2,12 @@
 
 use std::collections::HashMap;
 
+use flux_diagnostics::Span;
 use flux_hir::{HirBlock, HirElse, HirExpr, HirFn, HirIf, HirOn, HirProgram, HirStmt, HirWatch};
 
-use crate::{CompiledFunction, CompiledOnHandler, CompiledWatch, Inst, IrStmt, IrValue};
+use crate::{
+    CompiledFunction, CompiledOnHandler, CompiledWatch, Inst, IrStmt, IrValue, SourceLoc, StmtBlock,
+};
 
 use super::codegen::lower_expr;
 use super::reads::collect_block_reads;
@@ -53,12 +56,38 @@ pub(super) fn lower_on(o: &HirOn, program: &HirProgram) -> CompiledOnHandler {
     }
 }
 
-pub(super) fn lower_block(block: &HirBlock, program: &HirProgram) -> Vec<IrStmt> {
-    block
-        .stmts
-        .iter()
-        .filter_map(|s| lower_stmt(s, program))
-        .collect()
+pub(super) fn lower_block(block: &HirBlock, program: &HirProgram) -> StmtBlock {
+    let mut out = StmtBlock::default();
+    for stmt in &block.stmts {
+        if let Some(ir) = lower_stmt(stmt, program) {
+            out.stmts.push(ir);
+            out.locs.push(source_loc(stmt_span(stmt)));
+        }
+    }
+    out
+}
+
+pub(super) fn source_loc(span: Span) -> SourceLoc {
+    SourceLoc {
+        source: span.source.0,
+        offset: span.start as u32,
+    }
+}
+
+fn stmt_span(stmt: &HirStmt) -> Span {
+    match stmt {
+        HirStmt::Let(s) => s.span,
+        HirStmt::Assign(s) => s.span,
+        HirStmt::Emit(s) => s.span,
+        HirStmt::Return(s) => s.span,
+        HirStmt::Break(span) | HirStmt::Continue(span) => *span,
+        HirStmt::Expr(e) => e.span(),
+        HirStmt::If(s) => s.span,
+        HirStmt::While(s) => s.span,
+        HirStmt::For(s) => s.span,
+        HirStmt::Watch(s) => s.span,
+        HirStmt::On(s) => s.span,
+    }
 }
 
 fn lower_stmt(stmt: &HirStmt, program: &HirProgram) -> Option<IrStmt> {
@@ -107,7 +136,10 @@ fn lower_stmt(stmt: &HirStmt, program: &HirProgram) -> Option<IrStmt> {
 
 pub(super) fn lower_if_stmt(stmt: &HirIf, program: &HirProgram) -> IrStmt {
     let else_body = stmt.else_branch.as_ref().map(|e| match e {
-        HirElse::If(inner) => vec![lower_if_stmt(inner, program)],
+        HirElse::If(inner) => StmtBlock {
+            stmts: vec![lower_if_stmt(inner, program)],
+            locs: vec![source_loc(inner.span)],
+        },
         HirElse::Block(b) => lower_block(b, program),
     });
     IrStmt::If {

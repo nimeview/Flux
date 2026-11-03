@@ -67,7 +67,10 @@ fn tokenize(text: String) -> Result[[Token], String] {
 }
 
 fn op_at(tokens: [Token], at: Int, ops: String) -> Option[String] {
-    match get(tokens, at) { Some(Op(o)) => if str_contains(ops, o) { Some(o) } else { None }, _ => None }
+    match get(tokens, at) {
+        Some(Op(o)) => if str_contains(ops, o) { Some(o) } else { None },
+        _ => None
+    }
 }
 
 fn parse_binary(tokens: [Token], at: Int, ops: String, next: fn([Token], Int) -> Result[Parsed, String]) -> Result[Parsed, String] {
@@ -107,7 +110,10 @@ fn parse_atom(tokens: [Token], at: Int) -> Result[Parsed, String] {
         },
         Some(Open) => {
             let inner = parse_sum(tokens, at + 1)?
-            match get(tokens, inner.next) { Some(Close) => Ok(Parsed { expr: inner.expr, next: inner.next + 1 }), _ => Err("expected `)`") }
+            match get(tokens, inner.next) {
+                Some(Close) => Ok(Parsed { expr: inner.expr, next: inner.next + 1 }),
+                _ => Err("expected `)`")
+            }
         },
         Some(Close) => Err("unexpected `)`"),
         None => Err("unexpected end of expression")
@@ -124,7 +130,12 @@ fn eval(e: Expr) -> Result[Int, String] {
         Bin(b) => {
             let l = eval(b.left)?
             let r = eval(b.right)?
-            match b.op { "+" => Ok(l + r), "-" => Ok(l - r), "*" => Ok(l * r), _ => if r == 0 { Err("division by zero") } else { Ok(l / r) } }
+            match b.op {
+                "+" => Ok(l + r),
+                "-" => Ok(l - r),
+                "*" => Ok(l * r),
+                _ => if r == 0 { Err("division by zero") } else { Ok(l / r) }
+            }
         }
     }
 }

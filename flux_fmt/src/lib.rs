@@ -597,12 +597,13 @@ fn jump_fmt(stmt: &flux_syntax::Stmt) -> String {
     out.trim().to_string()
 }
 
-/// Multi-line `match` for when an arm is a block: arms one level in, block
+/// Multi-line `match` for block arms or a long expression: arms one level in, block
 /// statements two levels in, relative to the enclosing statement.
 fn match_block_fmt(scrutinee: &flux_syntax::Expr, arms: &[flux_syntax::MatchArm]) -> String {
     let base = LEVEL.with(|l| l.get());
     let mut out = format!("match {} {{\n", expr_fmt(scrutinee));
     for (i, arm) in arms.iter().enumerate() {
+        LEVEL.with(|l| l.set(base + 1));
         let guard = arm
             .guard
             .as_ref()
@@ -786,7 +787,7 @@ fn expr_fmt(expr: &flux_syntax::Expr) -> String {
         flux_syntax::Expr::Match {
             scrutinee, arms, ..
         } => {
-            let arms = arms
+            let arm_text = arms
                 .iter()
                 .map(|a| {
                     let guard = a
@@ -803,7 +804,15 @@ fn expr_fmt(expr: &flux_syntax::Expr) -> String {
                 })
                 .collect::<Vec<_>>()
                 .join(", ");
-            format!("match {} {{ {arms} }}", expr_fmt(scrutinee))
+            let inline = format!("match {} {{ {arm_text} }}", expr_fmt(scrutinee));
+            // This is a match-local budget; enclosing expression prefixes are
+            // not tracked by the expression printer.
+            let indentation = LEVEL.with(|l| l.get()) * 4;
+            if !inline.contains('\n') && indentation + inline.chars().count() <= 100 {
+                inline
+            } else {
+                match_block_fmt(scrutinee, arms)
+            }
         }
         flux_syntax::Expr::Cast { expr, ty, .. } => {
             format!("{} as {ty}", left_operand_fmt(expr, PREC_CAST))

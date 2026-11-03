@@ -156,50 +156,11 @@ pub(super) fn lower_expr(
                     });
                 }
             }
-            // Closures passed directly as HOF callback arguments (e.g. `map(nums, |x| ...)`)
-            // get their untyped params inferred from the call-site context, since the
-            // closure's own params carry no type info to check against otherwise.
-            let closure_hints = if let Expr::Ident { name, .. } = callee.as_ref() {
-                hint_types_for_call(name, args, symbols)
-            } else {
-                None
-            };
             let lowered_callee = lower_expr(callee, symbols, scope, diagnostics, reads_reactive)?;
-            let signature = match callee.as_ref() {
-                Expr::Ident { name, .. } => symbols.fn_signatures.get(name).cloned(),
-                _ => None,
-            };
             let lowered_args = args
                 .iter()
-                .enumerate()
-                .filter_map(|(i, a)| match a {
-                    Expr::Closure { params, body, span } => {
-                        let declared: Option<Vec<Option<TypeName>>> = signature
-                            .as_ref()
-                            .and_then(|sig| sig.get(i))
-                            .and_then(|ty| match ty {
-                                TypeName::Function { params, .. } => {
-                                    Some(params.iter().cloned().map(Some).collect())
-                                }
-                                _ => None,
-                            });
-                        let hints = declared
-                            .as_deref()
-                            .or(closure_hints.as_deref())
-                            .unwrap_or(&[]);
-                        lower_closure(
-                            params,
-                            body,
-                            *span,
-                            hints,
-                            symbols,
-                            diagnostics,
-                            reads_reactive,
-                        )
-                    }
-                    _ => lower_expr(a, symbols, scope, diagnostics, reads_reactive),
-                })
-                .collect();
+                .map(|a| lower_expr(a, symbols, scope, diagnostics, reads_reactive))
+                .collect::<Option<Vec<_>>>()?;
             Some(HirExpr::Call {
                 callee: Box::new(lowered_callee),
                 args: lowered_args,
@@ -316,15 +277,9 @@ pub(super) fn lower_expr(
                 span: *span,
             })
         }
-        Expr::Closure { params, body, span } => lower_closure(
-            params,
-            body,
-            *span,
-            &[],
-            symbols,
-            diagnostics,
-            reads_reactive,
-        ),
+        Expr::Closure { params, body, span } => {
+            lower_closure(params, body, *span, symbols, diagnostics, reads_reactive)
+        }
         Expr::Cast { expr, ty, span } => {
             let inner = lower_expr(expr, symbols, scope, diagnostics, reads_reactive)?;
             Some(HirExpr::Cast {
@@ -362,14 +317,12 @@ pub(super) fn lower_expr(
 
 /// Lowers a closure literal into a synthetic top-level function. Each parameter's
 /// type comes from (in priority order): an explicit annotation (`|x: String|`), a
-/// positional hint inferred from the call-site context (see `hint_types_for_call`),
-/// or a fallback of `Int` for backward compatibility with untyped closures.
+/// contextual type supplied later by the checker, or an `Int` fallback.
 #[allow(clippy::too_many_arguments)]
 fn lower_closure(
     params: &[flux_syntax::ClosureParam],
     body: &Expr,
     span: Span,
-    hints: &[Option<TypeName>],
     symbols: &mut SymbolTable,
     diagnostics: &mut DiagnosticBag,
     reads_reactive: &mut bool,
@@ -386,17 +339,11 @@ fn lower_closure(
     };
     let fn_params: Vec<flux_syntax::Param> = params
         .iter()
-        .enumerate()
-        .map(|(i, p)| {
-            let ty =
-                p.ty.clone()
-                    .or_else(|| hints.get(i).cloned().flatten())
-                    .unwrap_or_else(|| fallback.clone());
-            flux_syntax::Param {
-                name: p.name.clone(),
-                ty,
-                span: p.span,
-            }
+        .map(|p| flux_syntax::Param {
+            name: p.name.clone(),
+            // The checker replaces this placeholder from context, or confirms Int fallback.
+            ty: p.ty.clone().unwrap_or_else(|| fallback.clone()),
+            span: p.span,
         })
         .collect();
     let fn_body = Block {
@@ -424,6 +371,11 @@ fn lower_closure(
     *reads_reactive |= uses.reads_reactive;
     let captures = uses.captures;
     if let Some(mut f) = lowered {
+        f.is_closure = true;
+        for (i, param) in f.params.iter_mut().enumerate() {
+            param.unannotated = params[i].ty.is_none();
+            param.defaulted_to_int = param.unannotated;
+        }
         f.captures = captures.clone();
         symbols.pending_fns.push(HirItem::Fn(f));
     }
@@ -433,92 +385,6 @@ fn lower_closure(
         captures,
         span,
     })
-}
-
-/// Best-effort positional parameter type hints for a HOF builtin call, derived from
-/// the already-lowered structure of the other arguments (e.g. the array element type
-/// for `map`/`filter`, or the accumulator/element types for `reduce`).
-fn hint_types_for_call(
-    callee_name: &str,
-    args: &[Expr],
-    symbols: &SymbolTable,
-) -> Option<Vec<Option<TypeName>>> {
-    match callee_name {
-        "map" | "filter" => {
-            let elem = infer_syntax_elem_type(args.first()?, symbols);
-            Some(vec![elem])
-        }
-        "reduce" => {
-            let elem = infer_syntax_elem_type(args.first()?, symbols);
-            let init = infer_syntax_scalar_type(args.get(1)?);
-            Some(vec![init, elem])
-        }
-        _ => None,
-    }
-}
-
-/// Records (or clears, when unknown) the element type HOF closures over `name`
-/// should assume. An annotation such as `[String]` wins over the value.
-pub(super) fn record_array_hint(
-    symbols: &mut SymbolTable,
-    name: &str,
-    annotation: Option<&TypeName>,
-    value: Option<&Expr>,
-) {
-    let hint = match annotation {
-        Some(TypeName::Array { inner, .. }) => Some((**inner).clone()),
-        Some(_) => None,
-        None => value.and_then(|v| infer_syntax_elem_type(v, symbols)),
-    };
-    match hint {
-        Some(elem) => {
-            symbols.array_elem_hints.insert(name.to_string(), elem);
-        }
-        None => {
-            symbols.array_elem_hints.remove(name);
-        }
-    }
-}
-
-pub(super) fn infer_syntax_elem_type(expr: &Expr, symbols: &SymbolTable) -> Option<TypeName> {
-    match expr {
-        Expr::Array { elems, .. } => infer_syntax_scalar_type(elems.first()?),
-        Expr::Ident { name, .. } => symbols.array_elem_hints.get(name).cloned(),
-        Expr::Call { callee, span, .. } => match callee.as_ref() {
-            Expr::Ident { name, .. } if name == "str_split" => Some(TypeName::Simple {
-                name: "String".into(),
-                span: *span,
-            }),
-            _ => None,
-        },
-        _ => None,
-    }
-}
-
-fn infer_syntax_scalar_type(expr: &Expr) -> Option<TypeName> {
-    match expr {
-        Expr::Int { span, .. } => Some(TypeName::Simple {
-            name: "Int".into(),
-            span: *span,
-        }),
-        Expr::Float { span, .. } => Some(TypeName::Simple {
-            name: "Float".into(),
-            span: *span,
-        }),
-        Expr::Bool { span, .. } => Some(TypeName::Simple {
-            name: "Bool".into(),
-            span: *span,
-        }),
-        Expr::String { span, .. } => Some(TypeName::Simple {
-            name: "String".into(),
-            span: *span,
-        }),
-        Expr::InterpolatedString { span, .. } => Some(TypeName::Simple {
-            name: "String".into(),
-            span: *span,
-        }),
-        _ => None,
-    }
 }
 
 fn lower_interpolated_string(

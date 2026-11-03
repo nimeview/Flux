@@ -7,7 +7,7 @@ use crate::context::ScopeKind;
 use crate::nodes::*;
 use crate::symbol::{SymbolKind, SymbolTable};
 
-use super::exprs::{lower_param_type, record_array_hint, resolve_name};
+use super::exprs::{lower_param_type, resolve_name};
 use super::stmts::lower_block;
 
 pub(super) fn lower_fn(
@@ -61,11 +61,6 @@ pub(super) fn lower_fn_inner(
 ) -> Option<HirFn> {
     let sym_id = symbols.lookup(name)?.id;
     symbols.push(ScopeKind::Function { reactive });
-    // Params and locals shadow outer element-type hints only inside this body.
-    let outer_hints = symbols.array_elem_hints.clone();
-    for p in params {
-        record_array_hint(symbols, &p.name.name, Some(&p.ty), None);
-    }
 
     for tp in type_params {
         let _ = symbols.declare(tp, SymbolKind::Builtin, span);
@@ -89,6 +84,8 @@ pub(super) fn lower_fn_inner(
             Some(HirParam {
                 name: id,
                 ty: lower_param_type(&p.ty, type_params),
+                unannotated: false,
+                defaulted_to_int: false,
                 span: p.span,
             })
         })
@@ -101,12 +98,12 @@ pub(super) fn lower_fn_inner(
     };
 
     let hir_body = lower_block(body, symbols, scope, diagnostics);
-    symbols.array_elem_hints = outer_hints;
     let hir_body = hir_body?;
 
     symbols.pop();
 
     Some(HirFn {
+        is_closure: false,
         name: sym_id,
         type_params: type_params.to_vec(),
         params: hir_params,

@@ -69,6 +69,19 @@ pub enum FluxError {
         source_id: SourceId,
     },
 
+    /// An E005 with additional context, keeping ordinary E005 constructors unchanged.
+    #[error("type mismatch: expected `{expected}`, found `{found}`")]
+    #[diagnostic(code(flux::E005))]
+    TypeMismatchWithHelp {
+        expected: String,
+        found: String,
+        #[label("expected `{expected}`")]
+        span: miette::SourceSpan,
+        source_id: SourceId,
+        #[help]
+        help: String,
+    },
+
     #[error("unknown event `{name}`")]
     #[diagnostic(code(flux::E006))]
     UnknownEvent {
@@ -166,14 +179,19 @@ pub enum FluxError {
         source_id: SourceId,
     },
 
-    #[error("`let` without `mut` cannot read reactive binding `{name}`")]
+    #[error("{}", if *assigned {
+        format!("binding `{name}` is assigned; declare it with `let mut`")
+    } else {
+        format!("`let` without `mut` cannot read reactive binding `{name}`")
+    })]
     #[diagnostic(
         code(flux::E016),
         help("use `derived` for computed values, or `let mut` for reassignable sources")
     )]
     ImmutableLetReadsReactive {
         name: String,
-        #[label("reactive read")]
+        assigned: bool,
+        #[label("binding declared here")]
         span: miette::SourceSpan,
         source_id: SourceId,
     },
@@ -303,6 +321,7 @@ impl FluxError {
             | Self::AssignToDerived { source_id, .. }
             | Self::DuplicateDefinition { source_id, .. }
             | Self::TypeMismatch { source_id, .. }
+            | Self::TypeMismatchWithHelp { source_id, .. }
             | Self::UnknownEvent { source_id, .. }
             | Self::UnknownType { source_id, .. }
             | Self::InvalidControlFlowInDerived { source_id, .. }
@@ -334,7 +353,7 @@ impl FluxError {
             Self::ReactiveInPureContext { .. } => "E002",
             Self::AssignToDerived { .. } => "E003",
             Self::DuplicateDefinition { .. } => "E004",
-            Self::TypeMismatch { .. } => "E005",
+            Self::TypeMismatch { .. } | Self::TypeMismatchWithHelp { .. } => "E005",
             Self::UnknownEvent { .. } => "E006",
             Self::UnknownType { .. } => "E007",
             Self::InvalidControlFlowInDerived { .. } => "E008",
@@ -367,6 +386,7 @@ impl FluxError {
             | Self::ReactiveInPureContext { span, .. }
             | Self::AssignToDerived { span, .. }
             | Self::TypeMismatch { span, .. }
+            | Self::TypeMismatchWithHelp { span, .. }
             | Self::UnknownEvent { span, .. }
             | Self::UnknownType { span, .. }
             | Self::InvalidControlFlowInDerived { span, .. }

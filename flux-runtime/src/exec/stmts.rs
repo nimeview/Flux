@@ -1,6 +1,6 @@
 //! Statement execution with structured `return` / `break` / `continue` flow.
 
-use flux_ir::IrStmt;
+use flux_ir::{IrStmt, StmtBlock};
 
 use crate::graph::RuntimeValue;
 use crate::vm::debug_assert_vm;
@@ -14,7 +14,7 @@ const TRAPPED: StmtResult = StmtResult {
 };
 
 impl Executor {
-    pub(super) fn run_stmts(&mut self, stmts: &[IrStmt], locals: &mut Locals) -> RuntimeValue {
+    pub(super) fn run_stmts(&mut self, stmts: &StmtBlock, locals: &mut Locals) -> RuntimeValue {
         match self.run_stmts_flow(stmts, locals) {
             (v, FlowControl::None) => v,
             (v, _) => v,
@@ -34,16 +34,17 @@ impl Executor {
 
     pub(super) fn run_stmts_flow(
         &mut self,
-        stmts: &[IrStmt],
+        block: &StmtBlock,
         locals: &mut Locals,
     ) -> (RuntimeValue, FlowControl) {
         let mut last = RuntimeValue::Unit;
-        for stmt in stmts {
+        for stmt in &block.stmts {
             // Release the previous statement's value first: holding it would
             // keep an array shared and force copy-on-write to copy.
             drop(std::mem::replace(&mut last, RuntimeValue::Unit));
             let result = self.run_stmt_flow(stmt, locals);
             if self.trap.is_some() {
+                self.note_trap_location(block, stmt);
                 return (RuntimeValue::Unit, FlowControl::Return);
             }
             match result {
@@ -61,6 +62,17 @@ impl Executor {
         (last, FlowControl::None)
     }
 
+    /// The innermost statement that failed sets the location, once per frame.
+    #[cold]
+    fn note_trap_location(&mut self, block: &StmtBlock, stmt: &IrStmt) {
+        if let Some(err) = &mut self.trap {
+            if err.pending_loc.is_none() {
+                let index = block.stmts.iter().position(|s| std::ptr::eq(s, stmt));
+                err.pending_loc = index.and_then(|i| block.locs.get(i)).copied();
+            }
+        }
+    }
+
     pub(super) fn run_stmt(&mut self, stmt: &IrStmt, locals: &mut Locals) -> RuntimeValue {
         self.run_stmt_flow(stmt, locals).value
     }
@@ -74,17 +86,17 @@ impl Executor {
                 }
                 // `resolve_locals` leaves only reactive sources without a slot.
                 match slot {
-                    Some(slot) => locals.set(*slot, value.clone()),
+                    Some(slot) => locals.set(*slot, value),
                     None => {
                         debug_assert_vm(
                             self.is_source_binding(target),
                             &format!("assignment to `{target}` has no slot"),
                         );
-                        self.set_source(target, value.clone());
+                        self.set_source(target, value);
                     }
                 }
                 StmtResult {
-                    value,
+                    value: RuntimeValue::Unit,
                     flow: FlowControl::None,
                 }
             }
@@ -93,9 +105,9 @@ impl Executor {
                 if let Some(stop) = self.interrupted() {
                     return stop;
                 }
-                locals.set(*slot, value.clone());
+                locals.set(*slot, value);
                 StmtResult {
-                    value,
+                    value: RuntimeValue::Unit,
                     flow: FlowControl::None,
                 }
             }
@@ -154,17 +166,29 @@ impl Executor {
                 if let Some(stop) = self.interrupted() {
                     return stop;
                 }
+                let Some(else_body) = else_body else {
+                    // Without `else`, the statement has no value.
+                    if cond.as_bool().unwrap_or(false) {
+                        let (value, flow) = self.run_stmts_flow(then_body, locals);
+                        let value = match flow {
+                            FlowControl::None => RuntimeValue::Unit,
+                            _ => value,
+                        };
+                        return StmtResult { value, flow };
+                    }
+                    return StmtResult {
+                        value: RuntimeValue::Unit,
+                        flow: FlowControl::None,
+                    };
+                };
                 if cond.as_bool().unwrap_or(false) {
                     self.run_stmts_flow(then_body, locals)
-                } else if let Some(else_body) = else_body {
-                    self.run_stmts_flow(else_body, locals)
                 } else {
-                    (RuntimeValue::Unit, FlowControl::None)
+                    self.run_stmts_flow(else_body, locals)
                 }
                 .into()
             }
             IrStmt::While { cond, body } => {
-                let mut last = RuntimeValue::Unit;
                 loop {
                     let keep_going = self.eval_expr(cond, locals);
                     if let Some(stop) = self.interrupted() {
@@ -173,21 +197,13 @@ impl Executor {
                     if !keep_going.as_bool().unwrap_or(false) {
                         break;
                     }
-                    drop(std::mem::replace(&mut last, RuntimeValue::Unit));
                     let result = self.run_stmts_flow(body, locals);
                     if let Some(stop) = self.interrupted() {
                         return stop;
                     }
                     match result {
-                        (v, FlowControl::None) => last = v,
-                        (v, FlowControl::Break) => {
-                            last = v;
-                            break;
-                        }
-                        (v, FlowControl::Continue) => {
-                            last = v;
-                            continue;
-                        }
+                        (_, FlowControl::None | FlowControl::Continue) => {}
+                        (_, FlowControl::Break) => break,
                         (v, FlowControl::Return) => {
                             return StmtResult {
                                 value: v,
@@ -197,14 +213,13 @@ impl Executor {
                     }
                 }
                 StmtResult {
-                    value: last,
+                    value: RuntimeValue::Unit,
                     flow: FlowControl::None,
                 }
             }
             IrStmt::For {
                 slot, iter, body, ..
             } => {
-                let mut last = RuntimeValue::Unit;
                 let items = self.eval_expr(iter, locals);
                 if let Some(stop) = self.interrupted() {
                     return stop;
@@ -219,21 +234,13 @@ impl Executor {
                 };
                 'for_loop: for item in items {
                     locals.set(*slot, item);
-                    drop(std::mem::replace(&mut last, RuntimeValue::Unit));
                     let result = self.run_stmts_flow(body, locals);
                     if let Some(stop) = self.interrupted() {
                         return stop;
                     }
                     match result {
-                        (v, FlowControl::None) => last = v,
-                        (v, FlowControl::Break) => {
-                            last = v;
-                            break 'for_loop;
-                        }
-                        (v, FlowControl::Continue) => {
-                            last = v;
-                            continue;
-                        }
+                        (_, FlowControl::None | FlowControl::Continue) => {}
+                        (_, FlowControl::Break) => break 'for_loop,
                         (v, FlowControl::Return) => {
                             return StmtResult {
                                 value: v,
@@ -243,7 +250,7 @@ impl Executor {
                     }
                 }
                 StmtResult {
-                    value: last,
+                    value: RuntimeValue::Unit,
                     flow: FlowControl::None,
                 }
             }

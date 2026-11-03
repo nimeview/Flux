@@ -17,12 +17,12 @@ use std::collections::{HashMap, HashSet};
 use flux_ir::{CompiledFunction, CompiledProgram, HandlerKind, NodeKind as IrNodeKind};
 
 use crate::backend::{ActiveBackend, EvalContext, ExecBackend};
-use crate::error::{ExecutorError, RuntimeError};
-use crate::graph::{NodeKind, ReactiveGraph, RuntimeValue};
+use crate::error::{ExecutorError, RuntimeError, TraceFrame};
+use crate::graph::{NodeId, NodeKind, ReactiveGraph, RuntimeValue};
 use crate::vm::validate_program;
 use crate::ExecutionMode;
 
-use values::{code_has_lazy_if, eval_const, watch_should_run};
+use values::{code_has_lazy_if, eval_const};
 
 /// A frame of local bindings, indexed by the slots `flux_ir::resolve_locals`
 /// assigns. A slot is unbound (`None`) until its binding runs.
@@ -81,6 +81,35 @@ impl From<(RuntimeValue, FlowControl)> for StmtResult {
     }
 }
 
+/// What event dispatch and settling need: tables fixed at start, and buffers
+/// they reuse so an event does not allocate.
+struct ReactiveState {
+    mutated_sources: Vec<NodeId>,
+    changed_nodes: Vec<NodeId>,
+    /// Spare buffer for `changed_nodes`, empty between watch rounds.
+    changed_spare: Vec<NodeId>,
+    /// Per graph node: set only while a watch round tests what changed.
+    changed_marks: Vec<bool>,
+    /// Per graph node: its index in `program.nodes`, if it is a source or derived value.
+    node_of: Vec<Option<usize>>,
+    /// Per `program.nodes` entry: its dependencies are recorded as it runs.
+    node_dynamic: Vec<bool>,
+    /// Handler indices per event, in graph order.
+    event_handlers: HashMap<String, std::sync::Arc<[usize]>>,
+    /// Handler bodies, shared so an event does not copy them.
+    handler_bodies: Vec<std::sync::Arc<flux_ir::StmtBlock>>,
+    handler_keys: Vec<String>,
+    /// Watch bodies, shared so a run does not copy them.
+    watch_bodies: Vec<std::sync::Arc<flux_ir::StmtBlock>>,
+    watch_keys: Vec<String>,
+    /// Runnable watches in graph order, with the nodes that trigger each.
+    watch_triggers: Vec<(usize, Vec<NodeId>)>,
+    /// Reused while finding what a write dirtied.
+    dirty_marks: Vec<bool>,
+    dirty_stack: Vec<NodeId>,
+    dirty_order: Vec<NodeId>,
+}
+
 pub struct Executor {
     pub graph: ReactiveGraph,
     pub program: CompiledProgram,
@@ -93,13 +122,15 @@ pub struct Executor {
     in_watch: bool,
     /// When true, `set_source` records mutations and skips propagation until flush.
     defer_propagation: bool,
-    mutated_sources: HashSet<String>,
-    changed_nodes: HashSet<String>,
+    /// Kept apart so it does not spread the fields calls use over more cache lines.
+    reactive: Box<ReactiveState>,
     backend: ActiveBackend,
     /// Active while evaluating a derived node with lazy `if` — records graph reads.
-    tracking_scope: Option<HashSet<crate::graph::NodeId>>,
+    tracking_scope: Option<Vec<NodeId>>,
     /// First runtime error; once set, evaluation unwinds and nothing else runs.
-    trap: Option<RuntimeError>,
+    trap: Option<Box<RuntimeError>>,
+    /// Compiled code failed: the VM reruns it, and runs everything from then on.
+    vm_only: bool,
     /// Operand stacks reused across expression evaluations.
     stack_pool: Vec<Vec<RuntimeValue>>,
     /// Cleared frames reused by calls: allocating one per call dominated
@@ -191,6 +222,72 @@ impl Executor {
             .map(|n| std::sync::Arc::from(n.code.as_slice()))
             .collect();
 
+        let node_dynamic = program
+            .nodes
+            .iter()
+            .map(|n| code_has_lazy_if(&n.code))
+            .collect();
+        let node_of = graph
+            .nodes
+            .iter()
+            .map(|n| node_index.get(&n.name).copied())
+            .collect();
+        let mut event_handlers: HashMap<String, std::sync::Arc<[usize]>> = HashMap::new();
+        for (name, &id) in &graph.name_to_id {
+            let handlers: Vec<usize> = graph
+                .effects_for_event(id)
+                .iter()
+                .filter_map(|&effect_id| match &graph.nodes[effect_id.0 as usize].kind {
+                    NodeKind::Effect { meta } if meta.handler_kind == HandlerKind::On => {
+                        Some(meta.handler_index)
+                    }
+                    _ => None,
+                })
+                .collect();
+            if !handlers.is_empty() {
+                event_handlers.insert(name.clone(), handlers.into());
+            }
+        }
+        let watch_triggers = graph
+            .nodes
+            .iter()
+            .filter_map(|node| {
+                let NodeKind::Effect { meta } = &node.kind else {
+                    return None;
+                };
+                if meta.handler_kind != HandlerKind::Watch {
+                    return None;
+                }
+                let watch = &program.watches[meta.handler_index];
+                let triggers = match &watch.target {
+                    Some(target) => vec![*graph.name_to_id.get(target)?],
+                    None => watch
+                        .deps
+                        .iter()
+                        .filter_map(|dep| graph.name_to_id.get(dep).copied())
+                        .collect(),
+                };
+                Some((meta.handler_index, triggers))
+            })
+            .collect();
+        let handler_bodies = program
+            .on_handlers
+            .iter()
+            .map(|h| std::sync::Arc::new(h.body.clone()))
+            .collect();
+        let handler_keys = (0..program.on_handlers.len())
+            .map(|i| format!("__on_{i}"))
+            .collect();
+        let watch_bodies = program
+            .watches
+            .iter()
+            .map(|w| std::sync::Arc::new(w.body.clone()))
+            .collect();
+        let watch_keys = (0..program.watches.len())
+            .map(|i| format!("__watch_{i}"))
+            .collect();
+        let node_count = graph.nodes.len();
+
         let backend = ActiveBackend::from_mode(mode, &program);
 
         let mut this = Self {
@@ -201,8 +298,23 @@ impl Executor {
             node_code,
             in_watch: false,
             defer_propagation: false,
-            mutated_sources: HashSet::new(),
-            changed_nodes: HashSet::new(),
+            reactive: Box::new(ReactiveState {
+                mutated_sources: Vec::new(),
+                changed_nodes: Vec::new(),
+                changed_spare: Vec::new(),
+                changed_marks: vec![false; node_count],
+                node_of,
+                node_dynamic,
+                event_handlers,
+                handler_bodies,
+                handler_keys,
+                watch_bodies,
+                watch_keys,
+                watch_triggers,
+                dirty_marks: vec![false; node_count],
+                dirty_stack: Vec::new(),
+                dirty_order: Vec::new(),
+            }),
             backend,
             tracking_scope: None,
             stack_pool: Vec::new(),
@@ -210,6 +322,7 @@ impl Executor {
             pending_flow: None,
             call_depth: 0,
             trap: None,
+            vm_only: false,
         };
         // Initial values are assigned without propagation; derived values and
         // watches then run once over the fully initialized graph.
@@ -221,17 +334,22 @@ impl Executor {
                     flux_ir::IrStmt::Assign { target, .. } => Some(target.as_str()),
                     _ => None,
                 };
+                let declared = binding.and_then(|b| this.program.source_map.bindings.get(b));
+                let declared = declared.copied();
+                this.push_trace_frame("module initialization".to_string(), declared);
                 this.set_trap_context("module initialization", binding);
                 break;
             }
         }
         this.defer_propagation = false;
-        this.mutated_sources.clear();
-        this.changed_nodes.clear();
-        this.recompute_all();
-        this.run_watches();
+        this.reactive.mutated_sources.clear();
+        this.reactive.changed_nodes.clear();
+        if this.trap.is_none() {
+            this.recompute_all();
+            this.run_watches();
+        }
         if let Some(err) = this.trap.take() {
-            return Err(ExecutorError::Runtime(err));
+            return Err(ExecutorError::Runtime(*err));
         }
         Ok(this)
     }
@@ -239,18 +357,20 @@ impl Executor {
     /// The first runtime error raised, if any. Once set, the executor stops
     /// running code; values computed before the error stay readable.
     pub fn runtime_error(&self) -> Option<&RuntimeError> {
-        self.trap.as_ref()
+        self.trap.as_deref()
     }
 
     pub(crate) fn raise(&mut self, kind: flux_value::ArithError) {
         if self.trap.is_none() {
             let detail = flux_std::take_failure_detail();
-            self.trap = Some(RuntimeError {
+            self.trap = Some(Box::new(RuntimeError {
                 kind,
                 context: None,
                 binding: None,
                 detail,
-            });
+                trace: Vec::new(),
+                pending_loc: None,
+            }));
         }
     }
 
@@ -263,6 +383,29 @@ impl Executor {
                 err.binding = binding.map(str::to_string);
             }
         }
+    }
+
+    /// Adds what was running to the pending error's trace, at the location
+    /// its statements noted, or else at `fallback`.
+    #[cold]
+    #[inline(never)]
+    pub(super) fn push_trace_frame(&mut self, name: String, fallback: Option<flux_ir::SourceLoc>) {
+        let Some(err) = &mut self.trap else {
+            return;
+        };
+        let location = err.pending_loc.take().or(fallback).and_then(|loc| {
+            let (path, line, column) = self.program.source_map.resolve(loc)?;
+            Some(format!("{path}:{line}:{column}"))
+        });
+        err.trace.push(TraceFrame { name, location });
+    }
+
+    /// Compiled code has no effects until it succeeds and keeps no locations,
+    /// so a failure is discarded and the VM, the reference, runs it again and
+    /// reports the error.
+    pub(super) fn replay_on_vm(&mut self) {
+        self.vm_only = true;
+        let _ = flux_std::take_failure_detail();
     }
 
     /// Parameter count of the user function `name`, if the program defines it.
@@ -278,12 +421,12 @@ impl Executor {
         args: &[RuntimeValue],
     ) -> Result<RuntimeValue, RuntimeError> {
         if let Some(err) = &self.trap {
-            return Err(err.clone());
+            return Err((**err).clone());
         }
         let value = self.call_function(name, args);
         self.set_trap_context(&format!("`{name}`"), None);
         match &self.trap {
-            Some(err) => Err(err.clone()),
+            Some(err) => Err((**err).clone()),
             None => Ok(value),
         }
     }
@@ -335,49 +478,45 @@ impl Executor {
     }
 
     fn run_event_handlers(&mut self, event: &str, payload: RuntimeValue) {
-        let Some(&event_id) = self.graph.name_to_id.get(event) else {
+        let Some(handlers) = self.reactive.event_handlers.get(event).cloned() else {
             return;
         };
-        let handler_indices: Vec<usize> = self
-            .graph
-            .effects_for_event(event_id)
-            .iter()
-            .filter_map(|&effect_id| {
-                let NodeKind::Effect { meta } = &self.graph.nodes[effect_id.0 as usize].kind else {
-                    return None;
-                };
-                if meta.handler_kind != HandlerKind::On {
-                    return None;
-                }
-                Some(meta.handler_index)
-            })
-            .collect();
 
         // The body that emitted is unfinished: its writes stay pending.
         // (Taken only when present: an event must not drop the set's capacity.)
-        let outer_writes =
-            (!self.mutated_sources.is_empty()).then(|| std::mem::take(&mut self.mutated_sources));
+        let outer_writes = (!self.reactive.mutated_sources.is_empty())
+            .then(|| std::mem::take(&mut self.reactive.mutated_sources));
         let was_deferred = self.defer_propagation;
         self.defer_propagation = true;
-        for idx in handler_indices {
-            let handler = self.program.on_handlers[idx].clone();
-            let mut locals = Locals::default();
-            if handler.param.is_some() {
+        for &idx in handlers.iter() {
+            let body = self.reactive.handler_bodies[idx].clone();
+            let mut locals = self.locals_pool.pop().unwrap_or_default();
+            if self.program.on_handlers[idx].param.is_some() {
                 // A handler's parameter is slot 0.
                 locals.set(0, payload.clone());
             }
-            if !self.try_run_jit_on(idx, &handler.body, &mut locals, payload.clone()) {
-                self.run_stmts(&handler.body, &mut locals);
+            if !self.try_run_jit_on(idx, &body, &mut locals, payload.clone()) {
+                self.run_stmts(&body, &mut locals);
+                if self.trap.is_some() {
+                    self.push_trace_frame(format!("on {event}"), None);
+                }
+            }
+            locals.clear();
+            if self.locals_pool.len() < LOCALS_POOL_LIMIT {
+                self.locals_pool.push(locals);
             }
             if self.trap.is_some() {
                 self.set_trap_context(&format!("`on {event}`"), None);
                 break;
             }
             self.flush_propagation();
+            if self.trap.is_some() {
+                break;
+            }
         }
         self.defer_propagation = was_deferred;
         if let Some(outer_writes) = outer_writes {
-            self.mutated_sources.extend(outer_writes);
+            self.reactive.mutated_sources.extend(outer_writes);
         }
     }
 
@@ -385,34 +524,40 @@ impl Executor {
         if self.trap.is_some() {
             return;
         }
-        if !self.graph.set_by_name(name, value) {
+        let Some(&id) = self.graph.name_to_id.get(name) else {
+            return;
+        };
+        if !matches!(self.graph.nodes[id.0 as usize].kind, NodeKind::Source) {
             return;
         }
+        self.graph.set_source(id, value);
         // A handler or watch body writes as a batch, applied when it ends.
         if self.defer_propagation || self.in_watch {
-            self.mutated_sources.insert(name.to_string());
+            if !self.reactive.mutated_sources.contains(&id) {
+                self.reactive.mutated_sources.push(id);
+            }
             return;
         }
-        self.propagate_source_change(name);
+        self.propagate_source_change(id);
     }
 
-    fn propagate_source_change(&mut self, name: &str) {
-        self.changed_nodes.insert(name.to_string());
-        self.recompute_from_sources(std::iter::once(name));
+    fn propagate_source_change(&mut self, id: NodeId) {
+        self.reactive.changed_nodes.push(id);
+        self.recompute_from_sources(&[id]);
         if !self.in_watch {
             self.run_watches();
         }
     }
 
     fn flush_propagation(&mut self) {
-        if self.mutated_sources.is_empty() {
+        if self.reactive.mutated_sources.is_empty() {
             return;
         }
-        let sources: Vec<String> = self.mutated_sources.drain().collect();
-        for name in &sources {
-            self.changed_nodes.insert(name.clone());
-        }
-        self.recompute_from_sources(sources.iter().map(String::as_str));
+        let mut sources = std::mem::take(&mut self.reactive.mutated_sources);
+        self.reactive.changed_nodes.extend_from_slice(&sources);
+        self.recompute_from_sources(&sources);
+        sources.clear();
+        self.reactive.mutated_sources = sources;
         if !self.in_watch {
             self.run_watches();
         }
@@ -423,28 +568,37 @@ impl Executor {
             .graph
             .topo_order
             .iter()
-            .filter_map(|id| {
+            .filter_map(|&id| {
                 let node = &self.graph.nodes[id.0 as usize];
-                matches!(node.kind, NodeKind::Derived { .. }).then(|| node.name.clone())
+                if !matches!(node.kind, NodeKind::Derived { .. }) {
+                    return None;
+                }
+                self.reactive.node_of[id.0 as usize].map(|idx| (id, idx))
             })
             .collect();
-        for name in derived {
-            let value = self.eval_derived(&name);
+        for (id, idx) in derived {
+            let value = self.eval_derived(id, idx);
             if self.trap.is_some() {
-                self.set_trap_context(&format!("`{name}`"), Some(&name));
+                self.note_derived_failure(id);
                 return;
             }
-            if let Some(id) = self.graph.name_to_id.get(&name).copied() {
-                self.graph.nodes[id.0 as usize].value = value;
-            }
+            self.graph.nodes[id.0 as usize].value = value;
         }
     }
 
+    #[cold]
+    fn note_derived_failure(&mut self, id: NodeId) {
+        let name = self.graph.nodes[id.0 as usize].name.clone();
+        let declared = self.program.source_map.bindings.get(&name).copied();
+        self.push_trace_frame(name.clone(), declared);
+        self.set_trap_context(&format!("`{name}`"), Some(&name));
+    }
+
     /// Evaluate one derived node via the active backend, falling back to VM bytecode.
-    fn eval_derived(&mut self, name: &str) -> RuntimeValue {
-        let dynamic = self.derived_uses_lazy_if(name);
+    fn eval_derived(&mut self, id: NodeId, idx: usize) -> RuntimeValue {
+        let dynamic = self.reactive.node_dynamic[idx];
         if dynamic {
-            self.tracking_scope = Some(HashSet::new());
+            self.tracking_scope = Some(Vec::new());
         }
 
         let ctx = EvalContext {
@@ -452,45 +606,29 @@ impl Executor {
             program: &self.program,
             node_index: &self.node_index,
         };
-        let jit_value = self.backend.try_eval_derived(name, &ctx);
-        let value = match jit_value {
-            Some(Err(e)) => {
-                self.raise(e);
-                RuntimeValue::Unit
+        let name = &self.graph.nodes[id.0 as usize].name;
+        let native = if self.vm_only {
+            None
+        } else {
+            self.backend.try_eval_derived(name, &ctx)
+        };
+        let value = match native {
+            Some(Err(_)) => {
+                self.replay_on_vm();
+                self.eval_derived_vm(idx)
             }
-            Some(Ok(v)) => {
-                if dynamic {
-                    if let Some(deps) = self.backend.lazy_if_deps_for(name) {
-                        if let Some(scope) = &mut self.tracking_scope {
-                            for dep_name in deps {
-                                if let Some(&id) = self.graph.name_to_id.get(&dep_name) {
-                                    scope.insert(id);
-                                }
-                            }
-                        }
-                    } else {
-                        let _ = self.eval_derived_vm(name);
-                    }
-                }
-                v
-            }
-            None => self.eval_derived_vm(name),
+            Some(Ok(v)) => v,
+            None => self.eval_derived_vm(idx),
         };
 
         if dynamic {
-            self.commit_tracked_deps(name);
+            self.commit_tracked_deps(id);
         }
         value
     }
 
-    fn eval_derived_vm(&mut self, name: &str) -> RuntimeValue {
-        let Some(code) = self
-            .node_index
-            .get(name)
-            .map(|&idx| self.node_code[idx].clone())
-        else {
-            return RuntimeValue::Unit;
-        };
+    fn eval_derived_vm(&mut self, idx: usize) -> RuntimeValue {
+        let code = self.node_code[idx].clone();
         let value = self.eval_expr(&code, &mut Locals::default());
         // HIR allows control flow in match arms only inside functions.
         debug_assert!(
@@ -501,24 +639,13 @@ impl Executor {
         value
     }
 
-    fn derived_uses_lazy_if(&self, name: &str) -> bool {
-        self.node_index
-            .get(name)
-            .map(|&idx| code_has_lazy_if(&self.program.nodes[idx].code))
-            .unwrap_or(false)
-    }
-
-    fn commit_tracked_deps(&mut self, name: &str) {
-        let Some(tracked) = self.tracking_scope.take() else {
+    fn commit_tracked_deps(&mut self, id: NodeId) {
+        let Some(mut new_deps) = self.tracking_scope.take() else {
             return;
         };
-        if tracked.is_empty() {
+        if new_deps.is_empty() {
             return;
         }
-        let Some(&id) = self.graph.name_to_id.get(name) else {
-            return;
-        };
-        let mut new_deps: Vec<_> = tracked.into_iter().collect();
         new_deps.sort_by_key(|d| d.0);
         self.graph.set_derived_deps(id, new_deps);
     }
@@ -529,66 +656,56 @@ impl Executor {
             return;
         };
         if let Some(&id) = self.graph.name_to_id.get(name) {
-            tracked.insert(id);
+            if !tracked.contains(&id) {
+                tracked.push(id);
+            }
         }
     }
 
-    fn recompute_from_sources<'a, I>(&mut self, sources: I)
-    where
-        I: IntoIterator<Item = &'a str>,
-    {
-        use std::collections::VecDeque;
+    fn recompute_from_sources(&mut self, sources: &[NodeId]) {
+        let mut stack = std::mem::take(&mut self.reactive.dirty_stack);
+        for source in sources {
+            stack.extend_from_slice(&self.graph.dependents[source.0 as usize]);
+            while let Some(id) = stack.pop() {
+                let mark = &mut self.reactive.dirty_marks[id.0 as usize];
+                if !*mark {
+                    *mark = true;
+                    stack.extend_from_slice(&self.graph.dependents[id.0 as usize]);
+                }
+            }
+        }
+        self.reactive.dirty_stack = stack;
 
-        let mut dirty = HashSet::new();
-        for source_name in sources {
-            let Some(&source_id) = self.graph.name_to_id.get(source_name) else {
+        // Recomputing can rewrite `topo_order`, so the order is fixed first.
+        let mut order = std::mem::take(&mut self.reactive.dirty_order);
+        for &id in &self.graph.topo_order {
+            let mark = &mut self.reactive.dirty_marks[id.0 as usize];
+            if *mark {
+                *mark = false;
+                order.push(id);
+            }
+        }
+
+        for &id in &order {
+            let Some(idx) = self.reactive.node_of[id.0 as usize] else {
                 continue;
             };
-            let mut queue = VecDeque::new();
-            for &dep in &self.graph.dependents[source_id.0 as usize] {
-                queue.push_back(dep);
-            }
-            while let Some(id) = queue.pop_front() {
-                if !dirty.insert(id) {
-                    continue;
-                }
-                for &next in &self.graph.dependents[id.0 as usize] {
-                    queue.push_back(next);
-                }
-            }
-        }
-
-        let dirty_ordered: Vec<_> = self
-            .graph
-            .topo_order
-            .iter()
-            .filter(|id| dirty.contains(id))
-            .copied()
-            .collect();
-
-        for id in dirty_ordered {
-            let name = self.graph.nodes[id.0 as usize].name.clone();
-            if !self.node_has_derived_code(&name) {
+            if self.program.nodes[idx].code.is_empty() {
                 continue;
             }
-            let old = self.graph.nodes[id.0 as usize].value.clone();
-            let value = self.eval_derived(&name);
+            let value = self.eval_derived(id, idx);
             if self.trap.is_some() {
-                self.set_trap_context(&format!("`{name}`"), Some(&name));
-                return;
+                self.note_derived_failure(id);
+                break;
             }
-            if old != value {
-                self.changed_nodes.insert(name.clone());
+            let slot = &mut self.graph.nodes[id.0 as usize].value;
+            if *slot != value {
+                self.reactive.changed_nodes.push(id);
             }
-            self.graph.nodes[id.0 as usize].value = value;
+            *slot = value;
         }
-    }
-
-    fn node_has_derived_code(&self, name: &str) -> bool {
-        self.node_index
-            .get(name)
-            .map(|&idx| !self.program.nodes[idx].code.is_empty())
-            .unwrap_or(false)
+        order.clear();
+        self.reactive.dirty_order = order;
     }
 
     pub(super) fn is_source_binding(&self, name: &str) -> bool {
@@ -605,32 +722,38 @@ impl Executor {
         locals: &mut Locals,
         param: RuntimeValue,
     ) -> bool {
+        if self.vm_only {
+            return false;
+        }
         // Handler slots hold tagged handles until `apply_jit_assignments` reads them.
         let _heap = flux_value::heap_scope();
-        let key = format!("__on_{idx}");
         let handler = &self.program.on_handlers[idx];
         let param_ref = handler.param.as_ref().map(|_| &param);
-        let Some((result, slots)) = self.backend.try_run_handler(&key, &self.graph, param_ref)
+        let key = &self.reactive.handler_keys[idx];
+        let Some((result, slots)) = self.backend.try_run_handler(key, &self.graph, param_ref)
         else {
             return false;
         };
-        if let Err(e) = result {
-            self.raise(e);
-            return true;
+        if result.is_err() {
+            self.replay_on_vm();
+            return false;
         }
         self.apply_jit_assignments(body, locals, &slots);
         true
     }
 
     fn try_run_jit_watch(&mut self, idx: usize, body: &[flux_ir::IrStmt]) -> bool {
+        if self.vm_only {
+            return false;
+        }
         let _heap = flux_value::heap_scope();
-        let key = format!("__watch_{idx}");
-        let Some((result, slots)) = self.backend.try_run_handler(&key, &self.graph, None) else {
+        let key = &self.reactive.watch_keys[idx];
+        let Some((result, slots)) = self.backend.try_run_handler(key, &self.graph, None) else {
             return false;
         };
-        if let Err(e) = result {
-            self.raise(e);
-            return true;
+        if result.is_err() {
+            self.replay_on_vm();
+            return false;
         }
         self.apply_jit_assignments(body, &mut Locals::default(), &slots);
         true
@@ -680,46 +803,53 @@ impl Executor {
         if self.trap.is_some() {
             return;
         }
+        if self.reactive.watch_triggers.is_empty() {
+            self.reactive.changed_nodes.clear();
+            return;
+        }
         self.in_watch = true;
         // Nothing changed means the first run: every watch runs once.
-        let mut run_all = self.changed_nodes.is_empty();
+        let mut run_all = self.reactive.changed_nodes.is_empty();
         let mut ran = HashSet::new();
         loop {
-            if !run_all && self.changed_nodes.is_empty() {
+            if !run_all && self.reactive.changed_nodes.is_empty() {
                 break;
             }
-            let changed = std::mem::take(&mut self.changed_nodes);
+            std::mem::swap(
+                &mut self.reactive.changed_nodes,
+                &mut self.reactive.changed_spare,
+            );
+            for id in &self.reactive.changed_spare {
+                self.reactive.changed_marks[id.0 as usize] = true;
+            }
             let watch_indices: Vec<usize> = self
-                .graph
-                .nodes
+                .reactive
+                .watch_triggers
                 .iter()
-                .filter_map(|node| {
-                    let NodeKind::Effect { meta } = &node.kind else {
-                        return None;
-                    };
-                    if meta.handler_kind != HandlerKind::Watch || ran.contains(&meta.handler_index)
-                    {
-                        return None;
-                    }
-                    let watch = &self.program.watches[meta.handler_index];
-                    if !run_all && !watch_should_run(watch, &changed) {
-                        return None;
-                    }
-                    if let Some(target) = &watch.target {
-                        self.graph.get_by_name(target)?;
-                    }
-                    Some(meta.handler_index)
+                .filter(|(idx, triggers)| {
+                    !ran.contains(idx)
+                        && (run_all
+                            || triggers
+                                .iter()
+                                .any(|dep| self.reactive.changed_marks[dep.0 as usize]))
                 })
+                .map(|(idx, _)| *idx)
                 .collect();
+            for id in self.reactive.changed_spare.drain(..) {
+                self.reactive.changed_marks[id.0 as usize] = false;
+            }
             run_all = false;
             if watch_indices.is_empty() {
                 break;
             }
             for idx in watch_indices {
                 ran.insert(idx);
-                let body = self.program.watches[idx].body.clone();
+                let body = self.reactive.watch_bodies[idx].clone();
                 if !self.try_run_jit_watch(idx, &body) {
                     self.run_stmts(&body, &mut Locals::default());
+                    if self.trap.is_some() {
+                        self.push_trace_frame("watch".to_string(), None);
+                    }
                 }
                 if self.trap.is_none() {
                     self.flush_propagation();

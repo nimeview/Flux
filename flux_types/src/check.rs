@@ -34,16 +34,16 @@ use infer::{infer_block_return, infer_expr};
 use resolve::{resolve_hir_enum_payload, resolve_hir_type};
 use state::{Scope, TypeCheckContext};
 use stmt::{check_binding, check_block, check_if, check_return_types};
-use util::types_compatible;
+pub(crate) use util::types_compatible;
 
 pub use methods::resolve_method_calls;
 
 #[derive(Debug, Clone)]
 pub struct TypedProgram {
     pub types: HashMap<SymbolId, Type>,
-    /// The impl function each `recv.method(…)` call resolved to, by call span;
+    /// Resolved impls by enclosing function (None at module level) and call span;
     /// [`resolve_method_calls`] turns these into direct calls.
-    pub method_calls: HashMap<flux_diagnostics::Span, SymbolId>,
+    pub method_calls: HashMap<(Option<SymbolId>, flux_diagnostics::Span), SymbolId>,
 }
 
 pub fn typecheck_program(
@@ -51,9 +51,27 @@ pub fn typecheck_program(
     source: SourceId,
     diagnostics: &mut DiagnosticBag,
 ) -> Option<TypedProgram> {
-    let mut types = HashMap::new();
-
     let ctx = TypeCheckContext::from_program(program);
+    typecheck_with_context(program, source, diagnostics, &ctx)
+}
+
+fn typecheck_with_context(
+    program: &HirProgram,
+    source: SourceId,
+    diagnostics: &mut DiagnosticBag,
+    ctx: &TypeCheckContext,
+) -> Option<TypedProgram> {
+    let mut types = HashMap::new();
+    // Concrete instances check the same source body with final types. Only
+    // uninstantiated templates need the conservative symbolic body check.
+    let instantiated_bodies: HashSet<_> = program
+        .items
+        .iter()
+        .filter_map(|item| match item {
+            HirItem::Fn(f) if f.type_params.is_empty() && !f.is_closure => Some(f.span),
+            _ => None,
+        })
+        .collect();
 
     if let Some(cycle) = cycles::find_derived_cycle(program) {
         let first = cycle[0];
@@ -100,7 +118,7 @@ pub fn typecheck_program(
         let HirItem::Binding(b) = item else { continue };
         let inner =
             b.ty.as_ref()
-                .and_then(|t| resolve_hir_type(&ctx, t, diagnostics))
+                .and_then(|t| resolve_hir_type(ctx, t, diagnostics))
                 .unwrap_or(Type::Error);
         types.insert(
             b.name,
@@ -121,22 +139,48 @@ pub fn typecheck_program(
                 let payload = ev
                     .payload
                     .as_ref()
-                    .and_then(|f| resolve_hir_type(&ctx, &f.ty, diagnostics))
+                    .and_then(|f| resolve_hir_type(ctx, &f.ty, diagnostics))
                     .unwrap_or(Type::Unit);
                 types.insert(ev.name, Type::Event(Box::new(payload)));
             }
-            HirItem::Fn(f) if f.type_params.is_empty() => {
+            HirItem::Fn(f) if !f.type_params.is_empty() => {
+                *ctx.generic_parameters.borrow_mut() = f.type_params.iter().cloned().collect();
+                let params = f
+                    .params
+                    .iter()
+                    .map(|p| {
+                        state::erase_type_variables(
+                            resolve_hir_type(ctx, &p.ty, diagnostics).unwrap_or(Type::Error),
+                        )
+                    })
+                    .collect();
+                let ret = f
+                    .ret
+                    .as_ref()
+                    .and_then(|t| resolve_hir_type(ctx, t, diagnostics))
+                    .map(state::erase_type_variables)
+                    .unwrap_or(Type::Error);
+                types.insert(
+                    f.name,
+                    Type::Func {
+                        params,
+                        ret: Box::new(ret),
+                    },
+                );
+                ctx.generic_parameters.borrow_mut().clear();
+            }
+            HirItem::Fn(f) if f.type_params.is_empty() && !f.is_closure => {
                 let mut fn_scope = Scope::new(&types);
                 for p in &f.params {
                     fn_scope.insert(
                         p.name,
-                        resolve_hir_type(&ctx, &p.ty, diagnostics).unwrap_or(Type::Error),
+                        resolve_hir_type(ctx, &p.ty, diagnostics).unwrap_or(Type::Error),
                     );
                 }
-                let inferred = if f.ret.is_none() {
+                let inferred = if f.ret.is_none() && ctx.capturing_closure(f.name).is_none() {
                     let mut speculative_diagnostics = DiagnosticBag::new();
                     infer_block_return(
-                        &ctx,
+                        ctx,
                         &f.body,
                         &fn_scope,
                         &program.names,
@@ -147,13 +191,13 @@ pub fn typecheck_program(
                     None
                 };
                 let ret = match &f.ret {
-                    Some(t) => resolve_hir_type(&ctx, t, diagnostics)?,
+                    Some(t) => resolve_hir_type(ctx, t, diagnostics)?,
                     None => inferred.unwrap_or(Type::Unit),
                 };
                 let params = f
                     .params
                     .iter()
-                    .map(|p| resolve_hir_type(&ctx, &p.ty, diagnostics))
+                    .map(|p| resolve_hir_type(ctx, &p.ty, diagnostics))
                     .collect::<Option<Vec<_>>>()?;
                 types.insert(
                     f.name,
@@ -171,7 +215,7 @@ pub fn typecheck_program(
                     .map(|(n, t)| {
                         (
                             n.clone(),
-                            resolve_hir_type(&ctx, t, diagnostics).unwrap_or(Type::Error),
+                            resolve_hir_type(ctx, t, diagnostics).unwrap_or(Type::Error),
                         )
                     })
                     .collect();
@@ -186,7 +230,7 @@ pub fn typecheck_program(
                         (
                             n.clone(),
                             t.as_ref()
-                                .and_then(|p| resolve_hir_enum_payload(&ctx, p, diagnostics)),
+                                .and_then(|p| resolve_hir_enum_payload(ctx, p, diagnostics)),
                         )
                     })
                     .collect();
@@ -214,7 +258,7 @@ pub fn typecheck_program(
             match item {
                 HirItem::Binding(b) if b.ty.is_none() => {
                     let Some(inner) = infer_expr(
-                        &ctx,
+                        ctx,
                         &b.value,
                         &Scope::new(&types),
                         &program.names,
@@ -235,17 +279,21 @@ pub fn typecheck_program(
                         changed = true;
                     }
                 }
-                HirItem::Fn(f) if f.type_params.is_empty() && f.ret.is_none() => {
+                HirItem::Fn(f)
+                    if f.type_params.is_empty()
+                        && f.ret.is_none()
+                        && ctx.capturing_closure(f.name).is_none() =>
+                {
                     let mut fn_scope = Scope::new(&types);
                     for p in &f.params {
                         fn_scope.insert(
                             p.name,
-                            resolve_hir_type(&ctx, &p.ty, &mut speculative_diagnostics)
+                            resolve_hir_type(ctx, &p.ty, &mut speculative_diagnostics)
                                 .unwrap_or(Type::Error),
                         );
                     }
                     let Some(ret) = infer_block_return(
-                        &ctx,
+                        ctx,
                         &f.body,
                         &fn_scope,
                         &program.names,
@@ -275,10 +323,10 @@ pub fn typecheck_program(
     for item in &program.items {
         let HirItem::Binding(b) = item else { continue };
         let inner = if let Some(ty) = &b.ty {
-            resolve_hir_type(&ctx, ty, diagnostics)?
+            resolve_hir_type(ctx, ty, diagnostics)?
         } else {
             let inferred = infer_expr(
-                &ctx,
+                ctx,
                 &b.value,
                 &Scope::new(&types),
                 &program.names,
@@ -302,7 +350,7 @@ pub fn typecheck_program(
         types.insert(b.name, binding_ty);
     }
 
-    if diagnostics.has_errors() {
+    if diagnostics.has_errors() && !ctx.preparing_closures {
         return None;
     }
 
@@ -310,7 +358,7 @@ pub fn typecheck_program(
         match item {
             HirItem::Binding(b) => {
                 check_binding(
-                    &ctx,
+                    ctx,
                     b,
                     &Scope::new(&types),
                     &program.names,
@@ -318,19 +366,51 @@ pub fn typecheck_program(
                     diagnostics,
                 );
             }
-            HirItem::Fn(f) if f.type_params.is_empty() && f.captures.is_empty() => {
+            HirItem::Fn(f)
+                if !f.type_params.is_empty()
+                    && !ctx.preparing_closures
+                    && !instantiated_bodies.contains(&f.span) =>
+            {
+                *ctx.generic_parameters.borrow_mut() = f.type_params.iter().cloned().collect();
+                let mut local = Scope::new(&types);
+                for p in &f.params {
+                    local.insert(
+                        p.name,
+                        resolve_hir_type(ctx, &p.ty, diagnostics).unwrap_or(Type::Error),
+                    );
+                }
+                ctx.current_function.set(Some(f.name));
+                let mut immutable = f.params.iter().map(|p| p.name).collect();
+                check_block(
+                    ctx,
+                    &f.body,
+                    &local,
+                    &types,
+                    &program.names,
+                    f.reactive,
+                    source,
+                    diagnostics,
+                    &mut immutable,
+                );
+                ctx.current_function.set(None);
+                ctx.generic_parameters.borrow_mut().clear();
+            }
+            HirItem::Fn(f)
+                if f.type_params.is_empty() && ctx.capturing_closure(f.name).is_none() =>
+            {
+                ctx.current_function.set(Some(f.name));
                 let mut local = Scope::new(&types);
                 let mut immutable_locals = HashSet::new();
                 for p in &f.params {
-                    local.insert(p.name, resolve_hir_type(&ctx, &p.ty, diagnostics).unwrap());
+                    local.insert(p.name, resolve_hir_type(ctx, &p.ty, diagnostics).unwrap());
                     immutable_locals.insert(p.name);
                 }
                 *ctx.fn_return.borrow_mut() = f
                     .ret
                     .as_ref()
-                    .map(|t| resolve_hir_type(&ctx, t, diagnostics).unwrap_or(Type::Error));
+                    .map(|t| resolve_hir_type(ctx, t, diagnostics).unwrap_or(Type::Error));
                 check_block(
-                    &ctx,
+                    ctx,
                     &f.body,
                     &local,
                     &types,
@@ -342,9 +422,9 @@ pub fn typecheck_program(
                 );
                 if let Some(explicit) = &f.ret {
                     let expected =
-                        resolve_hir_type(&ctx, explicit, diagnostics).unwrap_or(Type::Error);
+                        resolve_hir_type(ctx, explicit, diagnostics).unwrap_or(Type::Error);
                     check_return_types(
-                        &ctx,
+                        ctx,
                         &f.body,
                         &local,
                         &expected,
@@ -353,7 +433,7 @@ pub fn typecheck_program(
                         diagnostics,
                     );
                     let got = infer_block_return(
-                        &ctx,
+                        ctx,
                         &f.body,
                         &local,
                         &program.names,
@@ -373,6 +453,7 @@ pub fn typecheck_program(
                 }
                 // Bindings, `watch`, and `on` checked next are not this function.
                 *ctx.fn_return.borrow_mut() = None;
+                ctx.current_function.set(None);
             }
             HirItem::Watch(w) => {
                 if let Some(target) = w.target {
@@ -389,7 +470,7 @@ pub fn typecheck_program(
                 }
                 let mut immutable_locals = HashSet::new();
                 check_block(
-                    &ctx,
+                    ctx,
                     &w.body,
                     &Scope::new(&types),
                     &types,
@@ -430,7 +511,7 @@ pub fn typecheck_program(
                 }
                 let mut immutable_locals = HashSet::new();
                 check_block(
-                    &ctx,
+                    ctx,
                     &o.body,
                     &local,
                     &types,
@@ -445,7 +526,7 @@ pub fn typecheck_program(
             HirItem::SourceAssign(a) => {
                 if let Some(Type::Cell(inner)) = types.get(&a.name) {
                     let got = infer_expr(
-                        &ctx,
+                        ctx,
                         &a.value,
                         &Scope::new(&types),
                         &program.names,
@@ -467,7 +548,7 @@ pub fn typecheck_program(
                 let mut scope = Scope::new(&types);
                 let mut immutable_locals = HashSet::new();
                 check_if(
-                    &ctx,
+                    ctx,
                     i,
                     &mut scope,
                     &types,
@@ -483,6 +564,7 @@ pub fn typecheck_program(
         }
     }
 
+    types.extend(ctx.closure_types.borrow().clone());
     check_main_signature(program, diagnostics);
 
     if diagnostics.has_errors() {
@@ -490,7 +572,7 @@ pub fn typecheck_program(
     } else {
         Some(TypedProgram {
             types,
-            method_calls: ctx.method_calls.take(),
+            method_calls: ctx.method_calls.borrow().clone(),
         })
     }
 }
@@ -529,4 +611,103 @@ fn check_main_signature(program: &HirProgram, diagnostics: &mut DiagnosticBag) {
             });
         }
     }
+}
+
+/// Resolve contextual closure parameters using the checker before passes that
+/// consume HIR annotations. Speculative diagnostics are discarded; the final
+/// type check reports errors only after parameter types have settled.
+pub(crate) fn prepare_closures(program: &mut HirProgram, source: SourceId) {
+    if !program
+        .items
+        .iter()
+        .any(|i| matches!(i, HirItem::Fn(f) if f.params.iter().any(|p| p.unannotated)))
+    {
+        return;
+    }
+    for _ in 0..=program.items.len() {
+        let mut ctx = TypeCheckContext::from_program(program);
+        ctx.preparing_closures = true;
+        let mut sink = DiagnosticBag::new();
+        let _ = typecheck_with_context(program, source, &mut sink, &ctx);
+        let changed = apply_closure_types(program, &ctx, &mut sink);
+        if !changed {
+            break;
+        }
+    }
+}
+
+fn apply_closure_types(
+    program: &mut HirProgram,
+    ctx: &TypeCheckContext,
+    sink: &mut DiagnosticBag,
+) -> bool {
+    let resolved = ctx.closure_params.borrow();
+    let defaults = ctx.defaulted_closure_params.borrow();
+    let functions = ctx.closure_types.borrow();
+    let mut changed = false;
+    for item in &mut program.items {
+        if let HirItem::Fn(f) = item {
+            if let Some(Type::Func { ret, .. }) = functions.get(&f.name) {
+                if infer::usable_context(ret)
+                    && f.ret
+                        .as_ref()
+                        .and_then(|t| resolve_hir_type(ctx, t, sink))
+                        .as_ref()
+                        != Some(ret.as_ref())
+                {
+                    f.ret = Some(crate::mono::type_to_hir_type(ret, f.span));
+                    changed = true;
+                }
+            }
+            for p in &mut f.params {
+                if let Some(ty) = resolved.get(&p.name) {
+                    if resolve_hir_type(ctx, &p.ty, sink).as_ref() != Some(ty)
+                        || p.defaulted_to_int != defaults.contains(&p.name)
+                    {
+                        p.ty = crate::mono::type_to_hir_type(ty, p.span);
+                        p.defaulted_to_int = defaults.contains(&p.name);
+                        changed = true;
+                    }
+                }
+            }
+        }
+    }
+    changed
+}
+
+/// One ordered generic-call step: inputs inferred from other arguments supply
+/// the callback's parameters; its checked body then supplies its result type.
+pub(crate) fn infer_generic_callback(
+    program: &mut HirProgram,
+    callback: &flux_hir::HirExpr,
+    expected: &flux_hir::HirType,
+    symbols: &HashMap<SymbolId, Type>,
+    source: SourceId,
+    diagnostics: &mut DiagnosticBag,
+) -> Option<Type> {
+    let ctx = TypeCheckContext::from_program(program);
+    let mut types = symbols.clone();
+    for item in &program.items {
+        let HirItem::Fn(f) = item else { continue };
+        // Closure bodies are available through the context's indexed lookup.
+        // Do not rescan every definition for each unrelated synthetic function.
+        if f.is_closure || !f.type_params.is_empty() {
+            continue;
+        }
+        if let Some(ty) = crate::mono::function_type(&f.name, symbols, program) {
+            types.insert(f.name, ty);
+        }
+    }
+    let expected = resolve_hir_type(&ctx, expected, diagnostics)?;
+    let ty = infer::infer_expr_expected(
+        &ctx,
+        callback,
+        Some(&expected),
+        &Scope::new(&types),
+        &program.names,
+        source,
+        diagnostics,
+    )?;
+    apply_closure_types(program, &ctx, diagnostics);
+    Some(ty)
 }

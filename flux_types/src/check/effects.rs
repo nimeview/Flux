@@ -78,7 +78,34 @@ fn functions_held_by(expr: &HirExpr, held: &mut HashSet<SymbolId>) {
             payload: Some(value),
             ..
         } => functions_held_by(value, held),
-        _ => {}
+        HirExpr::If {
+            then_expr,
+            else_expr,
+            ..
+        } => {
+            functions_held_by(then_expr, held);
+            functions_held_by(else_expr, held);
+        }
+        HirExpr::Match { arms, .. } => {
+            for arm in arms {
+                functions_held_by(&arm.expr, held);
+            }
+        }
+        HirExpr::Index { base: inner, .. }
+        | HirExpr::Field { base: inner, .. }
+        | HirExpr::Snap { expr: inner, .. }
+        | HirExpr::Try { expr: inner, .. } => functions_held_by(inner, held),
+        // Their results are not functions; a call's result is left out above.
+        HirExpr::Int { .. }
+        | HirExpr::Float { .. }
+        | HirExpr::Bool { .. }
+        | HirExpr::String { .. }
+        | HirExpr::EnumVariant { payload: None, .. }
+        | HirExpr::Call { .. }
+        | HirExpr::Unary { .. }
+        | HirExpr::Binary { .. }
+        | HirExpr::Cast { .. }
+        | HirExpr::ToText { .. } => {}
     }
 }
 

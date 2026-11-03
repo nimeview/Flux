@@ -10,7 +10,7 @@ use crate::context::ScopeKind;
 use crate::nodes::*;
 use crate::symbol::{SymbolId, SymbolKind, SymbolTable};
 
-use super::exprs::{lower_expr, record_array_hint, resolve_name};
+use super::exprs::{lower_expr, resolve_name};
 
 pub(super) fn lower_block(
     block: &Block,
@@ -56,7 +56,6 @@ fn lower_local_decl(
             };
             let mut reads_reactive = false;
             let scope = tracking_scope(ctx);
-            record_array_hint(symbols, &name.name, ty.as_ref(), Some(value));
             let value = lower_expr(value, symbols, scope, diagnostics, &mut reads_reactive)?;
             Some(vec![HirStmt::Let(HirLet {
                 name: id,

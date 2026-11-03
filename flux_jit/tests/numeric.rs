@@ -57,7 +57,8 @@ fn stmts_numeric_accepts_if_but_not_emit_or_loop_exits() {
             target: "x".into(),
             slot: Some(0),
             expr: vec![Inst::Const(IrValue::Int(1))],
-        }],
+        }]
+        .into(),
         else_body: None,
     };
     assert!(stmts_are_jit_numeric(&[if_stmt], &HashSet::new()));

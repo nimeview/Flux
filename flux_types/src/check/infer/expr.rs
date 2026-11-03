@@ -28,6 +28,9 @@ fn bind_match_arm_locals(
     if arm.bindings.is_empty() {
         return;
     }
+    for symbol in &arm.bindings {
+        scope.insert(*symbol, Type::Error);
+    }
     let inner = unwrap_value_type(scrut_ty);
     match inner {
         Type::Option(payload) if arm.variant == "Some" && arm.bindings.len() == 1 => {
@@ -75,8 +78,19 @@ fn infer_arm_body(
     for stmt in &arm.body.stmts {
         match stmt {
             HirStmt::Let(l) => {
-                let value = infer_expr(ctx, &l.value, scope, names, source, diagnostics)
-                    .unwrap_or(Type::Error);
+                let annotation =
+                    l.ty.as_ref()
+                        .and_then(|t| resolve_hir_type(ctx, t, diagnostics));
+                let value = infer_expr_expected(
+                    ctx,
+                    &l.value,
+                    annotation.as_ref(),
+                    scope,
+                    names,
+                    source,
+                    diagnostics,
+                )
+                .unwrap_or(Type::Error);
                 let ty = match &l.ty {
                     Some(ann) => {
                         let declared =
@@ -215,7 +229,9 @@ pub(crate) fn infer_expr(
                 let type_tag = trait_dispatch_tag(&base_ty);
                 let fn_id = ctx.trait_impl(&type_tag, field);
                 if let Some(fn_id) = fn_id {
-                    ctx.method_calls.borrow_mut().insert(*span, fn_id);
+                    ctx.method_calls
+                        .borrow_mut()
+                        .insert((ctx.current_function.get(), *span), fn_id);
                     if let Some(Type::Func { params, ret }) = types.get(&fn_id) {
                         let mut call_args = vec![base.as_ref().clone()];
                         call_args.extend(args.iter().cloned());
@@ -228,8 +244,16 @@ pub(crate) fn infer_expr(
                             });
                         }
                         for (p, a) in params.iter().zip(call_args.iter()) {
-                            let got = infer_expr(ctx, a, types, names, source, diagnostics)
-                                .unwrap_or(Type::Error);
+                            let got = infer_expr_expected(
+                                ctx,
+                                a,
+                                Some(p),
+                                types,
+                                names,
+                                source,
+                                diagnostics,
+                            )
+                            .unwrap_or(Type::Error);
                             if !p.is_error() && !got.is_error() && !types_compatible(p, &got) {
                                 diagnostics.push(FluxError::TypeMismatch {
                                     expected: p.display(),
@@ -287,8 +311,9 @@ pub(crate) fn infer_expr(
                         });
                     }
                     for (p, a) in params.iter().zip(args.iter()) {
-                        let got = infer_expr(ctx, a, types, names, source, diagnostics)
-                            .unwrap_or(Type::Error);
+                        let got =
+                            infer_expr_expected(ctx, a, Some(p), types, names, source, diagnostics)
+                                .unwrap_or(Type::Error);
                         if !p.is_error() && !got.is_error() && !types_compatible(p, &got) {
                             diagnostics.push(FluxError::TypeMismatch {
                                 expected: p.display(),
@@ -395,6 +420,9 @@ pub(crate) fn infer_expr(
             let e = infer_expr(ctx, else_expr, types, names, source, diagnostics)?;
             let tv = unwrap_value_type(&t);
             let ev = unwrap_value_type(&e);
+            if tv.is_error() || ev.is_error() {
+                return Some(Type::Error);
+            }
             if super::super::util::numeric_compatible(&tv, &ev) {
                 Some(super::super::util::widen_numeric(&tv, &ev))
             } else if types_compatible(&tv, &ev) {
@@ -733,49 +761,47 @@ pub(crate) fn infer_expr(
         HirExpr::Field { base, field, span } => {
             let base_ty = infer_expr(ctx, base, types, names, source, diagnostics)?;
             let inner = ctx.expand(unwrap_value_type(&base_ty));
+            if inner.is_error() {
+                return Some(Type::Error);
+            }
             if let Type::Struct { ref fields, .. } = inner {
                 if let Some((_, ft)) = fields.iter().find(|(n, _)| n == field) {
                     return Some(ft.clone());
                 }
             }
-            diagnostics.push(FluxError::TypeMismatch {
-                expected: format!("field `{field}`"),
-                found: inner.display(),
-                span: span_to_miette(*span),
-                source_id: span.source,
-            });
+            let defaulted_param = match base.as_ref() {
+                HirExpr::Ident { symbol, .. }
+                    if ctx.defaulted_closure_params.borrow().contains(symbol) =>
+                {
+                    names.get(symbol)
+                }
+                _ => None,
+            };
+            let error = if let Some(name) = defaulted_param {
+                FluxError::TypeMismatchWithHelp {
+                    expected: format!("field `{field}`"),
+                    found: inner.display(),
+                    span: span_to_miette(*span),
+                    source_id: span.source,
+                    help: format!(
+                        "closure parameter `{name}` defaulted to `Int` because it had no type \
+                         annotation or call-site hint; add an explicit annotation, \
+                         e.g. `|{name}: YourType| ...`"
+                    ),
+                }
+            } else {
+                FluxError::TypeMismatch {
+                    expected: format!("field `{field}`"),
+                    found: inner.display(),
+                    span: span_to_miette(*span),
+                    source_id: span.source,
+                }
+            };
+            diagnostics.push(error);
             Some(Type::Error)
         }
-        HirExpr::Closure {
-            fn_symbol,
-            captures,
-            ..
-        } => {
-            let Some(closure) = ctx.capturing_closure(*fn_symbol) else {
-                return types.get(fn_symbol).cloned();
-            };
-            // The captures have the types of the creation site's scope, by
-            // position: a generic function's instances rename their locals.
-            let mut scope = types.clone();
-            for (inner, outer) in closure.captures.iter().zip(captures) {
-                if let Some(ty) = types.get(outer) {
-                    scope.insert(*inner, ty.clone());
-                }
-            }
-            let mut params = Vec::with_capacity(closure.params.len());
-            for p in &closure.params {
-                let ty = resolve_hir_type(ctx, &p.ty, diagnostics).unwrap_or(Type::Error);
-                scope.insert(p.name, ty.clone());
-                params.push(ty);
-            }
-            // A `?` in the body would not leave the enclosing function.
-            let outer_return = ctx.fn_return.replace(None);
-            let ret = infer_block_return(ctx, &closure.body, &scope, names, source, diagnostics);
-            *ctx.fn_return.borrow_mut() = outer_return;
-            Some(Type::Func {
-                params,
-                ret: Box::new(ret.unwrap_or(Type::Unit)),
-            })
+        HirExpr::Closure { .. } => {
+            infer_closure(ctx, expr, None, types, names, source, diagnostics)
         }
         HirExpr::Index { base, index, span } => {
             let base_ty = infer_expr(ctx, base, types, names, source, diagnostics)?;
@@ -925,5 +951,131 @@ pub(crate) fn infer_expr(
                 Some(target_ty)
             }
         }
+    }
+}
+
+/// Expected function parameters constrain only unannotated closure parameters.
+pub(crate) fn infer_expr_expected(
+    ctx: &TypeCheckContext,
+    expr: &HirExpr,
+    expected: Option<&Type>,
+    types: &Scope<'_>,
+    names: &HashMap<SymbolId, String>,
+    source: SourceId,
+    diagnostics: &mut DiagnosticBag,
+) -> Option<Type> {
+    if matches!(expr, HirExpr::Closure { .. }) {
+        let params = expected.and_then(|t| match unwrap_value_type(t) {
+            Type::Func { params, .. } => Some(params),
+            _ => None,
+        });
+        infer_closure(
+            ctx,
+            expr,
+            params.as_deref(),
+            types,
+            names,
+            source,
+            diagnostics,
+        )
+    } else {
+        infer_expr(ctx, expr, types, names, source, diagnostics)
+    }
+}
+
+pub(super) fn infer_closure(
+    ctx: &TypeCheckContext,
+    expr: &HirExpr,
+    expected: Option<&[Type]>,
+    types: &Scope<'_>,
+    names: &HashMap<SymbolId, String>,
+    source: SourceId,
+    diagnostics: &mut DiagnosticBag,
+) -> Option<Type> {
+    let HirExpr::Closure {
+        fn_symbol,
+        captures,
+        ..
+    } = expr
+    else {
+        return infer_expr(ctx, expr, types, names, source, diagnostics);
+    };
+    let closure = ctx.capturing_closure(*fn_symbol)?;
+    // A closure sees module bindings and its recorded captures, not every
+    // preceding local in the creator. Copying that growing scope is quadratic.
+    let mut scope = Scope::new(types.module());
+    for (inner, outer) in closure.captures.iter().zip(captures) {
+        if let Some(ty) = types.get(outer) {
+            scope.insert(*inner, ty.clone());
+        }
+    }
+    let mut params = Vec::new();
+    for (i, p) in closure.params.iter().enumerate() {
+        let contextual = expected.and_then(|ps| ps.get(i)).filter(|t| {
+            usable_context(t)
+                || (!ctx.generic_parameters.borrow().is_empty() && !matches!(t, Type::Empty))
+        });
+        let ty = if p.unannotated {
+            let previous = ctx.closure_params.borrow().get(&p.name).cloned();
+            let ty = contextual
+                .cloned()
+                .or_else(|| previous.clone())
+                .unwrap_or_else(|| {
+                    resolve_hir_type(ctx, &p.ty, diagnostics).unwrap_or(Type::Int64)
+                });
+            if contextual.is_some() {
+                ctx.defaulted_closure_params.borrow_mut().remove(&p.name);
+            } else if previous.is_none() && p.defaulted_to_int {
+                ctx.defaulted_closure_params.borrow_mut().insert(p.name);
+            }
+            ctx.closure_params.borrow_mut().insert(p.name, ty.clone());
+            ty
+        } else {
+            resolve_hir_type(ctx, &p.ty, diagnostics).unwrap_or(Type::Error)
+        };
+        scope.insert(p.name, ty.clone());
+        params.push(ty);
+    }
+    let outer_return = ctx.fn_return.replace(None);
+    let outer_function = ctx.current_function.replace(Some(*fn_symbol));
+    // Lowering gives a closure exactly one expression statement. Inferring
+    // that expression checks it (including match-arm statements) and returns
+    // its value type; a preceding check_block walk would double nested work.
+    debug_assert!(matches!(closure.body.stmts.as_slice(), [HirStmt::Expr(_)]));
+    #[cfg(test)]
+    {
+        let count = ctx.closure_body_checks.get() + 1;
+        ctx.closure_body_checks.set(count);
+        if let Some(limit) = ctx.closure_check_limit.get() {
+            assert!(
+                count <= limit,
+                "closure body check budget exceeded: {count} > {limit}"
+            );
+        }
+    }
+    let ret = infer_block_return(ctx, &closure.body, &scope, names, source, diagnostics)
+        .unwrap_or(Type::Unit);
+    *ctx.fn_return.borrow_mut() = outer_return;
+    ctx.current_function.set(outer_function);
+    let ty = Type::Func {
+        params,
+        ret: Box::new(ret),
+    };
+    ctx.closure_types
+        .borrow_mut()
+        .insert(*fn_symbol, ty.clone());
+    Some(ty)
+}
+
+pub(crate) fn usable_context(ty: &Type) -> bool {
+    match ty {
+        Type::Error | Type::Empty | Type::Var(_) => false,
+        Type::Array(t) | Type::Option(t) | Type::Cell(t) | Type::Read(t) | Type::Event(t) => {
+            usable_context(t)
+        }
+        Type::Map { key, value } => usable_context(key) && usable_context(value),
+        Type::Result { ok, err } => usable_context(ok) && usable_context(err),
+        Type::Func { params, ret } => params.iter().all(usable_context) && usable_context(ret),
+        _ => true,
     }
 }

@@ -337,7 +337,7 @@ fn run_main(executor: &mut flux_runtime::Executor) -> i32 {
             }
         },
         Err(err) => {
-            eprintln!("error: {err}");
+            eprintln!("error: {err:#}");
             1
         }
     }

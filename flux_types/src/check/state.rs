@@ -15,10 +15,26 @@ use super::resolve::{enum_payload_to_type, resolve_hir_type_simple};
 /// The types visible to some code: the program's symbols, shared, plus its
 /// own locals. Each block gets a copy of its scope, so that copy must not
 /// include the whole program: checking was quadratic in the number of items.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub(crate) struct Scope<'a> {
     module: &'a HashMap<SymbolId, Type>,
     locals: HashMap<SymbolId, Type>,
+}
+
+#[cfg(test)]
+thread_local! {
+    pub(crate) static SCOPE_LOCAL_COPIES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+impl Clone for Scope<'_> {
+    fn clone(&self) -> Self {
+        #[cfg(test)]
+        SCOPE_LOCAL_COPIES.with(|n| n.set(n.get() + self.locals.len()));
+        Self {
+            module: self.module,
+            locals: self.locals.clone(),
+        }
+    }
 }
 
 impl<'a> Scope<'a> {
@@ -51,12 +67,23 @@ pub struct TypeCheckContext {
     trait_impls: HashMap<(String, String), SymbolId>,
     builtin_symbols: std::collections::HashSet<SymbolId>,
     effectful_functions: std::collections::HashSet<SymbolId>,
-    /// Closures with captures: checked where they are created, because their
-    /// captures' types are those of that scope.
+    /// Closure bodies are checked where created, with contextual parameter
+    /// types and the creation scope's capture types.
     capturing_closures: HashMap<SymbolId, flux_hir::HirFn>,
+    pub(crate) defaulted_closure_params: std::cell::RefCell<std::collections::HashSet<SymbolId>>,
+    pub(crate) closure_params: std::cell::RefCell<HashMap<SymbolId, Type>>,
+    pub(crate) closure_types: std::cell::RefCell<HashMap<SymbolId, Type>>,
+    pub(crate) preparing_closures: bool,
+    pub(crate) generic_parameters: std::cell::RefCell<std::collections::HashSet<String>>,
+    #[cfg(test)]
+    pub(crate) closure_body_checks: std::cell::Cell<usize>,
+    #[cfg(test)]
+    pub(crate) closure_check_limit: std::cell::Cell<Option<usize>>,
+    pub(crate) current_function: std::cell::Cell<Option<SymbolId>>,
     pub(crate) const_bindings: std::collections::HashSet<String>,
     /// `recv.method(…)` call spans resolved to their impl function.
-    pub(crate) method_calls: std::cell::RefCell<HashMap<flux_diagnostics::Span, SymbolId>>,
+    pub(crate) method_calls:
+        std::cell::RefCell<HashMap<(Option<SymbolId>, flux_diagnostics::Span), SymbolId>>,
     /// Declared return type of the function being checked, if it has one;
     /// checks a `return` wherever it appears, including inside match arms.
     pub(crate) fn_return: std::cell::RefCell<Option<Type>>,
@@ -71,6 +98,14 @@ impl TypeCheckContext {
         };
 
         for item in &program.items {
+            if let HirItem::Fn(f) = item {
+                ctx.defaulted_closure_params.get_mut().extend(
+                    f.params
+                        .iter()
+                        .filter(|p| p.defaulted_to_int)
+                        .map(|p| p.name),
+                );
+            }
             if let HirItem::Enum(e) = item {
                 let enum_name = program.names.get(&e.name).cloned().unwrap_or_default();
                 for (variant, payload) in &e.variants {
@@ -149,7 +184,7 @@ impl TypeCheckContext {
             .items
             .iter()
             .filter_map(|item| match item {
-                HirItem::Fn(f) if !f.captures.is_empty() => Some((f.name, f.clone())),
+                HirItem::Fn(f) if f.is_closure => Some((f.name, f.clone())),
                 _ => None,
             })
             .collect();
@@ -236,5 +271,30 @@ fn fill_user_types(ty: &Type, registered: &HashMap<String, Type>, depth: usize) 
             ret: Box::new(next(ret)),
         },
         other => other.clone(),
+    }
+}
+
+/// An unchecked generic parameter is unknown, not an Int assumption. Keeping
+/// known outer shapes lets a template still check its independent expressions.
+pub(crate) fn erase_type_variables(ty: Type) -> Type {
+    match ty {
+        Type::Var(_) => Type::Error,
+        Type::Array(t) => Type::Array(Box::new(erase_type_variables(*t))),
+        Type::Option(t) => Type::Option(Box::new(erase_type_variables(*t))),
+        Type::Cell(t) => Type::Cell(Box::new(erase_type_variables(*t))),
+        Type::Read(t) => Type::Read(Box::new(erase_type_variables(*t))),
+        Type::Result { ok, err } => Type::Result {
+            ok: Box::new(erase_type_variables(*ok)),
+            err: Box::new(erase_type_variables(*err)),
+        },
+        Type::Map { key, value } => Type::Map {
+            key: Box::new(erase_type_variables(*key)),
+            value: Box::new(erase_type_variables(*value)),
+        },
+        Type::Func { params, ret } => Type::Func {
+            params: params.into_iter().map(erase_type_variables).collect(),
+            ret: Box::new(erase_type_variables(*ret)),
+        },
+        other => other,
     }
 }

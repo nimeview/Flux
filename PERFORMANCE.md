@@ -273,6 +273,42 @@ Memory over long runs, peak RSS for 20,000 and 200,000 events, with strings, arr
 
 Memory does not grow with run length, and time grows linearly.
 
+## Reactive events and interpolation (2026-11-02)
+
+Intel Core i9-9880H, macOS, Turbo Boost off, so compare only within this table. Alternating runs of `cargo bench -p flux_cli --bench workloads` on the previous commit and this code; the range covers those runs. The last three rows are whole programs timed with `flux run`; the last one is 5,000,000 loop iterations with an interpolating call every 1,000.
+
+| Workload | Before | After |
+|----------|--------|-------|
+| reactive_events_1000, VM | 8.6–9.6 ms | 1.8 ms |
+| reactive_events_1000, JIT | 9.7–11.0 ms | 3.2 ms |
+| 1,000,000 events, 2 derived `if`, VM | 8.0 s | 2.6 s |
+| 1,000,000 events, 2 derived `if`, JIT | 10.0 s | 3.6 s |
+| numeric loop with interpolation, JIT | 2.05 s | 0.15 s |
+
+- An event copied the handler's IR, cloned names into string sets, and hashed them. Event dispatch and settling now use node ids, shared bodies, and reused buffers.
+- `to_string` runs natively, so a function that interpolates no longer falls back as a whole. Functions that print still run on the VM.
+- A derived value whose `if` or `match` branch reads a reactive node runs on the VM (`dynamic_dependencies`). The JIT treated every branch as a dependency, so a write to an untaken branch reran the value too early.
+
+The new tables first slowed `recursion` by 4–5% and `collections` by 6–7%, with no change to those paths: `Executor` had grown. Moving them behind one `Box` restored both. `compute_loop` on the VM stays about 2% slower (62.4 → 63.7–66.5 ms). Peak RSS is flat from 200,000 to 1,000,000 events (VM 3.1 → 3.2 MB, JIT 4.7 → 4.8 MB).
+
+A compiled handler is still slower than the VM on these events, because each call fills its slot buffer through name lookups. The JIT pays off in compute-heavy code, not in small handlers.
+
+## Release and dist builds (2026-11-03)
+
+`cargo build --profile dist -p flux_cli` builds `target/dist/flux` with `lto = "fat"` and `codegen-units = 1`, for distribution and final measurements. Everyday work uses `--release`, which has 16 codegen units and no LTO, so unrelated edits can move its interpreter timings by several percent through code layout.
+
+Same code, same session, one run each of the workloads repeated until they take about 2 s, Turbo Boost off:
+
+| | release | dist |
+|--|---------|------|
+| Clean build | not timed | 9 min 50 s |
+| Binary | 13.1 MB | 10.6 MB |
+| compute_loop | 1.98 s | 1.88 s |
+| enum_match | 2.08 s | 1.98 s |
+| recursion | 2.12 s | 2.12 s |
+
+Compare timings only between builds of the same profile.
+
 ## Findings
 
 1. **Arrays were copied quadratically (fixed).** `Value::Array(Vec<Value>)` has full value semantics, so every read of a local array (`len(xs)`, `get(xs, i)`, passing it to a function) deep-clones it, nested structs included. `xs = push(xs, v)` copies it as well, because the old value is still held by `xs` during the call. Doubling the size roughly quadruples the time, for building (`push`: 500 → 0.3 s, 1,000 → 0.9 s, 2,000 → 3.6 s) and for indexed scanning (1,000 → 1.1 s, 2,000 → 4.2 s). Fix:

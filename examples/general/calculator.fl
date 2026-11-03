@@ -67,7 +67,10 @@ fn atom(toks: [Tok], i: Int) -> Result[Parsed, String] {
         Some(Num(n)) => Ok(Parsed { value: n, next: i + 1 }),
         Some(LParen) => {
             let inner = sum(toks, i + 1)?
-            match tok_at(toks, inner.next) { Some(RParen) => Ok(Parsed { value: inner.value, next: inner.next + 1 }), _ => Err("expected `)`") }
+            match tok_at(toks, inner.next) {
+                Some(RParen) => Ok(Parsed { value: inner.value, next: inner.next + 1 }),
+                _ => Err("expected `)`")
+            }
         },
         None => Err("unexpected end of input"),
         _ => Err("expected a number or `(` at token {i}")

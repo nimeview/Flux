@@ -12,7 +12,7 @@ use crate::nodes::{lower_type, *};
 use crate::symbol::{BindingKind, SymbolKind, SymbolTable};
 
 use super::constfold::fold_const_hir_expr;
-use super::exprs::{lower_expr, record_array_hint};
+use super::exprs::lower_expr;
 use super::funcs::lower_fn;
 use super::stmts::lower_if;
 
@@ -323,6 +323,7 @@ pub(super) fn lower_module_let(
         );
     }
     let mut reads_reactive = false;
+    let pending_fns = symbols.pending_fns.len();
     let _ = super::exprs::lower_expr(
         &stmt.value,
         symbols,
@@ -330,6 +331,7 @@ pub(super) fn lower_module_let(
         diagnostics,
         &mut reads_reactive,
     );
+    symbols.pending_fns.truncate(pending_fns);
     if diagnostics.has_errors() {
         return None;
     }
@@ -337,6 +339,7 @@ pub(super) fn lower_module_let(
         if reassigned_sources.contains(name) && !reads_reactive {
             diagnostics.push(FluxError::ImmutableLetReadsReactive {
                 name: name.to_string(),
+                assigned: true,
                 span: span_to_miette(stmt.span),
                 source_id: stmt.span.source,
             });
@@ -473,7 +476,6 @@ pub(super) fn lower_binding(
     symbols: &mut SymbolTable,
     diagnostics: &mut DiagnosticBag,
 ) -> Option<HirBinding> {
-    record_array_hint(symbols, &name.name, ty, Some(value));
     let sym_id = symbols.lookup(&name.name)?.id;
     let mut reads_reactive = false;
     let mut lowered = lower_expr(

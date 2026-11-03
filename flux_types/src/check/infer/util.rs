@@ -27,6 +27,7 @@ pub(super) fn infer_array_elem(
     };
     match unwrap_value_type(&got) {
         Type::Array(elem) => *elem,
+        Type::Error => Type::Error,
         other => {
             diagnostics.push(FluxError::TypeMismatch {
                 expected: "Array".into(),
@@ -50,7 +51,15 @@ pub(super) fn check_callback(
     source: SourceId,
     diagnostics: &mut DiagnosticBag,
 ) -> Option<Type> {
-    let cb_ty = infer_expr(ctx, cb, types, names, source, diagnostics)?;
+    let cb_ty = super::expr::infer_closure(
+        ctx,
+        cb,
+        Some(expected_params),
+        types,
+        names,
+        source,
+        diagnostics,
+    )?;
     match unwrap_value_type(&cb_ty) {
         Type::Func { params, ret } => {
             if params.len() > expected_params.len() {
@@ -73,6 +82,15 @@ pub(super) fn check_callback(
             }
             Some(*ret)
         }
-        _ => None,
+        Type::Error => Some(Type::Error),
+        other => {
+            diagnostics.push(FluxError::TypeMismatch {
+                expected: "function callback".into(),
+                found: other.display(),
+                span: span_to_miette(cb.span()),
+                source_id: cb.span().source,
+            });
+            Some(Type::Error)
+        }
     }
 }

@@ -27,6 +27,7 @@ mod tests {
     #[test]
     fn stub_emits_valid_header() {
         let (status, bytes) = compile_to_wasm(&flux_ir::CompiledProgram {
+            source_map: Default::default(),
             nodes: vec![],
             init_stmts: vec![],
             functions: vec![],

@@ -46,5 +46,8 @@ pub fn text_of(s: Settings, key: String) -> Option[String] {
 }
 
 pub fn int_of(s: Settings, key: String) -> Result[Int, String] {
-    match text_of(s, key) { Some(text) => match parse_int(text) { Ok(n) => Ok(n), Err(_) => Err("`{key}` is not a number: {text}") }, None => Err("missing `{key}`") }
+    match text_of(s, key) {
+        Some(text) => match parse_int(text) { Ok(n) => Ok(n), Err(_) => Err("`{key}` is not a number: {text}") },
+        None => Err("missing `{key}`")
+    }
 }

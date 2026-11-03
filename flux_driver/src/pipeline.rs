@@ -216,7 +216,7 @@ fn executor_error_diagnostic(
                 .and_then(|name| binding_span(hir, name))
                 .unwrap_or(file_start);
             FluxError::Runtime {
-                message: err.to_string(),
+                message: format!("{err:#}"),
                 span: span_to_miette(span),
                 source_id: span.source,
             }
@@ -625,7 +625,7 @@ fn finish_lower(
     // Codegen calls the impl the checker resolved for each method call.
     let mut hir = hir;
     flux_types::resolve_method_calls(&mut hir, &typed);
-    let ir = emit_ir(
+    let mut ir = emit_ir(
         &source,
         &hir,
         options,
@@ -636,6 +636,11 @@ fn finish_lower(
     .ok_or_else(|| {
         CompileFailed::new(source.clone(), sources.clone(), std::mem::take(diagnostics))
     })?;
+    ir.source_map.files.clear();
+    for file in &sources {
+        ir.source_map
+            .add_file(file.id.0, &file.path, &file.contents);
+    }
 
     Ok(Artifacts {
         source,

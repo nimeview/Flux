@@ -2,7 +2,7 @@ mod codegen;
 mod lower;
 mod resolve;
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use serde::{Deserialize, Serialize};
 
@@ -12,6 +12,77 @@ pub use resolve::resolve_locals;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct NodeId(pub u32);
+
+/// A byte offset in source file `source`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SourceLoc {
+    pub source: u32,
+    pub offset: u32,
+}
+
+/// Statements with where each starts. The locations sit apart because only a
+/// runtime error reads them; a marker between statements cost loops 8%.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct StmtBlock {
+    pub stmts: Vec<IrStmt>,
+    /// Parallel to `stmts`, or empty when not known.
+    pub locs: Vec<SourceLoc>,
+}
+
+impl From<Vec<IrStmt>> for StmtBlock {
+    fn from(stmts: Vec<IrStmt>) -> Self {
+        Self {
+            stmts,
+            locs: Vec::new(),
+        }
+    }
+}
+
+impl std::ops::Deref for StmtBlock {
+    type Target = Vec<IrStmt>;
+
+    fn deref(&self) -> &Vec<IrStmt> {
+        &self.stmts
+    }
+}
+
+impl std::ops::DerefMut for StmtBlock {
+    fn deref_mut(&mut self) -> &mut Vec<IrStmt> {
+        &mut self.stmts
+    }
+}
+
+/// Enough of each source file to turn a [`SourceLoc`] into a line and column.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct SourceMap {
+    /// Source id, path, and the byte offset of each line's start.
+    pub files: Vec<(u32, String, Vec<u32>)>,
+    /// Where each module-level binding is declared.
+    pub bindings: BTreeMap<String, SourceLoc>,
+}
+
+impl SourceMap {
+    pub fn add_file(&mut self, id: u32, path: &str, contents: &str) {
+        let starts = std::iter::once(0)
+            .chain(
+                contents
+                    .bytes()
+                    .enumerate()
+                    .filter(|(_, b)| *b == b'\n')
+                    .map(|(i, _)| i as u32 + 1),
+            )
+            .collect();
+        self.files.push((id, path.to_string(), starts));
+    }
+
+    /// Path, 1-based line, and 1-based byte column of `loc`.
+    pub fn resolve(&self, loc: SourceLoc) -> Option<(&str, u32, u32)> {
+        let (_, path, starts) = self.files.iter().find(|(id, ..)| *id == loc.source)?;
+        let line = starts.partition_point(|&start| start <= loc.offset);
+        let column = loc.offset - starts[line.checked_sub(1)?] + 1;
+        Some((path, line as u32, column))
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum NodeKind {
@@ -88,7 +159,7 @@ pub enum Inst {
     /// Statements run in the current locals, pushing nothing: a match arm
     /// block with control flow. A `return`/`break`/`continue` inside leaves
     /// the expression and acts on the enclosing function or loop.
-    Block(Vec<IrStmt>),
+    Block(StmtBlock),
     /// `?`: replaces `Ok(v)`/`Some(v)` with `v`; on `Err`/`None` returns that
     /// value from the enclosing function.
     Try,
@@ -183,19 +254,19 @@ pub enum IrStmt {
     },
     If {
         cond: Vec<Inst>,
-        then_body: Vec<IrStmt>,
-        else_body: Option<Vec<IrStmt>>,
+        then_body: StmtBlock,
+        else_body: Option<StmtBlock>,
     },
     While {
         cond: Vec<Inst>,
-        body: Vec<IrStmt>,
+        body: StmtBlock,
     },
     /// `slot` (the loop variable's) is set by [`resolve_locals`].
     For {
         var: String,
         slot: u32,
         iter: Vec<Inst>,
-        body: Vec<IrStmt>,
+        body: StmtBlock,
     },
     Return {
         expr: Option<Vec<Inst>>,
@@ -209,25 +280,27 @@ pub struct CompiledFunction {
     pub name: String,
     pub reactive: bool,
     pub params: Vec<String>,
-    pub body: Vec<IrStmt>,
+    pub body: StmtBlock,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CompiledWatch {
     pub target: Option<String>,
     pub deps: Vec<String>,
-    pub body: Vec<IrStmt>,
+    pub body: StmtBlock,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CompiledOnHandler {
     pub event: String,
     pub param: Option<String>,
-    pub body: Vec<IrStmt>,
+    pub body: StmtBlock,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CompiledProgram {
+    /// Resolves [`SourceLoc`]s; no effect on execution.
+    pub source_map: SourceMap,
     pub nodes: Vec<IrNode>,
     pub init_stmts: Vec<IrStmt>,
     pub functions: Vec<CompiledFunction>,

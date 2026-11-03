@@ -19,12 +19,12 @@ pub fn resolve_method_calls(program: &mut HirProgram, typed: &TypedProgram) {
     let calls = &typed.method_calls;
     for item in &mut program.items {
         match item {
-            HirItem::Fn(f) => block(&mut f.body, calls),
-            HirItem::Binding(b) => expr(&mut b.value, calls),
-            HirItem::SourceAssign(a) => expr(&mut a.value, calls),
-            HirItem::InitIf(i) => if_stmt(i, calls),
-            HirItem::Watch(w) => block(&mut w.body, calls),
-            HirItem::On(o) => block(&mut o.body, calls),
+            HirItem::Fn(f) => block(&mut f.body, calls, Some(f.name)),
+            HirItem::Binding(b) => expr(&mut b.value, calls, None),
+            HirItem::SourceAssign(a) => expr(&mut a.value, calls, None),
+            HirItem::InitIf(i) => if_stmt(i, calls, None),
+            HirItem::Watch(w) => block(&mut w.body, calls, None),
+            HirItem::On(o) => block(&mut o.body, calls, None),
             HirItem::Struct(_)
             | HirItem::Enum(_)
             | HirItem::Trait(_)
@@ -34,52 +34,55 @@ pub fn resolve_method_calls(program: &mut HirProgram, typed: &TypedProgram) {
     }
 }
 
-type Calls = HashMap<Span, SymbolId>;
+type Calls = HashMap<(Option<SymbolId>, Span), SymbolId>;
 
-fn block(b: &mut HirBlock, calls: &Calls) {
+fn block(b: &mut HirBlock, calls: &Calls, owner: Option<SymbolId>) {
     for stmt in &mut b.stmts {
         match stmt {
-            HirStmt::Let(binding) => expr(&mut binding.value, calls),
-            HirStmt::Assign(assign) => expr(&mut assign.value, calls),
-            HirStmt::Emit(emit) => emit.args.iter_mut().for_each(|a| expr(a, calls)),
-            HirStmt::Expr(e) => expr(e, calls),
+            HirStmt::Let(binding) => expr(&mut binding.value, calls, owner),
+            HirStmt::Assign(assign) => expr(&mut assign.value, calls, owner),
+            HirStmt::Emit(emit) => emit.args.iter_mut().for_each(|a| expr(a, calls, owner)),
+            HirStmt::Expr(e) => expr(e, calls, owner),
             HirStmt::Return(ret) => {
                 if let Some(e) = &mut ret.value {
-                    expr(e, calls);
+                    expr(e, calls, owner);
                 }
             }
-            HirStmt::If(i) => if_stmt(i, calls),
+            HirStmt::If(i) => if_stmt(i, calls, owner),
             HirStmt::While(w) => {
-                expr(&mut w.cond, calls);
-                block(&mut w.body, calls);
+                expr(&mut w.cond, calls, owner);
+                block(&mut w.body, calls, owner);
             }
             HirStmt::For(f) => {
-                expr(&mut f.iter, calls);
-                block(&mut f.body, calls);
+                expr(&mut f.iter, calls, owner);
+                block(&mut f.body, calls, owner);
             }
-            HirStmt::Watch(w) => block(&mut w.body, calls),
-            HirStmt::On(o) => block(&mut o.body, calls),
+            HirStmt::Watch(w) => block(&mut w.body, calls, owner),
+            HirStmt::On(o) => block(&mut o.body, calls, owner),
             HirStmt::Break(_) | HirStmt::Continue(_) => {}
         }
     }
 }
 
-fn if_stmt(i: &mut HirIf, calls: &Calls) {
-    expr(&mut i.cond, calls);
-    block(&mut i.then_branch, calls);
+fn if_stmt(i: &mut HirIf, calls: &Calls, owner: Option<SymbolId>) {
+    expr(&mut i.cond, calls, owner);
+    block(&mut i.then_branch, calls, owner);
     match &mut i.else_branch {
-        Some(HirElse::If(nested)) => if_stmt(nested, calls),
-        Some(HirElse::Block(b)) => block(b, calls),
+        Some(HirElse::If(nested)) => if_stmt(nested, calls, owner),
+        Some(HirElse::Block(b)) => block(b, calls, owner),
         None => {}
     }
 }
 
-fn expr(e: &mut HirExpr, calls: &Calls) {
+fn expr(e: &mut HirExpr, calls: &Calls, owner: Option<SymbolId>) {
     match e {
         HirExpr::Call { callee, args, span } => {
-            expr(callee, calls);
-            args.iter_mut().for_each(|a| expr(a, calls));
-            let Some(&impl_fn) = calls.get(span) else {
+            expr(callee, calls, owner);
+            args.iter_mut().for_each(|a| expr(a, calls, owner));
+            let Some(&impl_fn) = calls
+                .get(&(owner, *span))
+                .or_else(|| calls.get(&(None, *span)))
+            else {
                 return;
             };
             if !matches!(callee.as_ref(), HirExpr::Field { .. }) {
@@ -97,16 +100,16 @@ fn expr(e: &mut HirExpr, calls: &Calls) {
         | HirExpr::Unary { expr: inner, .. }
         | HirExpr::Cast { expr: inner, .. }
         | HirExpr::ToText { expr: inner, .. }
-        | HirExpr::Try { expr: inner, .. } => expr(inner, calls),
-        HirExpr::Field { base, .. } => expr(base, calls),
+        | HirExpr::Try { expr: inner, .. } => expr(inner, calls, owner),
+        HirExpr::Field { base, .. } => expr(base, calls, owner),
         HirExpr::Binary { left, right, .. }
         | HirExpr::Index {
             base: left,
             index: right,
             ..
         } => {
-            expr(left, calls);
-            expr(right, calls);
+            expr(left, calls, owner);
+            expr(right, calls, owner);
         }
         HirExpr::If {
             cond,
@@ -114,27 +117,29 @@ fn expr(e: &mut HirExpr, calls: &Calls) {
             else_expr,
             ..
         } => {
-            expr(cond, calls);
-            expr(then_expr, calls);
-            expr(else_expr, calls);
+            expr(cond, calls, owner);
+            expr(then_expr, calls, owner);
+            expr(else_expr, calls, owner);
         }
-        HirExpr::Array { elems, .. } => elems.iter_mut().for_each(|x| expr(x, calls)),
-        HirExpr::StructLit { fields, .. } => fields.iter_mut().for_each(|(_, x)| expr(x, calls)),
+        HirExpr::Array { elems, .. } => elems.iter_mut().for_each(|x| expr(x, calls, owner)),
+        HirExpr::StructLit { fields, .. } => {
+            fields.iter_mut().for_each(|(_, x)| expr(x, calls, owner))
+        }
         HirExpr::Match {
             scrutinee, arms, ..
         } => {
-            expr(scrutinee, calls);
+            expr(scrutinee, calls, owner);
             for arm in arms {
                 if let Some(guard) = &mut arm.guard {
-                    expr(guard, calls);
+                    expr(guard, calls, owner);
                 }
-                block(&mut arm.body, calls);
-                expr(&mut arm.expr, calls);
+                block(&mut arm.body, calls, owner);
+                expr(&mut arm.expr, calls, owner);
             }
         }
         HirExpr::EnumVariant { payload, .. } => {
             if let Some(p) = payload {
-                expr(p, calls);
+                expr(p, calls, owner);
             }
         }
         HirExpr::Int { .. }

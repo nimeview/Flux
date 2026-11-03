@@ -48,12 +48,20 @@ fn next_seed(seed: Int) -> Int {
 }
 
 fn job_for(seed: Int, step: Int) -> Job {
-    match seed % 3 { 0 => Short(seed % 10), 1 => Long(Task { id: step, weight: seed % 100 }), _ => Idle }
+    match seed % 3 {
+        0 => Short(seed % 10),
+        1 => Long(Task { id: step, weight: seed % 100 }),
+        _ => Idle
+    }
 }
 
 fn step(s: State, at: Int) -> State {
     let seed = next_seed(s.seed)
-    match job_for(seed, at) { Short(n) => State { seed: seed, done: s.done + 1, waited: s.waited + n }, Long(t) => State { seed: seed, done: s.done + 1, waited: s.waited + t.weight * 2 }, Idle => State { seed: seed, done: s.done, waited: s.waited } }
+    match job_for(seed, at) {
+        Short(n) => State { seed: seed, done: s.done + 1, waited: s.waited + n },
+        Long(t) => State { seed: seed, done: s.done + 1, waited: s.waited + t.weight * 2 },
+        Idle => State { seed: seed, done: s.done, waited: s.waited }
+    }
 }
 
 fn bucket_name(waited: Int) -> String {
@@ -100,16 +108,16 @@ fn main() -> Int {
             0
         },
         Some(text) => match parse_int(text) {
-        Ok(steps) => {
-            let s = run(steps)
-            println("done {s.done}, waited {s.waited}, seed {s.seed}")
-            0
+            Ok(steps) => {
+                let s = run(steps)
+                println("done {s.done}, waited {s.waited}, seed {s.seed}")
+                0
+            },
+            Err(e) => {
+                eprintln("error: {e}")
+                2
+            }
         },
-        Err(e) => {
-            eprintln("error: {e}")
-            2
-        }
-    },
         None => {
             eprintln("usage: simulate <steps>|recurse|oversize")
             2

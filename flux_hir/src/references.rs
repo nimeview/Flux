@@ -260,22 +260,28 @@ fn collect_write_spans_item(
     out: &mut Vec<Span>,
 ) {
     match item {
-        HirItem::Binding(b) if b.name == symbol_id => {
-            out.push(narrow_name_span(b.span, name, sources));
+        HirItem::Binding(b) => {
+            if b.name == symbol_id {
+                out.push(narrow_name_span(b.span, name, sources));
+            }
+            collect_write_spans_expr(&b.value, symbol_id, name, sources, out);
         }
         HirItem::Fn(f) => collect_write_spans_block(&f.body, symbol_id, name, sources, out),
         HirItem::Watch(w) => collect_write_spans_block(&w.body, symbol_id, name, sources, out),
         HirItem::On(o) => collect_write_spans_block(&o.body, symbol_id, name, sources, out),
         HirItem::InitIf(i) => collect_write_spans_if(i, symbol_id, name, sources, out),
-        HirItem::SourceAssign(a) if a.name == symbol_id => {
-            out.push(narrow_name_span(a.span, name, sources));
+        HirItem::SourceAssign(a) => {
+            if a.name == symbol_id {
+                out.push(narrow_name_span(a.span, name, sources));
+            }
+            collect_write_spans_expr(&a.value, symbol_id, name, sources, out);
         }
         HirItem::Impl(i) => {
             for m in &i.methods {
                 collect_write_spans_block(&m.body, symbol_id, name, sources, out);
             }
         }
-        _ => {}
+        HirItem::Struct(_) | HirItem::Enum(_) | HirItem::Trait(_) | HirItem::Event(_) => {}
     }
 }
 
@@ -299,20 +305,44 @@ fn collect_write_spans_stmt(
     out: &mut Vec<Span>,
 ) {
     match stmt {
-        HirStmt::Assign(a) if a.name == symbol_id => {
-            out.push(narrow_name_span(a.span, name, sources));
+        HirStmt::Assign(a) => {
+            if a.name == symbol_id {
+                out.push(narrow_name_span(a.span, name, sources));
+            }
+            collect_write_spans_expr(&a.value, symbol_id, name, sources, out);
         }
-        HirStmt::Let(l) if l.name == symbol_id => {
-            out.push(narrow_name_span(l.span, name, sources));
+        HirStmt::Let(l) => {
+            if l.name == symbol_id {
+                out.push(narrow_name_span(l.span, name, sources));
+            }
+            collect_write_spans_expr(&l.value, symbol_id, name, sources, out);
         }
-        HirStmt::For(f) if f.name == symbol_id => {
-            out.push(narrow_name_span(f.span, name, sources));
+        HirStmt::For(f) => {
+            if f.name == symbol_id {
+                out.push(narrow_name_span(f.span, name, sources));
+            }
+            collect_write_spans_expr(&f.iter, symbol_id, name, sources, out);
+            collect_write_spans_block(&f.body, symbol_id, name, sources, out);
         }
         HirStmt::If(i) => collect_write_spans_if(i, symbol_id, name, sources, out),
-        HirStmt::While(w) => collect_write_spans_block(&w.body, symbol_id, name, sources, out),
+        HirStmt::While(w) => {
+            collect_write_spans_expr(&w.cond, symbol_id, name, sources, out);
+            collect_write_spans_block(&w.body, symbol_id, name, sources, out);
+        }
         HirStmt::Watch(w) => collect_write_spans_block(&w.body, symbol_id, name, sources, out),
         HirStmt::On(o) => collect_write_spans_block(&o.body, symbol_id, name, sources, out),
-        _ => {}
+        HirStmt::Expr(expr) => collect_write_spans_expr(expr, symbol_id, name, sources, out),
+        HirStmt::Emit(emit) => {
+            for arg in &emit.args {
+                collect_write_spans_expr(arg, symbol_id, name, sources, out);
+            }
+        }
+        HirStmt::Return(ret) => {
+            if let Some(expr) = &ret.value {
+                collect_write_spans_expr(expr, symbol_id, name, sources, out);
+            }
+        }
+        HirStmt::Break(_) | HirStmt::Continue(_) => {}
     }
 }
 
@@ -323,12 +353,96 @@ fn collect_write_spans_if(
     sources: &HashMap<SourceId, String>,
     out: &mut Vec<Span>,
 ) {
+    collect_write_spans_expr(&if_.cond, symbol_id, name, sources, out);
     collect_write_spans_block(&if_.then_branch, symbol_id, name, sources, out);
     if let Some(el) = &if_.else_branch {
         match el {
             HirElse::If(inner) => collect_write_spans_if(inner, symbol_id, name, sources, out),
             HirElse::Block(b) => collect_write_spans_block(b, symbol_id, name, sources, out),
         }
+    }
+}
+
+fn collect_write_spans_expr(
+    expr: &HirExpr,
+    symbol_id: SymbolId,
+    name: &str,
+    sources: &HashMap<SourceId, String>,
+    out: &mut Vec<Span>,
+) {
+    match expr {
+        HirExpr::Snap { expr, .. }
+        | HirExpr::Unary { expr, .. }
+        | HirExpr::Cast { expr, .. }
+        | HirExpr::ToText { expr, .. }
+        | HirExpr::Try { expr, .. } => {
+            collect_write_spans_expr(expr, symbol_id, name, sources, out)
+        }
+        HirExpr::Call { callee, args, .. } => {
+            collect_write_spans_expr(callee, symbol_id, name, sources, out);
+            for arg in args {
+                collect_write_spans_expr(arg, symbol_id, name, sources, out);
+            }
+        }
+        HirExpr::Field { base, .. } => {
+            collect_write_spans_expr(base, symbol_id, name, sources, out)
+        }
+        HirExpr::Binary { left, right, .. }
+        | HirExpr::Index {
+            base: left,
+            index: right,
+            ..
+        } => {
+            collect_write_spans_expr(left, symbol_id, name, sources, out);
+            collect_write_spans_expr(right, symbol_id, name, sources, out);
+        }
+        HirExpr::If {
+            cond,
+            then_expr,
+            else_expr,
+            ..
+        } => {
+            collect_write_spans_expr(cond, symbol_id, name, sources, out);
+            collect_write_spans_expr(then_expr, symbol_id, name, sources, out);
+            collect_write_spans_expr(else_expr, symbol_id, name, sources, out);
+        }
+        HirExpr::Array { elems, .. } => {
+            for elem in elems {
+                collect_write_spans_expr(elem, symbol_id, name, sources, out);
+            }
+        }
+        HirExpr::StructLit { fields, .. } => {
+            for (_, value) in fields {
+                collect_write_spans_expr(value, symbol_id, name, sources, out);
+            }
+        }
+        HirExpr::EnumVariant { payload, .. } => {
+            if let Some(payload) = payload {
+                collect_write_spans_expr(payload, symbol_id, name, sources, out);
+            }
+        }
+        HirExpr::Match {
+            scrutinee, arms, ..
+        } => {
+            collect_write_spans_expr(scrutinee, symbol_id, name, sources, out);
+            for arm in arms {
+                if let Some(literal) = &arm.literal {
+                    collect_write_spans_expr(literal, symbol_id, name, sources, out);
+                }
+                if let Some(guard) = &arm.guard {
+                    collect_write_spans_expr(guard, symbol_id, name, sources, out);
+                }
+                collect_write_spans_block(&arm.body, symbol_id, name, sources, out);
+                collect_write_spans_expr(&arm.expr, symbol_id, name, sources, out);
+            }
+        }
+        // Closure bodies are visited through their separate function items.
+        HirExpr::Int { .. }
+        | HirExpr::Float { .. }
+        | HirExpr::Bool { .. }
+        | HirExpr::String { .. }
+        | HirExpr::Ident { .. }
+        | HirExpr::Closure { .. } => {}
     }
 }
 
@@ -434,5 +548,86 @@ mod tests {
             assert_eq!(slice, "x");
         }
         assert!(spans.len() >= 2, "inner binding + use");
+    }
+
+    fn assert_rename_covers_x(src: &str) {
+        let sid = SourceId(0);
+        let mut diags = DiagnosticBag::new();
+        let ast = parse_program(sid, src, &mut diags).expect("parse");
+        let hir = lower_program(&ast, &mut diags).expect("lower");
+        assert!(!diags.has_errors(), "{:?}", diags.errors);
+        let index = build_reference_index(&hir);
+        let id = symbol_at_offset(&hir, &index, sid, src.rfind('x').unwrap()).expect("x");
+        let sources = HashMap::from([(sid, src.to_owned())]);
+        let spans = rename_spans(&hir, &index, id, &sources);
+        let actual: Vec<_> = spans
+            .iter()
+            .map(|span| {
+                assert_eq!(&src[span.start..span.end], "x");
+                span.start
+            })
+            .collect();
+        let expected: Vec<_> = src.match_indices('x').map(|(offset, _)| offset).collect();
+        assert_eq!(actual, expected, "{src}");
+    }
+
+    #[test]
+    fn rename_includes_writes_in_for_bodies_and_match_expressions() {
+        assert_rename_covers_x(
+            r#"
+fn f() -> Int {
+    let mut x = 0
+    for i in [1] {
+        x = i
+    }
+    let y = match 0 {
+        _ => {
+            x = 2
+            match 0 { _ => { x = 3
+                0 } }
+        }
+    }
+    x = match 0 { _ => { x = 4
+        0 } }
+    if match 0 { _ => { x = 5
+        true } } {
+        return match 0 { _ => { x = 6
+            x } }
+    }
+    x
+}
+"#,
+        );
+    }
+
+    #[test]
+    fn rename_includes_writes_in_module_binding_and_assignment_expressions() {
+        for src in [
+            "let result = match 0 { _ => { let mut x = 0\n x = 1\n x } }\n",
+            "let mut result = 0\nif true { result = match 0 { _ => { let mut x = 0\n x = 1\n x } } }\n",
+        ] {
+            assert_rename_covers_x(src);
+        }
+    }
+
+    #[test]
+    fn rename_writes_in_for_body_respect_shadowing() {
+        let src = "fn f() -> Int {\n let mut x = 0\n for i in [1] {\n x = 1\n let mut x = 2\n x = 3\n }\n x\n}\n";
+        let sid = SourceId(0);
+        let mut diags = DiagnosticBag::new();
+        let ast = parse_program(sid, src, &mut diags).expect("parse");
+        let hir = lower_program(&ast, &mut diags).expect("lower");
+        let index = build_reference_index(&hir);
+        let id = symbol_at_offset(&hir, &index, sid, src.rfind('x').unwrap()).expect("outer x");
+        let spans = rename_spans(&hir, &index, id, &HashMap::from([(sid, src.to_owned())]));
+        let actual: Vec<_> = spans.iter().map(|span| span.start).collect();
+        assert_eq!(
+            actual,
+            vec![
+                src.find("x = 0").unwrap(),
+                src.find("x = 1").unwrap(),
+                src.rfind('x').unwrap()
+            ]
+        );
     }
 }

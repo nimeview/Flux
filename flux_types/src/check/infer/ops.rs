@@ -57,6 +57,50 @@ pub(super) fn infer_binary(
 ) -> Option<Type> {
     let l = unwrap_value_type(left);
     let r = unwrap_value_type(right);
+    if l.is_error() || r.is_error() {
+        // Unknown template operands defer constraints on T, but cannot make a
+        // known invalid operand (e.g. Bool in addition) valid at any instance.
+        let known = if l.is_error() { &r } else { &l };
+        if !known.is_error() {
+            let numeric = known.is_integer() || known.is_float();
+            let (allowed, expected) = match op {
+                BinaryOp::Add => (numeric || *known == Type::String, "numeric or String type"),
+                BinaryOp::Sub
+                | BinaryOp::Mul
+                | BinaryOp::Div
+                | BinaryOp::Rem
+                | BinaryOp::Lt
+                | BinaryOp::Le
+                | BinaryOp::Gt
+                | BinaryOp::Ge => (numeric, "numeric type"),
+                BinaryOp::And | BinaryOp::Or => (*known == Type::Bool, "Bool"),
+                BinaryOp::Eq | BinaryOp::Ne => (equality_supported(known), "equatable type"),
+            };
+            if !allowed {
+                diagnostics.push(FluxError::TypeMismatch {
+                    expected: expected.into(),
+                    found: known.display(),
+                    span: span_to_miette(span),
+                    source_id: span.source,
+                });
+            } else if matches!(
+                op,
+                BinaryOp::Eq
+                    | BinaryOp::Ne
+                    | BinaryOp::Lt
+                    | BinaryOp::Le
+                    | BinaryOp::Gt
+                    | BinaryOp::Ge
+                    | BinaryOp::And
+                    | BinaryOp::Or
+            ) {
+                return Some(Type::Bool);
+            } else if op == BinaryOp::Add && *known == Type::String {
+                return Some(Type::String);
+            }
+        }
+        return Some(Type::Error);
+    }
     match op {
         BinaryOp::Add => {
             if matches!(l, Type::String) && matches!(r, Type::String) {

@@ -12,7 +12,7 @@ use flux_hir::{
 
 use crate::types::Type;
 
-use super::infer::infer_expr;
+use super::infer::{infer_expr, infer_expr_expected};
 
 use super::resolve::resolve_hir_type;
 use super::util::{default_unknown_variants, mentions_empty, types_compatible, unwrap_value_type};
@@ -56,7 +56,15 @@ pub(super) fn check_binding(
         .and_then(|t| t.unwrap_reactive().cloned())
         .unwrap_or(Type::Error);
 
-    let found = infer_expr(ctx, &binding.value, types, names, source, diagnostics);
+    let found = infer_expr_expected(
+        ctx,
+        &binding.value,
+        binding.ty.as_ref().map(|_| &expected_inner),
+        types,
+        names,
+        source,
+        diagnostics,
+    );
     if let (exp, Some(got)) = (expected_inner, found) {
         if !exp.is_error() && !got.is_error() && !types_compatible(&exp, &got) {
             diagnostics.push(FluxError::TypeMismatch {
@@ -409,7 +417,15 @@ pub(super) fn check_stmt(
             if !s.mutable {
                 immutable_locals.insert(s.name);
             }
-            if let Some(got) = infer_expr(ctx, &s.value, scope, names, source, diagnostics) {
+            if let Some(got) = infer_expr_expected(
+                ctx,
+                &s.value,
+                s.ty.as_ref().and_then(|_| scope.get(&s.name)),
+                scope,
+                names,
+                source,
+                diagnostics,
+            ) {
                 if let Some(expected) = scope.get(&s.name) {
                     let expected = unwrap_value_type(expected);
                     let got = unwrap_value_type(&got);
@@ -450,7 +466,10 @@ pub(super) fn check_stmt(
             } else if let Some(ty) = module.get(name).or_else(|| scope.get(name)) {
                 if matches!(ty, Type::Read(_)) {
                     diagnostics.push(FluxError::AssignToDerived {
-                        name: format!("binding #{name:?}"),
+                        name: names
+                            .get(name)
+                            .cloned()
+                            .unwrap_or_else(|| format!("#{}", name.0)),
                         span: span_to_miette(*span),
                         source_id: span.source,
                     });

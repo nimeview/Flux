@@ -203,7 +203,15 @@ fn collect_expr_reads(
         HirExpr::Field { base, .. } => {
             collect_expr_reads(base, program, reactive_fns, set);
         }
-        _ => {}
+        HirExpr::Cast { expr, .. } | HirExpr::ToText { expr, .. } | HirExpr::Try { expr, .. } => {
+            collect_expr_reads(expr, program, reactive_fns, set);
+        }
+        // Listed so that a new expression form cannot lose its reads silently.
+        HirExpr::Int { .. }
+        | HirExpr::Float { .. }
+        | HirExpr::Bool { .. }
+        | HirExpr::String { .. }
+        | HirExpr::EnumVariant { payload: None, .. } => {}
     }
 }
 

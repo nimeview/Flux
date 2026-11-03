@@ -1,5 +1,58 @@
 use flux_fmt::format_source;
 
+fn assert_format_idempotent(input: &str, expected: &str) {
+    let out = format_source(input).expect("format");
+    assert_eq!(out, expected);
+    assert_eq!(format_source(&out).expect("second pass"), out);
+}
+
+#[test]
+fn short_match_stays_inline() {
+    assert_format_idempotent(
+        "let x=match n {\n0=>1,\n_=>2\n}\n",
+        "let x = match n { 0 => 1, _ => 2 }\n",
+    );
+}
+
+fn boundary_match(columns: usize) -> (String, String) {
+    let empty = "    match n { 0 => \"\", _ => \"\" }";
+    let value = "x".repeat(columns - empty.len());
+    let expression = format!("match n {{ 0 => \"{value}\", _ => \"\" }}");
+    assert_eq!(4 + expression.len(), columns);
+    (expression, value)
+}
+
+#[test]
+fn match_at_100_columns_including_indentation_stays_inline() {
+    let (expression, _) = boundary_match(100);
+    let input = format!("fn f(n: Int) -> String {{\n    {expression}\n}}\n");
+    assert_format_idempotent(&input, &input);
+}
+
+#[test]
+fn match_at_101_columns_including_indentation_breaks() {
+    let (expression, value) = boundary_match(101);
+    let input = format!("fn f(n: Int) -> String {{\n    {expression}\n}}\n");
+    let expected = format!("fn f(n: Int) -> String {{\n    match n {{\n        0 => \"{value}\",\n        _ => \"\"\n    }}\n}}\n");
+    assert_format_idempotent(&input, &expected);
+}
+
+#[test]
+fn long_match_nested_in_a_match_and_function() {
+    let value = "x".repeat(100);
+    let input = format!("fn f(n: Int) -> String {{\n    match n {{ 0 => match n {{ 1 => \"{value}\", _ => \"\" }}, _ => match n {{ 2 => \"yes\", _ => \"no\" }} }}\n}}\n");
+    let expected = format!("fn f(n: Int) -> String {{\n    match n {{\n        0 => match n {{\n            1 => \"{value}\",\n            _ => \"\"\n        }},\n        _ => match n {{ 2 => \"yes\", _ => \"no\" }}\n    }}\n}}\n");
+    assert_format_idempotent(&input, &expected);
+}
+
+#[test]
+fn long_match_keeps_guards_and_arm_commas() {
+    let value = "x".repeat(100);
+    let input = format!("let x = match n {{ Some(v) if v > 0 => \"{value}\", Some(v) if v == 0 => \"zero\", _ => \"other\" }}\n");
+    let expected = format!("let x = match n {{\n    Some(v) if v > 0 => \"{value}\",\n    Some(v) if v == 0 => \"zero\",\n    _ => \"other\"\n}}\n");
+    assert_format_idempotent(&input, &expected);
+}
+
 #[test]
 fn formats_let_binding_with_newline() {
     let input = "let mut x=1\nlet y = 2";

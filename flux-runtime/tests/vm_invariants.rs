@@ -4,6 +4,7 @@ use flux_runtime::Executor;
 #[test]
 fn rejects_invalid_load_at_executor_init() {
     let program = CompiledProgram {
+        source_map: Default::default(),
         nodes: vec![
             IrNode {
                 name: "a".into(),

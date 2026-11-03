@@ -20,7 +20,10 @@ pub enum ConfigError {
 }
 
 pub fn describe(e: ConfigError) -> String {
-    match e { Malformed(line) => "line {line}: expected `key = value`", Duplicate(key) => "duplicate key `{key}`" }
+    match e {
+        Malformed(line) => "line {line}: expected `key = value`",
+        Duplicate(key) => "duplicate key `{key}`"
+    }
 }
 
 fn find(entries: [Entry], key: String) -> Option[Entry] {

@@ -16,6 +16,7 @@ pub fn monomorphize_program(
     _source: SourceId,
     diagnostics: &mut DiagnosticBag,
 ) {
+    crate::check::prepare_closures(program, _source);
     let mut generic_fns = program.generic_fns.clone();
     if generic_fns.is_empty() {
         for item in &program.items {
@@ -55,6 +56,7 @@ pub fn monomorphize_program(
     const MAX_SPECIALIZED_TYPE_DEPTH: usize = 32;
     let mut specializations: HashMap<(String, String), String> = HashMap::new();
     for pass in 0..MAX_MONOMORPHIZATION_PASSES {
+        crate::check::prepare_closures(program, _source);
         let mut created_specialization = false;
 
         for base_name in &generic_names {
@@ -74,34 +76,33 @@ pub fn monomorphize_program(
                     });
                     continue;
                 }
-                let inferred: Vec<Option<Type>> = args
-                    .iter()
-                    .map(|arg| infer_mono_type(arg, &symbol_types, program))
-                    .collect();
-                for (arg, ty) in args.iter().zip(inferred.iter()) {
-                    if ty.is_none() {
-                        diagnostics.push(FluxError::TypeMismatch {
-                            expected: "a concrete, inferable generic argument type".into(),
-                            found: "an expression whose type cannot be inferred here".into(),
-                            span: span_to_miette(arg.span()),
-                            source_id: arg.span().source,
-                        });
-                    }
-                }
-                let Some(concrete) = inferred.into_iter().collect::<Option<Vec<_>>>() else {
-                    continue;
-                };
                 let Some(substitutions) = infer_generic_substitutions(
                     &template.fn_item,
                     &template.type_params,
-                    &concrete,
+                    &args,
+                    &symbol_types,
                     program,
+                    _source,
+                    diagnostics,
                 ) else {
                     diagnostics.push(FluxError::TypeMismatch {
                         expected: format!(
                             "all generic parameters of `{base_name}` to be inferable from its parameters"
                         ),
                         found: "generic type arguments could not be unified".into(),
+                        span: span_to_miette(span),
+                        source_id: span.source,
+                    });
+                    continue;
+                };
+                let Some(concrete) = args
+                    .iter()
+                    .map(|arg| infer_mono_type(arg, &symbol_types, program))
+                    .collect::<Option<Vec<_>>>()
+                else {
+                    diagnostics.push(FluxError::TypeMismatch {
+                        expected: "concrete, inferable generic arguments".into(),
+                        found: "an expression whose type cannot be inferred here".into(),
                         span: span_to_miette(span),
                         source_id: span.source,
                     });
@@ -177,6 +178,7 @@ pub fn monomorphize_program(
         }
 
         if !created_specialization {
+            crate::check::prepare_closures(program, _source);
             break;
         }
         if pass + 1 == MAX_MONOMORPHIZATION_PASSES {
@@ -209,7 +211,7 @@ fn type_depth(ty: &Type) -> usize {
     }
 }
 
-fn type_to_hir_type(ty: &Type, span: flux_diagnostics::Span) -> HirType {
+pub(crate) fn type_to_hir_type(ty: &Type, span: flux_diagnostics::Span) -> HirType {
     match ty {
         Type::Int => HirType::Named {
             name: "Int".into(),
@@ -238,6 +240,11 @@ fn type_to_hir_type(ty: &Type, span: flux_diagnostics::Span) -> HirType {
         Type::Result { ok, err } => HirType::Result {
             ok: Box::new(type_to_hir_type(ok, span)),
             err: Box::new(type_to_hir_type(err, span)),
+            span,
+        },
+        Type::Map { key, value } => HirType::Generic {
+            name: "Map".into(),
+            args: vec![type_to_hir_type(key, span), type_to_hir_type(value, span)],
             span,
         },
         Type::Struct { name, .. } | Type::Enum { name, .. } => HirType::Named {
@@ -397,6 +404,18 @@ fn infer_mono_type(
                     err: Box::new(infer_mono_type(args.first()?, symbols, program)?),
                 }),
                 "range" => Some(Type::Array(Box::new(Type::Int))),
+                "filter" => infer_mono_type(args.first()?, symbols, program),
+                "map" | "reduce" => {
+                    let cb = args.get(if name == "map" { 1 } else { 2 })?;
+                    let Type::Func { ret, .. } = infer_mono_type(cb, symbols, program)? else {
+                        return None;
+                    };
+                    if name == "map" {
+                        Some(Type::Array(ret))
+                    } else {
+                        Some(*ret)
+                    }
+                }
                 _ => program.items.iter().find_map(|item| match item {
                     HirItem::Fn(function)
                         if function.name == *symbol && function.type_params.is_empty() =>
@@ -425,7 +444,7 @@ fn infer_mono_type(
 }
 
 /// The type of the declared function `symbol`, as a value.
-fn function_type(
+pub(crate) fn function_type(
     symbol: &SymbolId,
     symbols: &HashMap<SymbolId, Type>,
     program: &HirProgram,
@@ -440,7 +459,15 @@ fn function_type(
             let ret = match &function.ret {
                 Some(ret) => hir_type_to_mono_type(ret, program)?,
                 None => match function.body.stmts.last() {
-                    Some(HirStmt::Expr(expr)) => infer_mono_type(expr, symbols, program)?,
+                    Some(HirStmt::Expr(expr)) => {
+                        infer_mono_type(expr, symbols, program).or_else(|| {
+                            function
+                                .params
+                                .iter()
+                                .any(|p| p.unannotated)
+                                .then_some(Type::Empty)
+                        })?
+                    }
                     _ => Type::Unit,
                 },
             };
@@ -505,7 +532,20 @@ fn resolve_named(name: &str, program: &HirProgram, expanding: &mut Vec<String>) 
                                     flux_hir::HirEnumPayload::Tuple(ty) => {
                                         hir_to_mono(ty, program, expanding)
                                     }
-                                    flux_hir::HirEnumPayload::Struct(_) => None,
+                                    flux_hir::HirEnumPayload::Struct(fields) => {
+                                        Some(Type::Struct {
+                                            name: String::new(),
+                                            fields: fields
+                                                .iter()
+                                                .filter_map(|(name, ty)| {
+                                                    Some((
+                                                        name.clone(),
+                                                        hir_to_mono(ty, program, expanding)?,
+                                                    ))
+                                                })
+                                                .collect(),
+                                        })
+                                    }
                                 }),
                             )
                         })
@@ -561,22 +601,48 @@ fn hir_to_mono(ty: &HirType, program: &HirProgram, expanding: &mut Vec<String>) 
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn infer_generic_substitutions(
     function: &HirFn,
     type_params: &[String],
-    actual_types: &[Type],
-    program: &HirProgram,
+    args: &[HirExpr],
+    symbols: &HashMap<SymbolId, Type>,
+    program: &mut HirProgram,
+    source: SourceId,
+    diagnostics: &mut DiagnosticBag,
 ) -> Option<HashMap<String, Type>> {
-    if function.params.len() != actual_types.len() {
+    if function.params.len() != args.len() {
         return None;
     }
     let mut substitutions = HashMap::new();
-    for (param, actual) in function.params.iter().zip(actual_types) {
-        unify_generic_type(&param.ty, actual, type_params, program, &mut substitutions)?;
+    // Do not let a provisional Int callback parameter constrain a known input.
+    for (param, arg) in function.params.iter().zip(args) {
+        if !matches!(arg, HirExpr::Closure { .. }) {
+            let actual = infer_mono_type(arg, symbols, program)?;
+            unify_generic_type(&param.ty, &actual, type_params, program, &mut substitutions)?;
+        }
+    }
+    for (param, arg) in function.params.iter().zip(args) {
+        if matches!(arg, HirExpr::Closure { .. }) {
+            let partial: HashMap<&str, HirType> = substitutions
+                .iter()
+                .map(|(name, ty)| (name.as_str(), type_to_hir_type(ty, arg.span())))
+                .collect();
+            let expected = substitute_hir_type(&param.ty, &partial);
+            let actual = crate::check::infer_generic_callback(
+                program,
+                arg,
+                &expected,
+                symbols,
+                source,
+                diagnostics,
+            )?;
+            unify_generic_type(&param.ty, &actual, type_params, program, &mut substitutions)?;
+        }
     }
     type_params
         .iter()
-        .all(|param| substitutions.contains_key(param))
+        .all(|p| substitutions.contains_key(p))
         .then_some(substitutions)
 }
 
@@ -587,6 +653,9 @@ fn unify_generic_type(
     program: &HirProgram,
     substitutions: &mut HashMap<String, Type>,
 ) -> Option<()> {
+    if matches!(actual, Type::Empty) {
+        return Some(());
+    }
     let parameter_name = match declared {
         HirType::TypeParam { name, .. } => Some(name),
         HirType::Named { name, .. } if type_params.iter().any(|param| param == name) => Some(name),
@@ -595,7 +664,9 @@ fn unify_generic_type(
     if let Some(name) = parameter_name {
         let actual = normalize_mono_type(actual.clone());
         if let Some(previous) = substitutions.get(name) {
-            return (previous == &actual).then_some(());
+            // Checker types expand nominal fields and use Int64; the mono
+            // collector can retain Int aliases and shallower recursive types.
+            return crate::check::types_compatible(previous, &actual).then_some(());
         }
         substitutions.insert(name.clone(), actual);
         return Some(());
@@ -663,21 +734,54 @@ fn remap_instantiated_symbols(
     }
     collect_block_local_declarations(&function.body, &mut declared);
 
+    let mut closures = HashMap::new();
+    loop {
+        let pending: Vec<_> = declared
+            .iter()
+            .filter_map(|id| {
+                if closures.contains_key(id) {
+                    return None;
+                }
+                program.items.iter().find_map(|item| match item {
+                    HirItem::Fn(f) if f.name == *id && f.is_closure => Some(f.clone()),
+                    _ => None,
+                })
+            })
+            .collect();
+        if pending.is_empty() {
+            break;
+        }
+        for f in pending {
+            declared.extend(f.params.iter().map(|p| p.name));
+            collect_block_local_declarations(&f.body, &mut declared);
+            closures.insert(f.name, f);
+        }
+    }
     let mut remap = HashMap::new();
+    let mut declared: Vec<_> = declared.into_iter().collect();
+    declared.sort_by_key(|id| id.0);
     for id in declared {
         let Some(symbol) = program.symbols.get(&id).cloned() else {
             continue;
         };
-        if !matches!(symbol.kind, SymbolKind::Local { .. } | SymbolKind::Param) {
+        if !matches!(symbol.kind, SymbolKind::Local { .. } | SymbolKind::Param)
+            && !closures.contains_key(&id)
+        {
             continue;
         }
         let new_id = SymbolId(*next_id);
         *next_id += 1;
+        let name = if closures.contains_key(&id) {
+            format!("{}__instance_{}", symbol.name, new_id.0)
+        } else {
+            symbol.name.clone()
+        };
         let new_symbol = Symbol {
             id: new_id,
+            name: name.clone(),
             ..symbol.clone()
         };
-        program.names.insert(new_id, symbol.name);
+        program.names.insert(new_id, name);
         program.symbols.insert(new_id, new_symbol);
         remap.insert(id, new_id);
     }
@@ -688,6 +792,28 @@ fn remap_instantiated_symbols(
             types: subst,
         },
     );
+    for (id, template) in closures {
+        let mut closure = instantiate_fn(&template, remap[&id], subst);
+        closure.ret = None;
+        // The template's provisional context is not shared by its instances.
+        for p in &mut closure.params {
+            if p.unannotated {
+                p.ty = HirType::Named {
+                    name: "Int".into(),
+                    span: p.span,
+                };
+                p.defaulted_to_int = true;
+            }
+        }
+        remap_function_symbols(
+            &mut closure,
+            &Remap {
+                symbols: &remap,
+                types: subst,
+            },
+        );
+        program.items.push(HirItem::Fn(closure));
+    }
 }
 
 /// What a generic function's instance changes in its copy of the body: fresh
@@ -822,12 +948,17 @@ fn collect_expr_local_declarations(expr: &HirExpr, out: &mut std::collections::H
         | HirExpr::Float { .. }
         | HirExpr::Bool { .. }
         | HirExpr::String { .. }
-        | HirExpr::Ident { .. }
-        | HirExpr::Closure { .. } => {}
+        | HirExpr::Ident { .. } => {}
+        HirExpr::Closure { fn_symbol, .. } => {
+            out.insert(*fn_symbol);
+        }
     }
 }
 
 fn remap_function_symbols(function: &mut HirFn, remap: &Remap<'_>) {
+    for capture in &mut function.captures {
+        remap_id(capture, remap);
+    }
     for param in &mut function.params {
         remap_id(&mut param.name, remap);
     }
@@ -969,7 +1100,12 @@ fn remap_expr_symbols(expr: &mut HirExpr, remap: &Remap<'_>) {
         | HirExpr::Bool { .. }
         | HirExpr::String { .. } => {}
         // Its body keeps its own symbols; only what it loads here is this function's.
-        HirExpr::Closure { captures, .. } => {
+        HirExpr::Closure {
+            fn_symbol,
+            captures,
+            ..
+        } => {
+            remap_id(fn_symbol, remap);
             for capture in captures {
                 remap_id(capture, remap);
             }
@@ -984,6 +1120,7 @@ fn collect_symbol_types(program: &HirProgram) -> HashMap<SymbolId, Type> {
         for item in &program.items {
             match item {
                 HirItem::Binding(binding) => {
+                    collect_expr_symbol_types(&binding.value, &mut symbols, program);
                     let ty = binding
                         .ty
                         .as_ref()
@@ -1007,7 +1144,16 @@ fn collect_symbol_types(program: &HirProgram) -> HashMap<SymbolId, Type> {
                 HirItem::On(handler) => {
                     collect_block_symbol_types(&handler.body, &mut symbols, program)
                 }
-                _ => {}
+                HirItem::SourceAssign(assign) => {
+                    collect_expr_symbol_types(&assign.value, &mut symbols, program)
+                }
+                HirItem::InitIf(branch) => collect_if_symbol_types(branch, &mut symbols, program),
+                HirItem::Impl(implementation) => {
+                    for method in &implementation.methods {
+                        collect_block_symbol_types(&method.body, &mut symbols, program);
+                    }
+                }
+                HirItem::Struct(_) | HirItem::Enum(_) | HirItem::Trait(_) | HirItem::Event(_) => {}
             }
         }
         if symbols.len() == before {
@@ -1015,6 +1161,21 @@ fn collect_symbol_types(program: &HirProgram) -> HashMap<SymbolId, Type> {
         }
     }
     symbols
+}
+
+fn collect_if_symbol_types(
+    branch: &flux_hir::HirIf,
+    symbols: &mut HashMap<SymbolId, Type>,
+    program: &HirProgram,
+) {
+    collect_expr_symbol_types(&branch.cond, symbols, program);
+    collect_block_symbol_types(&branch.then_branch, symbols, program);
+    if let Some(other) = &branch.else_branch {
+        match other {
+            flux_hir::HirElse::If(nested) => collect_if_symbol_types(nested, symbols, program),
+            flux_hir::HirElse::Block(block) => collect_block_symbol_types(block, symbols, program),
+        }
+    }
 }
 
 fn collect_block_symbol_types(
@@ -1025,6 +1186,7 @@ fn collect_block_symbol_types(
     for stmt in &block.stmts {
         match stmt {
             HirStmt::Let(binding) => {
+                collect_expr_symbol_types(&binding.value, symbols, program);
                 if let Some(ty) = binding
                     .ty
                     .as_ref()
@@ -1034,23 +1196,25 @@ fn collect_block_symbol_types(
                     symbols.insert(binding.name, ty);
                 }
             }
-            HirStmt::If(if_stmt) => {
-                collect_block_symbol_types(&if_stmt.then_branch, symbols, program);
-                if let Some(else_branch) = &if_stmt.else_branch {
-                    match else_branch {
-                        flux_hir::HirElse::If(nested) => {
-                            collect_block_symbol_types(&nested.then_branch, symbols, program)
-                        }
-                        flux_hir::HirElse::Block(block) => {
-                            collect_block_symbol_types(block, symbols, program)
-                        }
-                    }
+            HirStmt::Assign(assign) => collect_expr_symbol_types(&assign.value, symbols, program),
+            HirStmt::Expr(expr) => collect_expr_symbol_types(expr, symbols, program),
+            HirStmt::Emit(emit) => {
+                for arg in &emit.args {
+                    collect_expr_symbol_types(arg, symbols, program);
                 }
             }
+            HirStmt::Return(ret) => {
+                if let Some(expr) = &ret.value {
+                    collect_expr_symbol_types(expr, symbols, program);
+                }
+            }
+            HirStmt::If(branch) => collect_if_symbol_types(branch, symbols, program),
             HirStmt::While(loop_stmt) => {
-                collect_block_symbol_types(&loop_stmt.body, symbols, program)
+                collect_expr_symbol_types(&loop_stmt.cond, symbols, program);
+                collect_block_symbol_types(&loop_stmt.body, symbols, program);
             }
             HirStmt::For(loop_stmt) => {
+                collect_expr_symbol_types(&loop_stmt.iter, symbols, program);
                 if let Some(Type::Array(inner)) = infer_mono_type(&loop_stmt.iter, symbols, program)
                 {
                     symbols.insert(loop_stmt.name, *inner);
@@ -1059,7 +1223,136 @@ fn collect_block_symbol_types(
             }
             HirStmt::Watch(watch) => collect_block_symbol_types(&watch.body, symbols, program),
             HirStmt::On(handler) => collect_block_symbol_types(&handler.body, symbols, program),
-            _ => {}
+            HirStmt::Break(_) | HirStmt::Continue(_) => {}
+        }
+    }
+}
+
+/// Symbols are unique across scopes, so arm locals can share this type map.
+fn collect_expr_symbol_types(
+    expr: &HirExpr,
+    symbols: &mut HashMap<SymbolId, Type>,
+    program: &HirProgram,
+) {
+    match expr {
+        HirExpr::Snap { expr, .. }
+        | HirExpr::Unary { expr, .. }
+        | HirExpr::Cast { expr, .. }
+        | HirExpr::ToText { expr, .. }
+        | HirExpr::Try { expr, .. } => collect_expr_symbol_types(expr, symbols, program),
+        HirExpr::Call { callee, args, .. } => {
+            collect_expr_symbol_types(callee, symbols, program);
+            for arg in args {
+                collect_expr_symbol_types(arg, symbols, program);
+            }
+        }
+        HirExpr::Field { base, .. } => collect_expr_symbol_types(base, symbols, program),
+        HirExpr::Binary { left, right, .. }
+        | HirExpr::Index {
+            base: left,
+            index: right,
+            ..
+        } => {
+            collect_expr_symbol_types(left, symbols, program);
+            collect_expr_symbol_types(right, symbols, program);
+        }
+        HirExpr::If {
+            cond,
+            then_expr,
+            else_expr,
+            ..
+        } => {
+            collect_expr_symbol_types(cond, symbols, program);
+            collect_expr_symbol_types(then_expr, symbols, program);
+            collect_expr_symbol_types(else_expr, symbols, program);
+        }
+        HirExpr::Array { elems, .. } => {
+            for elem in elems {
+                collect_expr_symbol_types(elem, symbols, program);
+            }
+        }
+        HirExpr::StructLit { fields, .. } => {
+            for (_, value) in fields {
+                collect_expr_symbol_types(value, symbols, program);
+            }
+        }
+        HirExpr::EnumVariant { payload, .. } => {
+            if let Some(payload) = payload {
+                collect_expr_symbol_types(payload, symbols, program);
+            }
+        }
+        HirExpr::Match {
+            scrutinee, arms, ..
+        } => {
+            collect_expr_symbol_types(scrutinee, symbols, program);
+            let scrutinee_type = infer_mono_type(scrutinee, symbols, program);
+            for arm in arms {
+                if let Some(ty) = &scrutinee_type {
+                    collect_pattern_symbol_types(arm, ty, symbols, program);
+                }
+                if let Some(literal) = &arm.literal {
+                    collect_expr_symbol_types(literal, symbols, program);
+                }
+                if let Some(guard) = &arm.guard {
+                    collect_expr_symbol_types(guard, symbols, program);
+                }
+                collect_block_symbol_types(&arm.body, symbols, program);
+                collect_expr_symbol_types(&arm.expr, symbols, program);
+            }
+        }
+        // Closure bodies are separate function items.
+        HirExpr::Int { .. }
+        | HirExpr::Float { .. }
+        | HirExpr::Bool { .. }
+        | HirExpr::String { .. }
+        | HirExpr::Ident { .. }
+        | HirExpr::Closure { .. } => {}
+    }
+}
+
+fn collect_pattern_symbol_types(
+    arm: &flux_hir::HirMatchArm,
+    scrutinee: &Type,
+    symbols: &mut HashMap<SymbolId, Type>,
+    program: &HirProgram,
+) {
+    if arm.bindings.is_empty() {
+        return;
+    }
+    let payload = match scrutinee {
+        _ if arm.variant.is_empty() => Some(scrutinee.clone()),
+        Type::Option(inner) if arm.variant == "Some" => Some((**inner).clone()),
+        Type::Result { ok, .. } if arm.variant == "Ok" => Some((**ok).clone()),
+        Type::Result { err, .. } if arm.variant == "Err" => Some((**err).clone()),
+        Type::Enum { name, variants } => {
+            // Resolve the named boundary of a recursive enum when needed.
+            let expanded;
+            let variants = if variants.is_empty() {
+                expanded = resolve_type_name(name, program);
+                match &expanded {
+                    Some(Type::Enum { variants, .. }) => variants,
+                    _ => return,
+                }
+            } else {
+                variants
+            };
+            variants
+                .iter()
+                .find(|(name, _)| name == &arm.variant)
+                .and_then(|(_, payload)| payload.clone())
+        }
+        _ => None,
+    };
+    let Some(payload) = payload else { return };
+    if arm.binding_fields.is_empty() {
+        if let Some(binding) = arm.bindings.first() {
+            symbols.insert(*binding, payload);
+        }
+    } else if let Type::Struct { fields, .. } = payload {
+        for (binding, field) in arm.bindings.iter().zip(&arm.binding_fields) {
+            if let Some((_, ty)) = fields.iter().find(|(name, _)| name == field) {
+                symbols.insert(*binding, ty.clone());
+            }
         }
     }
 }
@@ -1115,6 +1408,7 @@ fn substitute_hir_type(ty: &HirType, subst: &HashMap<&str, HirType>) -> HirType 
 
 fn instantiate_fn(template: &HirFn, name: SymbolId, subst: &HashMap<&str, HirType>) -> HirFn {
     HirFn {
+        is_closure: template.is_closure,
         name,
         type_params: vec![],
         params: template
@@ -1123,6 +1417,8 @@ fn instantiate_fn(template: &HirFn, name: SymbolId, subst: &HashMap<&str, HirTyp
             .map(|p| HirParam {
                 name: p.name,
                 ty: substitute_hir_type(&p.ty, subst),
+                unannotated: p.unannotated,
+                defaulted_to_int: p.defaulted_to_int,
                 span: p.span,
             })
             .collect(),
@@ -1318,22 +1614,26 @@ fn collect_calls_in_item(
         HirItem::Watch(w) => collect_calls_in_block(program, &w.body, base_name, out),
         HirItem::On(o) => collect_calls_in_block(program, &o.body, base_name, out),
         HirItem::SourceAssign(a) => collect_calls_in_expr(program, &a.value, base_name, out),
-        HirItem::InitIf(i) => {
-            collect_calls_in_expr(program, &i.cond, base_name, out);
-            collect_calls_in_block(program, &i.then_branch, base_name, out);
-            if let Some(e) = &i.else_branch {
-                match e {
-                    flux_hir::HirElse::If(inner) => {
-                        collect_calls_in_expr(program, &inner.cond, base_name, out);
-                        collect_calls_in_block(program, &inner.then_branch, base_name, out);
-                    }
-                    flux_hir::HirElse::Block(b) => {
-                        collect_calls_in_block(program, b, base_name, out);
-                    }
-                }
+        HirItem::InitIf(i) => collect_calls_in_if(program, i, base_name, out),
+        _ => {}
+    }
+}
+
+fn collect_calls_in_if(
+    program: &HirProgram,
+    branch: &flux_hir::HirIf,
+    base_name: &str,
+    out: &mut Vec<(Vec<HirExpr>, flux_diagnostics::Span)>,
+) {
+    collect_calls_in_expr(program, &branch.cond, base_name, out);
+    collect_calls_in_block(program, &branch.then_branch, base_name, out);
+    if let Some(other) = &branch.else_branch {
+        match other {
+            flux_hir::HirElse::If(nested) => collect_calls_in_if(program, nested, base_name, out),
+            flux_hir::HirElse::Block(block) => {
+                collect_calls_in_block(program, block, base_name, out)
             }
         }
-        _ => {}
     }
 }
 
@@ -1353,21 +1653,7 @@ fn collect_calls_in_block(
                     collect_calls_in_expr(program, v, base_name, out);
                 }
             }
-            HirStmt::If(i) => {
-                collect_calls_in_expr(program, &i.cond, base_name, out);
-                collect_calls_in_block(program, &i.then_branch, base_name, out);
-                if let Some(e) = &i.else_branch {
-                    match e {
-                        flux_hir::HirElse::If(inner) => {
-                            collect_calls_in_expr(program, &inner.cond, base_name, out);
-                            collect_calls_in_block(program, &inner.then_branch, base_name, out);
-                        }
-                        flux_hir::HirElse::Block(b) => {
-                            collect_calls_in_block(program, b, base_name, out);
-                        }
-                    }
-                }
-            }
+            HirStmt::If(i) => collect_calls_in_if(program, i, base_name, out),
             HirStmt::While(w) => {
                 collect_calls_in_expr(program, &w.cond, base_name, out);
                 collect_calls_in_block(program, &w.body, base_name, out);
@@ -1538,49 +1824,45 @@ fn rewrite_item_matching_calls(
             rewrite_expr_matching_calls(&mut a.value, from, to, match_types, symbol_types, program)
         }
         HirItem::InitIf(i) => {
-            rewrite_expr_matching_calls(&mut i.cond, from, to, match_types, symbol_types, program);
-            rewrite_block_matching_calls(
-                &mut i.then_branch,
-                from,
-                to,
-                match_types,
-                symbol_types,
-                program,
-            );
-            if let Some(e) = &mut i.else_branch {
-                match e {
-                    flux_hir::HirElse::If(inner) => {
-                        rewrite_expr_matching_calls(
-                            &mut inner.cond,
-                            from,
-                            to,
-                            match_types,
-                            symbol_types,
-                            program,
-                        );
-                        rewrite_block_matching_calls(
-                            &mut inner.then_branch,
-                            from,
-                            to,
-                            match_types,
-                            symbol_types,
-                            program,
-                        );
-                    }
-                    flux_hir::HirElse::Block(b) => {
-                        rewrite_block_matching_calls(
-                            b,
-                            from,
-                            to,
-                            match_types,
-                            symbol_types,
-                            program,
-                        );
-                    }
-                }
-            }
+            rewrite_if_matching_calls(i, from, to, match_types, symbol_types, program)
         }
         _ => {}
+    }
+}
+
+fn rewrite_if_matching_calls(
+    branch: &mut flux_hir::HirIf,
+    from: SymbolId,
+    to: SymbolId,
+    match_types: &[Type],
+    symbol_types: &HashMap<SymbolId, Type>,
+    program: &HirProgram,
+) {
+    rewrite_expr_matching_calls(
+        &mut branch.cond,
+        from,
+        to,
+        match_types,
+        symbol_types,
+        program,
+    );
+    rewrite_block_matching_calls(
+        &mut branch.then_branch,
+        from,
+        to,
+        match_types,
+        symbol_types,
+        program,
+    );
+    if let Some(other) = &mut branch.else_branch {
+        match other {
+            flux_hir::HirElse::If(nested) => {
+                rewrite_if_matching_calls(nested, from, to, match_types, symbol_types, program)
+            }
+            flux_hir::HirElse::Block(block) => {
+                rewrite_block_matching_calls(block, from, to, match_types, symbol_types, program)
+            }
+        }
     }
 }
 
@@ -1619,54 +1901,7 @@ fn rewrite_block_matching_calls(
                 }
             }
             HirStmt::If(i) => {
-                rewrite_expr_matching_calls(
-                    &mut i.cond,
-                    from,
-                    to,
-                    match_types,
-                    symbol_types,
-                    program,
-                );
-                rewrite_block_matching_calls(
-                    &mut i.then_branch,
-                    from,
-                    to,
-                    match_types,
-                    symbol_types,
-                    program,
-                );
-                if let Some(e) = &mut i.else_branch {
-                    match e {
-                        flux_hir::HirElse::If(inner) => {
-                            rewrite_expr_matching_calls(
-                                &mut inner.cond,
-                                from,
-                                to,
-                                match_types,
-                                symbol_types,
-                                program,
-                            );
-                            rewrite_block_matching_calls(
-                                &mut inner.then_branch,
-                                from,
-                                to,
-                                match_types,
-                                symbol_types,
-                                program,
-                            );
-                        }
-                        flux_hir::HirElse::Block(b) => {
-                            rewrite_block_matching_calls(
-                                b,
-                                from,
-                                to,
-                                match_types,
-                                symbol_types,
-                                program,
-                            );
-                        }
-                    }
-                }
+                rewrite_if_matching_calls(i, from, to, match_types, symbol_types, program)
             }
             HirStmt::While(w) => {
                 rewrite_expr_matching_calls(

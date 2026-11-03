@@ -114,7 +114,7 @@ fn run_one(
     match executor.call(name, &[]) {
         Ok(RuntimeValue::Bool(false)) => Err("returned false".into()),
         Ok(_) => Ok(()),
-        Err(err) => Err(err.to_string()),
+        Err(err) => Err(format!("{err:#}")),
     }
 }
 

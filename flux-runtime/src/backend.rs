@@ -73,10 +73,6 @@ impl JitBackend {
         self.engine.stats()
     }
 
-    pub fn lazy_if_deps_for(&self, name: &str) -> Option<std::collections::HashSet<String>> {
-        self.engine.lazy_if_deps_for(name).cloned()
-    }
-
     /// `depth`: calls already active, so nested JIT calls count from there.
     pub fn try_call_fn(
         &self,
@@ -237,19 +233,6 @@ impl ActiveBackend {
     #[cfg(not(feature = "jit"))]
     #[allow(dead_code)]
     pub fn jit_stats(&self) -> Option<()> {
-        None
-    }
-
-    #[cfg(feature = "jit")]
-    pub fn lazy_if_deps_for(&self, name: &str) -> Option<std::collections::HashSet<String>> {
-        match self {
-            Self::Jit(b) => b.lazy_if_deps_for(name),
-            Self::Vm(_) => None,
-        }
-    }
-
-    #[cfg(not(feature = "jit"))]
-    pub fn lazy_if_deps_for(&self, _name: &str) -> Option<std::collections::HashSet<String>> {
         None
     }
 

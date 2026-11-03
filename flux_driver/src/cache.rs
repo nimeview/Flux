@@ -19,7 +19,7 @@ use crate::paths::{cache_dir, ensure_project_dirs};
 const CACHE_MAGIC: &[u8; 6] = b"FLXIR\0";
 /// Blob layout version: magic, version, fingerprint length + bytes, SHA-256 of
 /// the payload, payload.
-const CACHE_VERSION: u8 = 3;
+const CACHE_VERSION: u8 = 4;
 /// Most compiled programs a project's cache directory keeps.
 const MAX_CACHE_ENTRIES: usize = 64;
 

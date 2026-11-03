@@ -1,1 +1,2 @@
 error: runtime error: allocation limit exceeded in `main`
+  at main (<dir>/main.fl:101:5)

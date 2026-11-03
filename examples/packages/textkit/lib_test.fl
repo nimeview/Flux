@@ -19,5 +19,8 @@ fn test_parses_entries() {
 }
 
 fn test_reports_duplicates() {
-    match parse("a = 1\na = 2\n") { Ok(_) => assert(false), Err(e) => assert_eq(describe(e), "duplicate key `a`") }
+    match parse("a = 1\na = 2\n") {
+        Ok(_) => assert(false),
+        Err(e) => assert_eq(describe(e), "duplicate key `a`")
+    }
 }

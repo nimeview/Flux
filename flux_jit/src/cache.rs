@@ -11,7 +11,7 @@ use sha2::{Digest, Sha256};
 use crate::JitEngine;
 
 /// Bump when JIT slot ABI, codegen, or host heap layout changes.
-pub const JIT_CACHE_VERSION: u8 = 6;
+pub const JIT_CACHE_VERSION: u8 = 7;
 
 thread_local! {
     static JIT_CACHE: RefCell<HashMap<String, Rc<JitEngine>>> = RefCell::new(HashMap::new());

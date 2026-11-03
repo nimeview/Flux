@@ -21,7 +21,7 @@ use crate::types::Type;
 use super::resolve::resolve_hir_type;
 use super::state::{Scope, TypeCheckContext};
 
-pub(super) use expr::infer_expr;
+pub(super) use expr::{infer_expr, infer_expr_expected, usable_context};
 
 pub(super) fn infer_block_return(
     ctx: &TypeCheckContext,
@@ -53,22 +53,16 @@ pub(super) fn infer_block_return(
         }
     }
 
-    for stmt in block.stmts.iter().rev() {
-        match stmt {
-            HirStmt::Return(r) => {
-                return r
-                    .value
-                    .as_ref()
-                    .map(|v| infer_expr(ctx, v, &scope, names, source, diagnostics))
-                    .unwrap_or(Some(Type::Unit));
-            }
-            HirStmt::Expr(expr) => {
-                return infer_expr(ctx, expr, &scope, names, source, diagnostics);
-            }
-            _ => continue,
-        }
+    // Only the last statement gives a value, as at run time.
+    match block.stmts.last() {
+        Some(HirStmt::Return(r)) => r
+            .value
+            .as_ref()
+            .map(|v| infer_expr(ctx, v, &scope, names, source, diagnostics))
+            .unwrap_or(Some(Type::Unit)),
+        Some(HirStmt::Expr(expr)) => infer_expr(ctx, expr, &scope, names, source, diagnostics),
+        _ => Some(Type::Unit),
     }
-    Some(Type::Unit)
 }
 
 /// Value type of an `if` statement used as a block's tail. Both branches must

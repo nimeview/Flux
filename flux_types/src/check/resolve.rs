@@ -33,6 +33,9 @@ pub(super) fn resolve_hir_type(
 ) -> Option<Type> {
     match ty {
         HirType::Named { name, span } => {
+            if ctx.generic_parameters.borrow().contains(name) {
+                return Some(Type::Error);
+            }
             if let Some(ty) = ctx.user_type(name) {
                 return Some(ty.clone());
             }
@@ -105,7 +108,11 @@ pub(super) fn resolve_hir_type(
                 resolve_type_name(name, *span).ok()
             }
         }
-        HirType::TypeParam { name, .. } => Some(Type::Var(name.clone())),
+        HirType::TypeParam { name, .. } => Some(if ctx.generic_parameters.borrow().is_empty() {
+            Type::Var(name.clone())
+        } else {
+            Type::Error
+        }),
     }
 }
 

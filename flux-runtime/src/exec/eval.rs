@@ -12,7 +12,8 @@ use crate::vm::{
 use flux_value::NumOp;
 
 use super::values::{
-    arith_binop, cmp, eq_binop, extract_variant_payload, to_runtime, variant_tag_eq,
+    arith_binop, cmp, display_fn_name, eq_binop, extract_variant_payload, to_runtime,
+    variant_tag_eq,
 };
 use super::{Executor, FlowControl, Locals};
 
@@ -583,22 +584,29 @@ impl Executor {
         result
     }
 
+    #[cold]
+    #[inline(never)]
+    fn note_call_failure(&mut self, name: &str) {
+        self.push_trace_frame(display_fn_name(name), None);
+    }
+
     fn run_user_fn(
         &mut self,
         name: &str,
         func: &flux_ir::CompiledFunction,
         args: &[RuntimeValue],
     ) -> RuntimeValue {
-        match self
-            .backend
-            .try_call_fn(name, args, &self.graph, self.call_depth)
-        {
-            Some(Ok(result)) => return result,
-            Some(Err(e)) => {
-                self.raise(e);
-                return RuntimeValue::Unit;
+        // Compiled code does not report what it reads, and a derived value being
+        // tracked depends on the reads of what it calls.
+        if !self.vm_only && self.tracking_scope.is_none() {
+            match self
+                .backend
+                .try_call_fn(name, args, &self.graph, self.call_depth)
+            {
+                Some(Ok(result)) => return result,
+                Some(Err(_)) => self.replay_on_vm(),
+                None => {}
             }
-            None => {}
         }
         let mut locals = self.locals_pool.pop().unwrap_or_default();
         // Parameters are slots `0..n`.
@@ -606,6 +614,9 @@ impl Executor {
             locals.set(slot, arg.clone());
         }
         let (value, _) = self.run_stmts_flow(&func.body, &mut locals);
+        if self.trap.is_some() {
+            self.note_call_failure(name);
+        }
         locals.clear();
         if self.locals_pool.len() < super::LOCALS_POOL_LIMIT {
             self.locals_pool.push(locals);

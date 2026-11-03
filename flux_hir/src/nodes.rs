@@ -107,6 +107,8 @@ pub struct HirBinding {
 
 #[derive(Debug, Clone)]
 pub struct HirFn {
+    /// A function synthesized from a closure literal.
+    pub is_closure: bool,
     pub name: SymbolId,
     pub type_params: Vec<String>,
     pub params: Vec<HirParam>,
@@ -139,6 +141,10 @@ pub struct HirOn {
 pub struct HirParam {
     pub name: SymbolId,
     pub ty: HirType,
+    /// Whether the source closure parameter omitted a type annotation.
+    pub unannotated: bool,
+    /// The checker used Int because no usable context was available.
+    pub defaulted_to_int: bool,
     pub span: Span,
 }
 

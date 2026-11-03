@@ -60,9 +60,6 @@ pub struct SymbolTable {
     pub closure_counter: u32,
     /// Names that imports brought into the module's scope.
     pub imported_names: std::collections::HashSet<String>,
-    /// Parameter types of non-generic functions, so a closure argument can
-    /// take its parameter types from `f: fn(String) -> Int`.
-    pub fn_signatures: HashMap<String, Vec<flux_syntax::TypeName>>,
     /// Closures being lowered, innermost last; see [`Self::note_use`].
     closure_frames: Vec<ClosureFrame>,
     pub pending_fns: Vec<crate::nodes::HirItem>,
@@ -74,9 +71,6 @@ pub struct SymbolTable {
     hidden_builtins: HashMap<String, SymbolId>,
     /// Module-level `const` binding names (immutable, no reassignment).
     pub const_bindings: std::collections::HashSet<String>,
-    /// Best-effort element type of array-valued module bindings (by name), used to
-    /// infer untyped closure parameter types at HOF call sites (e.g. `map(nums, |x| ...)`).
-    pub array_elem_hints: HashMap<String, flux_syntax::TypeName>,
     /// `const` bindings: fixed at compile time, so reading one is not a
     /// reactive read (pure `fn`s may use them).
     pub constants: std::collections::HashSet<SymbolId>,
@@ -111,14 +105,12 @@ impl SymbolTable {
             enum_variants: HashMap::new(),
             closure_counter: 0,
             imported_names: std::collections::HashSet::new(),
-            fn_signatures: HashMap::new(),
             closure_frames: Vec::new(),
             pending_fns: Vec::new(),
             pending_bindings: Vec::new(),
             pending_impls: Vec::new(),
             hidden_builtins: HashMap::new(),
             const_bindings: std::collections::HashSet::new(),
-            array_elem_hints: HashMap::new(),
             constants: std::collections::HashSet::new(),
             immutable_lets: std::collections::HashSet::new(),
             trait_impl_index: HashMap::new(),

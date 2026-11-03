@@ -4,4 +4,4 @@ version = 1
 [[package]]
 name = "textkit"
 path = "../textkit"
-checksum = "sha256:a4b48a09c541c50a9a9531e8c200892796b3f04a1d7532a5e40cb56b079987cf"
+checksum = "sha256:404ed99c63b1be5ce5674c33e5c6a792ac1b07c6573079647b9b57d3573930a3"

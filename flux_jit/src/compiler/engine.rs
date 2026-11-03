@@ -229,7 +229,6 @@ pub struct JitEngine {
     /// Reactive nodes any function reads (a call may reach any of them).
     fn_reads: HashSet<String>,
     fallback_reasons: HashMap<String, usize>,
-    pub lazy_if_deps: HashMap<String, HashSet<String>>,
     /// `__on_N` → slot pair index for event param binding.
     pub handler_param_slots: HashMap<String, u32>,
     pub tables: JitTables,
@@ -311,7 +310,6 @@ impl JitEngine {
             entry_reads: HashMap::new(),
             fn_reads: HashSet::new(),
             fallback_reasons: HashMap::new(),
-            lazy_if_deps: HashMap::new(),
             handler_param_slots: HashMap::new(),
             tables,
             host_slots: 0,
@@ -428,16 +426,23 @@ impl JitEngine {
         }
 
         let jit_fn_names: HashSet<String> = jit_fn_ids.keys().cloned().collect();
+        // Only an `rfn` can read reactive nodes, and only an `rfn` can call one.
+        let reactive_fns: HashSet<&str> = program
+            .functions
+            .iter()
+            .filter(|f| f.reactive)
+            .map(|f| f.name.as_str())
+            .collect();
         for node in &program.nodes {
             if node.code.is_empty() {
                 continue;
             }
             call_scratch_pairs = call_scratch_pairs.max(max_call_argc_in_code(&node.code));
-            if code_has_lazy_if(&node.code) {
-                let deps = collect_lazy_if_loads(&node.code);
-                if !deps.is_empty() {
-                    engine.lazy_if_deps.insert(node.name.clone(), deps);
-                }
+            // Such a node depends only on the nodes its taken branch read,
+            // which the VM records as it runs.
+            if has_dynamic_deps(&node.code, &engine.layout.name_to_idx, &reactive_fns) {
+                engine.note_fallback(&node.name, "dynamic_dependencies");
+                continue;
             }
             let label = format!("expr_{}", node.name);
             if is_numeric_code(&node.code, &jit_fn_names) {
@@ -563,10 +568,6 @@ impl JitEngine {
             reasons: self.fallback_reasons.clone(),
             fallback_nodes: self.vm_fallback.iter().cloned().collect(),
         }
-    }
-
-    pub fn lazy_if_deps_for(&self, name: &str) -> Option<&HashSet<String>> {
-        self.lazy_if_deps.get(name)
     }
 
     /// Reactive node slots (callee args start at this pair index).
@@ -780,18 +781,43 @@ impl JitEngine {
     }
 }
 
-fn code_has_lazy_if(code: &[Inst]) -> bool {
-    code.iter().any(|i| match i {
-        Inst::LazyIf { .. } => true,
-        Inst::ShortAnd(inner) | Inst::ShortOr(inner) => code_has_lazy_if(inner),
+/// Whether a `LazyIf` in `code` reads a reactive node, so the node's
+/// dependencies vary with the branch taken.
+fn has_dynamic_deps(
+    code: &[Inst],
+    nodes: &HashMap<String, u32>,
+    reactive_fns: &HashSet<&str>,
+) -> bool {
+    code.iter().any(|inst| match inst {
+        Inst::LazyIf {
+            then_branch,
+            else_branch,
+        } => {
+            let mut loads = HashSet::new();
+            collect_lazy_if_loads_rec(then_branch, &mut loads);
+            collect_lazy_if_loads_rec(else_branch, &mut loads);
+            loads.iter().any(|name| nodes.contains_key(name))
+                || calls_reactive(then_branch, reactive_fns)
+                || calls_reactive(else_branch, reactive_fns)
+        }
+        Inst::ShortAnd(inner) | Inst::ShortOr(inner) => {
+            has_dynamic_deps(inner, nodes, reactive_fns)
+        }
         _ => false,
     })
 }
 
-fn collect_lazy_if_loads(code: &[Inst]) -> HashSet<String> {
-    let mut set = HashSet::new();
-    collect_lazy_if_loads_rec(code, &mut set);
-    set
+/// Whether `code` calls an `rfn`, however deep in its conditional parts.
+fn calls_reactive(code: &[Inst], reactive_fns: &HashSet<&str>) -> bool {
+    code.iter().any(|inst| match inst {
+        Inst::Call { name, .. } => reactive_fns.contains(name.as_str()),
+        Inst::LazyIf {
+            then_branch,
+            else_branch,
+        } => calls_reactive(then_branch, reactive_fns) || calls_reactive(else_branch, reactive_fns),
+        Inst::ShortAnd(inner) | Inst::ShortOr(inner) => calls_reactive(inner, reactive_fns),
+        _ => false,
+    })
 }
 
 fn collect_lazy_if_loads_rec(code: &[Inst], set: &mut HashSet<String>) {
@@ -865,7 +891,9 @@ fn stmts_leave_loop(stmts: &[IrStmt]) -> bool {
             then_body,
             else_body,
             ..
-        } => stmts_leave_loop(then_body) || else_body.as_deref().is_some_and(stmts_leave_loop),
+        } => {
+            stmts_leave_loop(then_body) || else_body.as_deref().is_some_and(|b| stmts_leave_loop(b))
+        }
         IrStmt::While { body, .. } | IrStmt::For { body, .. } => stmts_leave_loop(body),
         _ => false,
     })
@@ -879,7 +907,7 @@ fn stmts_emit(stmts: &[IrStmt]) -> bool {
             then_body,
             else_body,
             ..
-        } => stmts_emit(then_body) || else_body.as_deref().is_some_and(stmts_emit),
+        } => stmts_emit(then_body) || else_body.as_deref().is_some_and(|b| stmts_emit(b)),
         IrStmt::While { body, .. } | IrStmt::For { body, .. } => stmts_emit(body),
         _ => false,
     })

@@ -85,6 +85,7 @@ pub const PURE_INTRINSICS: &[&str] = &[
     "str_ends_with",
     "str_to_lower",
     "str_to_upper",
+    "to_string",
 ];
 
 /// Builtin calls with side effects (I/O, printing) — forbidden in derived expressions.

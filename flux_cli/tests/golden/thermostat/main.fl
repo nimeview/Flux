@@ -91,11 +91,11 @@ fn main() {
     while going {
         match read_line() {
             Ok(line) => match apply(line) {
-            Ok(more) => {
-                going = more
+                Ok(more) => {
+                    going = more
+                },
+                Err(e) => eprintln("skipped: {e}")
             },
-            Err(e) => eprintln("skipped: {e}")
-        },
             Err(_) => {
                 going = false
             }

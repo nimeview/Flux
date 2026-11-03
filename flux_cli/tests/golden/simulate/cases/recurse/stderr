@@ -1,1 +1,14 @@
 error: runtime error: call depth limit exceeded (10000 nested calls) in `main`
+  at depth (<dir>/main.fl:96:5)
+  at depth (<dir>/main.fl:96:5)
+  at depth (<dir>/main.fl:96:5)
+  at depth (<dir>/main.fl:96:5)
+  at depth (<dir>/main.fl:96:5)
+  at depth (<dir>/main.fl:96:5)
+  at depth (<dir>/main.fl:96:5)
+  at depth (<dir>/main.fl:96:5)
+  at depth (<dir>/main.fl:96:5)
+  at depth (<dir>/main.fl:96:5)
+  ... 9988 more
+  at depth (<dir>/main.fl:96:5)
+  at main (<dir>/main.fl:101:5)

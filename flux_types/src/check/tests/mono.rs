@@ -109,3 +109,36 @@ fn specializes_generic_calls_inside_multiple_instantiations() {
         );
     }
 }
+
+#[test]
+fn specializes_calls_in_else_if_tails_and_match_locals() {
+    let src = r#"
+fn id[T](x: T) -> T { x }
+fn f() -> Int {
+    if false {
+        return 0
+    } else if false {
+        return 1
+    } else {
+        match 0 {
+            _ => {
+                let x = 2
+                id(x)
+            }
+        }
+    }
+}
+let result = f()
+"#;
+    let mut diags = DiagnosticBag::new();
+    let ast = parse_program(SourceId(0), src, &mut diags).expect("parse");
+    let mut hir = lower_program(&ast, &mut diags).expect("lower");
+    monomorphize_program(&mut hir, SourceId(0), &mut diags);
+    assert!(
+        typecheck_program(&hir, SourceId(0), &mut diags).is_some(),
+        "{:?}",
+        diags.errors
+    );
+    assert!(!diags.has_errors(), "{:?}", diags.errors);
+    assert!(hir.names.values().any(|name| name == "id_Int"));
+}

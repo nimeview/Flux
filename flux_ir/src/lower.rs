@@ -18,11 +18,11 @@ use std::collections::HashMap;
 use flux_diagnostics::{span_to_miette, DiagnosticBag, FluxError, SourceId, Span};
 use flux_hir::{BindingKind, HirFn, HirItem, HirProgram, SymbolId, SymbolKind};
 
-use crate::{CompiledProgram, IrNode, IrStmt, NodeId, NodeKind};
+use crate::{CompiledProgram, IrNode, IrStmt, NodeId, NodeKind, SourceMap};
 
 use codegen::lower_expr;
 use graph::{find_dependency_cycle, format_cycle, push_on_effect_node, push_watch_effect_node};
-use items::{const_expr, lower_fn, lower_if_stmt, lower_on, lower_watch};
+use items::{const_expr, lower_fn, lower_if_stmt, lower_on, lower_watch, source_loc};
 use reads::collect_reads_expr;
 
 /// Runtime key for a HIR symbol. Locals and parameters have unique slots so
@@ -243,7 +243,15 @@ pub fn lower_to_ir(
         return None;
     }
 
+    let bindings = binding_spans
+        .iter()
+        .filter_map(|(id, span)| Some((runtime_symbol_name(program, id)?, source_loc(*span))))
+        .collect();
     let mut program = CompiledProgram {
+        source_map: SourceMap {
+            files: Vec::new(),
+            bindings,
+        },
         nodes,
         init_stmts,
         functions,

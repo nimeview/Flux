@@ -91,7 +91,9 @@ pub(super) fn infer_builtin_call(
             if let Some(arg) = args.first() {
                 let got = infer_expr(ctx, arg, types, names, source, diagnostics)?;
                 let got = unwrap_value_type(&got);
-                if !matches!(got, Type::String | Type::Int64 | Type::Float64 | Type::Bool) {
+                if !got.is_error()
+                    && !matches!(got, Type::String | Type::Int64 | Type::Float64 | Type::Bool)
+                {
                     diagnostics.push(FluxError::TypeMismatch {
                         expected: "printable value".into(),
                         found: got.display(),
@@ -106,7 +108,9 @@ pub(super) fn infer_builtin_call(
             if let Some(arg) = args.first() {
                 let got = infer_expr(ctx, arg, types, names, source, diagnostics)?;
                 let inner = unwrap_value_type(&got);
-                if !matches!(inner, Type::Array(_) | Type::String | Type::Map { .. }) {
+                if !inner.is_error()
+                    && !matches!(inner, Type::Array(_) | Type::String | Type::Map { .. })
+                {
                     diagnostics.push(FluxError::TypeMismatch {
                         expected: "Array, String, or Map".into(),
                         found: got.display(),
@@ -384,12 +388,22 @@ pub(super) fn infer_builtin_call(
                     )
                 })
                 .unwrap_or_else(|| init_ty.clone());
-            Some(ret_ty)
+            if !ret_ty.is_error() && !init_ty.is_error() && !types_compatible(&init_ty, &ret_ty) {
+                if let Some(cb) = args.get(2) {
+                    diagnostics.push(FluxError::TypeMismatch {
+                        expected: init_ty.display(),
+                        found: ret_ty.display(),
+                        span: span_to_miette(cb.span()),
+                        source_id: cb.span().source,
+                    });
+                }
+            }
+            Some(init_ty)
         }
         "str_len" => {
             if let Some(arg) = args.first() {
                 let got = infer_expr(ctx, arg, types, names, source, diagnostics)?;
-                if !matches!(unwrap_value_type(&got), Type::String) {
+                if !got.is_error() && !matches!(unwrap_value_type(&got), Type::String) {
                     diagnostics.push(FluxError::TypeMismatch {
                         expected: "String".into(),
                         found: got.display(),
@@ -403,7 +417,7 @@ pub(super) fn infer_builtin_call(
         "str_split" => {
             for arg in args.iter().take(2) {
                 let got = infer_expr(ctx, arg, types, names, source, diagnostics)?;
-                if !matches!(unwrap_value_type(&got), Type::String) {
+                if !got.is_error() && !matches!(unwrap_value_type(&got), Type::String) {
                     diagnostics.push(FluxError::TypeMismatch {
                         expected: "String".into(),
                         found: got.display(),
@@ -418,7 +432,7 @@ pub(super) fn infer_builtin_call(
             if let Some(arg) = args.first() {
                 let got = infer_expr(ctx, arg, types, names, source, diagnostics)?;
                 let inner = unwrap_value_type(&got);
-                if !matches!(inner, Type::Array(element) if *element == Type::String) {
+                if !types_compatible(&Type::Array(Box::new(Type::String)), &inner) {
                     diagnostics.push(FluxError::TypeMismatch {
                         expected: "[String]".into(),
                         found: got.display(),
@@ -429,7 +443,7 @@ pub(super) fn infer_builtin_call(
             }
             if let Some(arg) = args.get(1) {
                 let got = infer_expr(ctx, arg, types, names, source, diagnostics)?;
-                if !matches!(unwrap_value_type(&got), Type::String) {
+                if !got.is_error() && !matches!(unwrap_value_type(&got), Type::String) {
                     diagnostics.push(FluxError::TypeMismatch {
                         expected: "String".into(),
                         found: got.display(),
@@ -443,7 +457,7 @@ pub(super) fn infer_builtin_call(
         "str_contains" => {
             for arg in args.iter().take(2) {
                 let got = infer_expr(ctx, arg, types, names, source, diagnostics)?;
-                if !matches!(unwrap_value_type(&got), Type::String) {
+                if !got.is_error() && !matches!(unwrap_value_type(&got), Type::String) {
                     diagnostics.push(FluxError::TypeMismatch {
                         expected: "String".into(),
                         found: got.display(),
@@ -457,7 +471,7 @@ pub(super) fn infer_builtin_call(
         "str_chars" => {
             if let Some(arg) = args.first() {
                 let got = infer_expr(ctx, arg, types, names, source, diagnostics)?;
-                if !matches!(unwrap_value_type(&got), Type::String) {
+                if !got.is_error() && !matches!(unwrap_value_type(&got), Type::String) {
                     diagnostics.push(FluxError::TypeMismatch {
                         expected: "String".into(),
                         found: got.display(),
@@ -471,7 +485,7 @@ pub(super) fn infer_builtin_call(
         "str_trim" => {
             if let Some(arg) = args.first() {
                 let got = infer_expr(ctx, arg, types, names, source, diagnostics)?;
-                if !matches!(unwrap_value_type(&got), Type::String) {
+                if !got.is_error() && !matches!(unwrap_value_type(&got), Type::String) {
                     diagnostics.push(FluxError::TypeMismatch {
                         expected: "String".into(),
                         found: got.display(),
@@ -504,7 +518,7 @@ pub(super) fn infer_builtin_call(
         "parse_int" | "parse_float" => {
             if let Some(arg) = args.first() {
                 let got = infer_expr(ctx, arg, types, names, source, diagnostics)?;
-                if !matches!(unwrap_value_type(&got), Type::String) {
+                if !got.is_error() && !matches!(unwrap_value_type(&got), Type::String) {
                     diagnostics.push(FluxError::TypeMismatch {
                         expected: "String".into(),
                         found: got.display(),
@@ -526,7 +540,7 @@ pub(super) fn infer_builtin_call(
         "read_file" => {
             if let Some(arg) = args.first() {
                 let got = infer_expr(ctx, arg, types, names, source, diagnostics)?;
-                if !matches!(unwrap_value_type(&got), Type::String) {
+                if !got.is_error() && !matches!(unwrap_value_type(&got), Type::String) {
                     diagnostics.push(FluxError::TypeMismatch {
                         expected: "String".into(),
                         found: got.display(),
@@ -543,7 +557,7 @@ pub(super) fn infer_builtin_call(
         "write_file" | "append_file" => {
             for arg in args.iter().take(2) {
                 let got = infer_expr(ctx, arg, types, names, source, diagnostics)?;
-                if !matches!(unwrap_value_type(&got), Type::String) {
+                if !got.is_error() && !matches!(unwrap_value_type(&got), Type::String) {
                     diagnostics.push(FluxError::TypeMismatch {
                         expected: "String".into(),
                         found: got.display(),
@@ -560,7 +574,7 @@ pub(super) fn infer_builtin_call(
         "file_exists" => {
             if let Some(arg) = args.first() {
                 let got = infer_expr(ctx, arg, types, names, source, diagnostics)?;
-                if !matches!(unwrap_value_type(&got), Type::String) {
+                if !got.is_error() && !matches!(unwrap_value_type(&got), Type::String) {
                     diagnostics.push(FluxError::TypeMismatch {
                         expected: "String".into(),
                         found: got.display(),
@@ -629,7 +643,7 @@ pub(super) fn infer_builtin_call(
         "str_starts_with" | "str_ends_with" => {
             for arg in args.iter().take(2) {
                 let got = infer_expr(ctx, arg, types, names, source, diagnostics)?;
-                if !matches!(unwrap_value_type(&got), Type::String) {
+                if !got.is_error() && !matches!(unwrap_value_type(&got), Type::String) {
                     diagnostics.push(FluxError::TypeMismatch {
                         expected: "String".into(),
                         found: got.display(),
@@ -643,7 +657,7 @@ pub(super) fn infer_builtin_call(
         "str_replace" => {
             for arg in args.iter().take(3) {
                 let got = infer_expr(ctx, arg, types, names, source, diagnostics)?;
-                if !matches!(unwrap_value_type(&got), Type::String) {
+                if !got.is_error() && !matches!(unwrap_value_type(&got), Type::String) {
                     diagnostics.push(FluxError::TypeMismatch {
                         expected: "String".into(),
                         found: got.display(),
@@ -657,7 +671,7 @@ pub(super) fn infer_builtin_call(
         "str_to_lower" | "str_to_upper" => {
             if let Some(arg) = args.first() {
                 let got = infer_expr(ctx, arg, types, names, source, diagnostics)?;
-                if !matches!(unwrap_value_type(&got), Type::String) {
+                if !got.is_error() && !matches!(unwrap_value_type(&got), Type::String) {
                     diagnostics.push(FluxError::TypeMismatch {
                         expected: "String".into(),
                         found: got.display(),
