@@ -302,7 +302,8 @@ Selective imports: `import io { println, read_line }`. Stdlib modules are built 
 | `filter` | `fn([T], fn(T) -> Bool) -> [T]` | Keep elements matching predicate |
 | `reduce` | `fn([T], U, fn(U, T) -> U) -> U` | Fold to a single accumulator |
 | `min`, `max`, `clamp` | math | Integer arguments promote like arithmetic operands and the result keeps their type; a value that does not fit the promoted width (`min(-1, 0u64)`) is `integer overflow` |
-| `abs`, `sqrt`, `floor`, `ceil`, `pow` | math | Return `Float`, also for integer arguments (`abs(-3)` is `3.0`) |
+| `abs` | math | An integer keeps its type (`abs(-3)` is `3`), and the signed minimum is `integer overflow`; a float gives `Float` |
+| `sqrt`, `floor`, `ceil`, `pow` | math | Return `Float`, also for integer arguments (`pow(2, 3)` is `8.0`) |
 | `str_len` | `fn(String) -> Int` | Length in Unicode scalar values |
 | `str_split` | `fn(String, String) -> [String]` | Split on separator (an empty separator also yields `""` at both ends) |
 | `str_chars` | `fn(String) -> [String]` | One string per character (Unicode scalar value) |

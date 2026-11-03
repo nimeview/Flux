@@ -151,6 +151,38 @@ fn numeric_literal_forms() {
 }
 
 #[test]
+fn abs_keeps_an_integer_type() {
+    for (expr, want) in [
+        ("abs(-3)", "3"),
+        ("abs(3)", "3"),
+        ("abs(0)", "0"),
+        ("abs(-9223372036854775807)", "9223372036854775807"),
+        ("abs(-5 as Int32)", "5"),
+        ("abs(200u8)", "200"),
+        ("abs(18446744073709551615u64)", "18446744073709551615"),
+        ("abs(-1.5)", "1.5"),
+        ("abs(-3) / 2", "1"),
+    ] {
+        prints(
+            &format!("import io {{ println }}\nimport math {{ abs }}\nfn main() {{\n    println(\"{{{expr}}}\")\n}}\n"),
+            &format!("{want}\n"),
+        );
+    }
+    prints(
+        "import io { println }\nimport math { abs }\nfn dist(a: Int, b: Int) -> Int {\n    abs(a - b)\n}\nfn main() {\n    println(\"{dist(2, 9)}\")\n}\n",
+        "7\n",
+    );
+    let (status, _, stderr) =
+        both("import math { abs }\nfn main() {\n    let _a = abs(-9223372036854775807 - 1)\n}\n");
+    assert_eq!(status, Some(1));
+    assert!(stderr.contains("integer overflow"), "{stderr}");
+    rejects(
+        "import math { abs }\nfn main() {\n    let _a: Float = abs(-3)\n}\n",
+        "E005",
+    );
+}
+
+#[test]
 fn strings_order_by_code_point() {
     for (expr, want) in [
         (r#""a" < "b""#, "true"),

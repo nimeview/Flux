@@ -599,7 +599,14 @@ pub(super) fn infer_builtin_call(
                     }),
             )
         }
-        "abs" | "sqrt" | "floor" | "ceil" | "pow" => {
+        "abs" => {
+            let args = check_numeric_args(ctx, args, types, names, source, diagnostics)?;
+            Some(match args.first() {
+                Some(ty) if ty.is_integer() => ty.clone(),
+                _ => Type::Float64,
+            })
+        }
+        "sqrt" | "floor" | "ceil" | "pow" => {
             check_numeric_args(ctx, args, types, names, source, diagnostics)?;
             Some(Type::Float64)
         }

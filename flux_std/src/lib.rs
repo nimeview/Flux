@@ -121,6 +121,9 @@ pub fn call_builtin_checked(
 ) -> Option<Result<Value, flux_value::ArithError>> {
     match name {
         "assert" => return Some(math::assert(args.first()?)),
+        "abs" if matches!(args.first(), Some(Value::Int { .. })) => {
+            return Some(math::abs_int(args.first()?))
+        }
         "assert_eq" => return Some(math::assert_eq(args.first()?, args.get(1)?)),
         // Integer operands promote like arithmetic does; a value that does not
         // fit the promoted width (`min(-1, 0u64)`) is the same overflow error

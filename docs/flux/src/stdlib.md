@@ -13,7 +13,7 @@ fn main() {
 ```
 
 ```output
-2 3.0 4.0
+2 3 4.0
 ```
 
 `Ok`, `Err`, `Some`, and `None` need no import. `len`, `range`, and the rest do, unlike in many languages. A file of your own named `math.fl` next to your code takes priority over the standard module.
@@ -72,10 +72,9 @@ These return a new value rather than changing their argument, so write `xs = pus
 | Function | Returns | Notes |
 |---|---|---|
 | `min(a, b)`, `max(a, b)`, `clamp(x, lo, hi)` | the arguments' type | integers stay integers |
-| `abs(x)`, `sqrt(x)`, `floor(x)`, `ceil(x)`, `pow(x, y)` | `Float` | also for integer arguments, so `abs(-3)` is `3.0` |
+| `abs(x)` | the argument's type for an integer, `Float` otherwise | the smallest `Int` overflows, as `-x` does |
+| `sqrt(x)`, `floor(x)`, `ceil(x)`, `pow(x, y)` | `Float` | also for integer arguments, so `pow(2, 3)` is `8.0` |
 | `assert(cond)`, `assert_eq(a, b)` | `Unit` | a runtime error if they fail; `testing` exports them too |
-
-Because `abs` works in `Float`, it loses precision on integers beyond 2^53.
 
 ## Limits
 

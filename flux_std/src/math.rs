@@ -78,9 +78,14 @@ fn minmax(a: &Value, b: &Value, choose_min: bool) -> Option<Value> {
 }
 
 pub fn abs(v: &Value) -> Option<Value> {
-    match v.as_float() {
-        Some(n) => Some(Value::float_f64(n.abs())),
-        None => v.as_int().map(|n| Value::int_i64(n.abs())),
+    v.as_float().map(|n| Value::float_f64(n.abs()))
+}
+
+/// An integer's magnitude at its own width; the signed minimum's does not fit.
+pub fn abs_int(v: &Value) -> Result<Value, flux_value::ArithError> {
+    match flux_value::compare(v, &Value::int_i64(0)) {
+        Some(std::cmp::Ordering::Less) => flux_value::negate(v),
+        _ => Ok(v.clone()),
     }
 }
 

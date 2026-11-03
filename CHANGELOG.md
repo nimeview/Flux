@@ -37,4 +37,5 @@ Each of these can change what an existing program does:
 - `Ok`, `Err`, `Some`, and `None` need no import. A module's own item, variant, or local of that name takes priority.
 - Inside a function, a `match` arm may `emit` and assign a source.
 - `true` and `false` arms cover `Bool`.
+- `abs` of an integer keeps its type: `abs(-3)` is `3`, not `3.0`, and the smallest value of a signed type is `integer overflow`.
 - Number literals such as `1e3`, `1_000`, and `0xff`, and ordering of strings by code point, are new.
