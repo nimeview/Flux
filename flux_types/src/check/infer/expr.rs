@@ -103,7 +103,8 @@ fn infer_arm_body(
                 };
                 scope.insert(l.name, ty);
             }
-            HirStmt::Assign(a) => {
+            // A module binding gets the full check below: it may be read-only.
+            HirStmt::Assign(a) if !scope.module().contains_key(&a.name) => {
                 let value = infer_expr(ctx, &a.value, scope, names, source, diagnostics)
                     .unwrap_or(Type::Error);
                 if let Some(target) = scope.get(&a.name).cloned() {
@@ -477,6 +478,7 @@ pub(crate) fn infer_expr(
             // Payload shapes of nested-pattern arms, per outer variant.
             let mut nested_arms: HashMap<String, Vec<flux_hir::PatShape>> = HashMap::new();
             let mut has_catch_all = false;
+            let mut bools_covered = [false; 2];
             for arm in arms {
                 let mut arm_scope = types.clone();
                 bind_match_arm_locals(ctx, &scrut_ty, arm, &mut arm_scope, source, diagnostics);
@@ -488,7 +490,13 @@ pub(crate) fn infer_expr(
                     }
                 }
                 if let Some(literal) = &arm.literal {
-                    // A literal arm never covers the type: it needs a catch-all.
+                    // A literal arm covers nothing by itself, except that
+                    // `true` and `false` together cover `Bool`.
+                    if arm.guard.is_none() {
+                        if let HirExpr::Bool { value, .. } = literal {
+                            bools_covered[usize::from(*value)] = true;
+                        }
+                    }
                     let lit_ty = infer_expr(ctx, literal, &arm_scope, names, source, diagnostics)
                         .unwrap_or(Type::Error);
                     let (want, got) = (
@@ -570,6 +578,9 @@ pub(crate) fn infer_expr(
                 if payload.is_some_and(|ty| shapes_cover(ctx, &refs, &ty)) {
                     covered_variants.insert(variant.clone());
                 }
+            }
+            if bools_covered == [true, true] {
+                has_catch_all = true;
             }
             if !has_catch_all {
                 if let Some(variants) = &variants {

@@ -136,7 +136,7 @@ pub(super) fn parse_expr(source_id: SourceId, pair: pest::iterators::Pair<'_, Ru
             let text = pair.as_str();
             let (digits, suffix) = split_numeric_suffix(text);
             let value = Expr::Float {
-                value: digits.parse().expect("float literal"),
+                value: digits.replace('_', "").parse().expect("float literal"),
                 span,
             };
             suffix
@@ -153,7 +153,7 @@ pub(super) fn parse_expr(source_id: SourceId, pair: pest::iterators::Pair<'_, Ru
             let text = pair.as_str();
             let (digits, suffix) = split_numeric_suffix(text);
             let value = Expr::Int {
-                value: digits
+                value: decimal_digits(digits)
                     .parse()
                     .expect("integer literal within supported range"),
                 span,
@@ -345,11 +345,16 @@ fn parse_chained_add(source_id: SourceId, pair: pest::iterators::Pair<'_, Rule>)
     expr
 }
 
-pub(super) fn split_numeric_suffix(text: &str) -> (&str, Option<&str>) {
+pub fn split_numeric_suffix(text: &str) -> (&str, Option<&str>) {
     const SUFFIXES: &[&str] = &[
         "i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64", "f32", "f64",
     ];
+    // In `0xf32`, the `f` is a digit.
+    let is_hex = text.starts_with("0x");
     for sfx in SUFFIXES {
+        if is_hex && sfx.starts_with('f') {
+            continue;
+        }
         if let Some(stem) = text.strip_suffix(sfx) {
             if !stem.is_empty() {
                 return (stem, Some(*sfx));
@@ -357,6 +362,18 @@ pub(super) fn split_numeric_suffix(text: &str) -> (&str, Option<&str>) {
         }
     }
     (text, None)
+}
+
+/// An integer literal's digits in decimal, without `_` or a `0x` prefix. A value
+/// too large for `u128` comes back as a number no integer type can hold.
+pub(super) fn decimal_digits(digits: &str) -> String {
+    let plain = digits.replace('_', "");
+    match plain.strip_prefix("0x") {
+        Some(hex) => u128::from_str_radix(hex, 16)
+            .map(|value| value.to_string())
+            .unwrap_or_else(|_| format!("{}0", u128::MAX)),
+        None => plain,
+    }
 }
 
 /// The character a `\x` escape in a string literal stands for, if `x` is one
@@ -444,7 +461,9 @@ fn parse_unary_expr(source_id: SourceId, pair: pest::iterators::Pair<'_, Rule>) 
             let expr_pair = inner.next().expect("unary expr");
             if op == UnaryOp::Neg {
                 let (digits, suffix) = split_numeric_suffix(expr_pair.as_str().trim());
-                if digits == "9223372036854775808" && suffix.is_none_or(|suffix| suffix == "i64") {
+                if decimal_digits(digits) == "9223372036854775808"
+                    && suffix.is_none_or(|suffix| suffix == "i64")
+                {
                     let span = unary_span;
                     let value = Expr::Int {
                         value: i64::MIN as i128,

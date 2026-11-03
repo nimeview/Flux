@@ -178,6 +178,13 @@ impl SymbolTable {
         Ok(id)
     }
 
+    /// Whether the innermost scope already declares `name`.
+    pub fn declared_here(&self, name: &str) -> bool {
+        self.scopes
+            .last()
+            .is_some_and(|scope| scope.symbols.contains_key(name))
+    }
+
     /// The builtin `name` for compiler-generated code, independent of imports
     /// and of any user binding with the same name.
     pub fn hidden_builtin(&mut self, name: &str, span: Span) -> SymbolId {

@@ -10,6 +10,7 @@
 
 mod decls;
 mod exprs;
+pub use exprs::split_numeric_suffix;
 pub mod limits;
 mod stmts;
 mod types;
@@ -113,7 +114,7 @@ fn parse_program_unbounded(
         if let Some((span, literal)) = invalid_integer_literal(source_id, pair.clone(), false) {
             diagnostics.push(FluxError::Parse {
                 message: format!(
-                    "integer literal `{literal}` is outside the supported range for its type"
+                    "numeric literal `{literal}` is outside the supported range for its type"
                 ),
                 span: span_to_miette(span),
                 source_id,
@@ -196,8 +197,19 @@ fn invalid_integer_literal(
     pair: pest::iterators::Pair<'_, Rule>,
     allow_i64_min_magnitude: bool,
 ) -> Option<(Span, String)> {
+    if pair.as_rule() == Rule::float_lit {
+        let (digits, _) = exprs::split_numeric_suffix(pair.as_str());
+        if digits
+            .replace('_', "")
+            .parse::<f64>()
+            .is_ok_and(f64::is_infinite)
+        {
+            return Some((span_of(source_id, &pair), pair.as_str().to_string()));
+        }
+    }
     if pair.as_rule() == Rule::int_lit {
         let (digits, suffix) = exprs::split_numeric_suffix(pair.as_str());
+        let digits = exprs::decimal_digits(digits);
         let magnitude = digits.parse::<u128>().ok();
         let is_i64_min_magnitude = allow_i64_min_magnitude
             && digits == "9223372036854775808"
@@ -217,7 +229,8 @@ fn invalid_integer_literal(
             .map(str::trim)
             .is_some_and(|operand| {
                 let (digits, suffix) = exprs::split_numeric_suffix(operand);
-                digits == "9223372036854775808" && suffix.is_none_or(|suffix| suffix == "i64")
+                exprs::decimal_digits(digits) == "9223372036854775808"
+                    && suffix.is_none_or(|suffix| suffix == "i64")
             })
     } else {
         false

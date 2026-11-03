@@ -20,6 +20,7 @@ fn format_source_unbounded(input: &str) -> Result<String, DiagnosticBag> {
     let Some(program) = parse_program(SourceId(0), input, &mut diagnostics) else {
         return Err(diagnostics);
     };
+    SOURCE.with(|s| s.replace(input.to_string()));
     let all_comments = scan_comments(input);
     let spans: Vec<Span> = program
         .items
@@ -461,6 +462,20 @@ thread_local! {
     /// Indent level of the statement/item being printed; `expr_fmt` uses it to
     /// lay out multi-line expressions such as block match arms.
     static LEVEL: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// The text being formatted, for literals written as `1_000` or `0xff`.
+    static SOURCE: std::cell::RefCell<String> = const { std::cell::RefCell::new(String::new()) };
+}
+
+/// A numeric literal as the source spells it, without a type suffix.
+fn literal_spelling(span: Span) -> Option<String> {
+    SOURCE.with(|s| {
+        let source = s.borrow();
+        let text = source.get(span.start..span.end)?;
+        let (digits, _) = flux_syntax::split_numeric_suffix(text);
+        digits
+            .starts_with(|c: char| c.is_ascii_digit())
+            .then(|| digits.to_string())
+    })
 }
 
 fn format_stmt(stmt: &Stmt, out: &mut String, level: usize) {
@@ -678,9 +693,14 @@ fn type_name_fmt(ty: &flux_syntax::TypeName) -> String {
 
 fn expr_fmt(expr: &flux_syntax::Expr) -> String {
     match expr {
-        flux_syntax::Expr::Int { value, .. } => value.to_string(),
+        flux_syntax::Expr::Int { value, span } => {
+            literal_spelling(*span).unwrap_or_else(|| value.to_string())
+        }
         // Keep the `.`: `2.0` printed as `2` would turn a Float into an Int.
-        flux_syntax::Expr::Float { value, .. } => {
+        flux_syntax::Expr::Float { value, span } => {
+            if let Some(text) = literal_spelling(*span) {
+                return text;
+            }
             let text = value.to_string();
             if text.contains('.') {
                 text

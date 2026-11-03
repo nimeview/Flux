@@ -344,14 +344,10 @@ fn block_match_arms_reject_statements_expressions_cannot_run() {
     let arm = |body: &str| {
         format!("event E\nlet mut m = 0\nfn f(n: Int) -> Int {{\n  let k = 1\n  match n {{\n    _ => {{\n      {body}\n      0\n    }}\n  }}\n}}\nlet a = f(1)\n")
     };
-    // Control flow is allowed in a function's arms (see
-    // `match_arm_control_flow_acts_on_the_enclosing_function`); effects and
-    // module or immutable assignments are not.
-    for (body, needle) in [
-        ("emit E", "`emit`"),
-        ("m = 2", "assigning a module binding"),
-        ("k = 2", "immutable local"),
-    ] {
+    // A function's arm may hold what its body may (see `language_rules.rs`),
+    // and an immutable local stays immutable there too.
+    let (body, needle) = ("k = 2", "immutable local");
+    {
         let src = arm(body);
         let failure = match compile(source_from("<arms>", &src)) {
             Ok(_) => panic!("compiled: {body}"),

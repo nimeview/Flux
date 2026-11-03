@@ -145,11 +145,11 @@ pub(super) fn infer_binary(
             }
         }
         BinaryOp::Lt | BinaryOp::Le | BinaryOp::Gt | BinaryOp::Ge => {
-            if numeric_compatible(&l, &r) {
+            if numeric_compatible(&l, &r) || (l == Type::String && r == Type::String) {
                 Some(Type::Bool)
             } else {
                 diagnostics.push(FluxError::TypeMismatch {
-                    expected: "numeric types for ordered comparison".into(),
+                    expected: "numeric types or strings for ordered comparison".into(),
                     found: format!("{} and {}", l.display(), r.display()),
                     span: span_to_miette(span),
                     source_id: span.source,

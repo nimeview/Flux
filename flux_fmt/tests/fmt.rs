@@ -231,3 +231,12 @@ fn round_trips_element_assignment() {
     );
     assert_eq!(format_source(&out).expect("reparse"), out);
 }
+
+#[test]
+fn numeric_literals_keep_their_spelling() {
+    let src =
+        "const a = 1_000\n\nconst b = 0xff\n\nconst c = 1.5e3\n\nconst d = 1e3\n\nconst e = 2.50\n";
+    let formatted = format_source(src).expect("formats");
+    assert_eq!(formatted, src);
+    assert_eq!(format_source(&formatted).expect("formats again"), formatted);
+}

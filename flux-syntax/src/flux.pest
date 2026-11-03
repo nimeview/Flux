@@ -205,9 +205,13 @@ kw_in = @{ "in" ~ kw_end }
 kw_if = @{ "if" ~ kw_end }
 kw_else = @{ "else" ~ kw_end }
 
-float_lit = ${ ASCII_DIGIT+ ~ "." ~ ASCII_DIGIT+ ~ float_suffix? }
+float_lit = ${ digits ~ ("." ~ digits ~ exponent? | exponent) ~ float_suffix? ~ number_end }
 float_suffix = _{ "f32" | "f64" }
-int_lit = ${ ASCII_DIGIT+ ~ int_suffix? }
+int_lit = ${ (hex_digits | digits) ~ int_suffix? ~ number_end }
+digits = _{ ASCII_DIGIT ~ ("_"? ~ ASCII_DIGIT)* }
+hex_digits = _{ "0x" ~ ASCII_HEX_DIGIT ~ ("_"? ~ ASCII_HEX_DIGIT)* }
+exponent = _{ ("e" | "E") ~ ("+" | "-")? ~ digits }
+number_end = _{ !(ASCII_ALPHANUMERIC | "_") }
 int_suffix = _{ "i8" | "i16" | "i32" | "i64" | "u8" | "u16" | "u32" | "u64" }
 string_lit = ${ "\"" ~ string_content* ~ "\"" }
 string_content = _{ string_escape | string_char | interp_expr }

@@ -418,8 +418,11 @@ fn unsupported_in_arm_block(
             Some(SymbolKind::Local { mutable: false } | SymbolKind::Param) => {
                 Some("assigning an immutable local (declare it with `let mut`)")
             }
+            // The checker reports a derived or const target, as elsewhere.
+            Some(_) if in_function => None,
             Some(_) => Some("assigning a module binding"),
         },
+        Stmt::Emit(_) if in_function => None,
         Stmt::Emit(_) => Some("`emit`"),
         Stmt::Return(_) => Some("`return` outside a function"),
         Stmt::Break(_) => Some("`break` outside a function"),

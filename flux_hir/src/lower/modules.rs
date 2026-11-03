@@ -163,6 +163,7 @@ pub(super) fn lower_module_items(
         for import in &linked.module_imports[index] {
             bind_import(import, linked, symbols);
         }
+        super::declare_prelude(symbols, &module.ast.items);
 
         for item in &module.ast.items {
             match item {

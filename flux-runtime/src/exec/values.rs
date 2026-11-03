@@ -95,8 +95,9 @@ where
     let b = stack_pop(stack, "comparison rhs");
     let a = stack_pop(stack, "comparison lhs");
     debug_assert_vm(
-        a.is_numeric() && b.is_numeric(),
-        "comparison: expected numeric operands on stack",
+        (a.is_numeric() && b.is_numeric())
+            || (matches!(a, RuntimeValue::String(_)) && matches!(b, RuntimeValue::String(_))),
+        "comparison: expected numbers or strings on stack",
     );
     stack.push(RuntimeValue::Bool(
         flux_value::compare(&a, &b).is_some_and(f),

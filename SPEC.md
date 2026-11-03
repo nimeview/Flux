@@ -7,6 +7,7 @@ Flux is a statically typed language with **built-in reactivity**: module-level b
 - **Comments**: `//` to end of line
 - **Identifiers**: `[A-Za-z_][A-Za-z0-9_]*`
 - **Literals**: integers, floats, booleans (`true`/`false`), double-quoted strings
+- **Numbers**: integers are decimal (`1000`, `1_000`) or hexadecimal (`0xff`, `0xFF_FF`). Floats need a fraction, an exponent, or both (`1.5`, `1e3`, `2.5e-3`), and `1e3` is a Float. `_` may separate digits, one at a time. A type suffix may follow (`255u8`, `0x10u8`, `1e3f32`). A value out of range for its type is a parse error, including a float too large to represent, and so is a letter, digit, or `_` right after a number (`1e`, `12abc`). `flux fmt` keeps the spelling.
 - **String escapes**: `\n` (newline), `\t`, `\r`, `\0`, `\\`, `\"`, and `\{` / `\}` for literal braces (a bare `{name}` interpolates). Any other `\x` is a parse error.
 
 ## 2. Types
@@ -48,6 +49,7 @@ The VM is the reference; the JIT must produce the same value or error, or fall b
 | `== < …` | Exact (no conversion through `Float`) | IEEE 754 (`NaN != NaN`) |
 
 - Mixed `Int`/`Float` arithmetic and comparison promote the integer to `Float64`. Operators on two integers keep the integer type, so `Int / Int` is `Int`: division by zero is a runtime error rather than a value of another type.
+- `<`, `<=`, `>`, `>=` also order two strings, by Unicode code point: `"a" < "b"`, and `"Z" < "a"`. A string and a number cannot be compared.
 - Casts are checked: an integer out of the target range, a negative value cast to an unsigned type, or a `NaN`/infinite/out-of-range float cast to an integer is the runtime error `numeric cast out of range`. Float → integer casts truncate toward zero.
 - A runtime error stops the current evaluation and is reported as `runtime error: <message> in <context>`, where the context names the binding, `watch`, or `on` handler, followed by what was running, innermost first: `  at <name> (<path>:<line>:<column>)`. The location is the failing statement in that frame, or the declaration of a derived binding; a statement directly in a `match` arm reports the `match`, and a module-level `if` has no location. A trace longer than 12 frames shows its 10 innermost and 2 outermost. Both engines report the same text: an error in compiled code replays on the VM, and the rest of the run stays there. Statements after the failing one do not run, and when recomputing derived values fails, the event's later handlers do not start. If the error happens during module initialization, `flux run` exits non-zero. Out-of-range integer *literals* are rejected at parse time.
 - **Display.** A finite Float always prints with a decimal point or exponent (`5.0`, `2.5`), so the type is visible in output; `inf`, `-inf`, and `NaN` print as themselves. Integers print without one.
@@ -204,7 +206,7 @@ An `if … else` expression and a `match` are operands like any other value: `1 
 
 ### Literal patterns
 
-`match n { 0 => "zero", -1 => "minus one", _ => "other" }`, `match s { "y" => true, _ => false }`, and `true =>` / `false =>` compare the scrutinee with `==`. Allowed literals are Int (optionally negative), String without `{…}` interpolation, and Bool. A Float literal pattern is an error, because exact float equality is a trap. The literal must have the scrutinee's type. Literal arms never make a match exhaustive, so a `_` or binding arm is required.
+`match n { 0 => "zero", -1 => "minus one", _ => "other" }`, `match s { "y" => true, _ => false }`, and `true =>` / `false =>` compare the scrutinee with `==`. Allowed literals are Int (optionally negative), String without `{…}` interpolation, and Bool. A Float literal pattern is an error, because exact float equality is a trap. The literal must have the scrutinee's type. Literal arms do not make a match exhaustive, so a `_` or binding arm is required. The exception is `Bool`: unguarded `true` and `false` arms cover it.
 
 ### Nested patterns
 
@@ -223,7 +225,7 @@ match get(toks, i) {
 
 An arm may be a block: `Err(e) => { println(e)\n  0 }`. Its statements run in order, after the pattern binds, and the block's **final expression** is the arm's value. A block that ends in a statement instead (an assignment, `if`, a loop; a `match` used for its effects) has the value `()`. Mixing such an arm with arms that have a value is a type mismatch. Allowed everywhere: `let`, assignment to a `let mut` local, and expression statements.
 
-Inside a function, an arm block may also contain `if`/`while`/`for` and `return`/`break`/`continue`. They act on the enclosing function or loop, as they would outside the `match`. An arm may also *be* one of these (`Err(e) => return Err(e)`), or a block may end with one instead of a value. Such an arm leaves and has no value: it does not take part in the `match`'s type, and a `match` whose arms all leave has type `Unit`. A `return` in an arm is checked against the function's declared return type. Derived values, `watch`, and `on` keep expression-only arms (control flow there is a compile error), and `emit` or assignments to module bindings or immutable locals are compile errors in any arm block.
+Inside a function, an arm block may also contain `if`/`while`/`for` and `return`/`break`/`continue`. They act on the enclosing function or loop, as they would outside the `match`. An arm may also *be* one of these (`Err(e) => return Err(e)`), or a block may end with one instead of a value. Such an arm leaves and has no value: it does not take part in the `match`'s type, and a `match` whose arms all leave has type `Unit`. A `return` in an arm is checked against the function's declared return type. Derived values, `watch`, and `on` keep expression-only arms (control flow there is a compile error), and `emit` or assignments to module bindings are compile errors in their arm blocks. Inside a function, an arm block may also `emit` and assign a source; a derived binding or `const` is rejected as anywhere else. An assignment to an immutable local is a compile error in any arm block.
 
 ```flux
 fn add(a: String, b: String) -> Result[Int, String] {
@@ -283,6 +285,8 @@ Selective imports: `import io { println, read_line }`. Stdlib modules live under
 | `str` | `str_len`, `str_split`, `str_chars`, `str_join`, `str_contains`, `str_trim`, `str_starts_with`, `str_ends_with`, `str_replace`, `str_to_lower`, `str_to_upper`, `to_string`, `parse_int`, `parse_float` |
 | `option` | `Some`, `None` |
 | `result` | `Ok`, `Err` |
+
+`Ok`, `Err`, `Some`, and `None` need no import. A module that declares the same name itself, as an item or an enum variant, uses its own; so does a local. Importing them from `option` and `result` remains valid.
 
 | Symbol | Type | Behavior |
 |--------|------|----------|

@@ -64,3 +64,19 @@ pub(super) fn register_stdlib_import(
 
     true
 }
+
+/// Makes `Ok`, `Err`, `Some`, and `None` available without an import, unless the
+/// module uses the name itself: an import, or its own item or enum variant.
+pub(super) fn declare_prelude(symbols: &mut SymbolTable, items: &[flux_syntax::Item]) {
+    let own_variant = |name: &str| {
+        items.iter().any(|item| match item {
+            flux_syntax::Item::Enum(e) => e.variants.iter().any(|v| v.name.name == name),
+            _ => false,
+        })
+    };
+    for name in ["Ok", "Err", "Some", "None"] {
+        if !own_variant(name) && !symbols.declared_here(name) {
+            let _ = symbols.declare(name, SymbolKind::Builtin, flux_diagnostics::Span::DUMMY);
+        }
+    }
+}

@@ -38,7 +38,7 @@ use funcs::{lower_fn, lower_on, lower_rfn, lower_watch};
 
 use modules::{bind_root_imports, declare_module_items, lower_module_items};
 
-use stdlib::register_stdlib_import;
+use stdlib::{declare_prelude, register_stdlib_import};
 
 use crate::unused::check_unused_bindings;
 
@@ -418,6 +418,7 @@ fn lower_program_inner(
     if diagnostics.has_errors() {
         return None;
     }
+    declare_prelude(&mut symbols, &program.items);
 
     // Pass 2: lower root bodies (imported modules are already lowered).
 

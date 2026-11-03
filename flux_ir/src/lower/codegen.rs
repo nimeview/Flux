@@ -1,6 +1,6 @@
 //! Expression → stack-machine bytecode ([`Inst`]) generation.
 
-use flux_hir::{HirExpr, HirMatchArm, HirProgram, HirStmt};
+use flux_hir::{HirExpr, HirMatchArm, HirProgram, HirStmt, SymbolKind};
 use flux_syntax::BinaryOp;
 
 use crate::{Inst, IrValue};
@@ -316,12 +316,17 @@ fn emit_expr(expr: &HirExpr, program: &HirProgram, code: &mut Vec<Inst>) {
             for arm in arms.iter().rev() {
                 let mut then_code = Vec::new();
                 emit_match_bindings(&temp, arm, program, &mut then_code);
-                if arm
-                    .body
-                    .stmts
-                    .iter()
-                    .all(|s| matches!(s, HirStmt::Let(_) | HirStmt::Assign(_) | HirStmt::Expr(_)))
-                {
+                // An inline arm can only bind locals; a write to a source runs
+                // as a statement, so that it propagates.
+                let inline = arm.body.stmts.iter().all(|s| match s {
+                    HirStmt::Let(_) | HirStmt::Expr(_) => true,
+                    HirStmt::Assign(a) => !matches!(
+                        program.symbols.get(&a.name).map(|symbol| symbol.kind),
+                        Some(SymbolKind::Source | SymbolKind::Derived)
+                    ),
+                    _ => false,
+                });
+                if inline {
                     emit_arm_body(arm, program, &mut then_code);
                 } else {
                     then_code.push(Inst::Block(super::items::lower_block(&arm.body, program)));

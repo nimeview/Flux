@@ -261,8 +261,12 @@ pub fn negate(v: &Value) -> Result<Value, ArithError> {
     }
 }
 
-/// Numeric ordering; `None` when either side is NaN or not numeric.
+/// Ordering of numbers, or of strings by Unicode code point; `None` when either
+/// side is NaN or the two cannot be ordered.
 pub fn compare(a: &Value, b: &Value) -> Option<Ordering> {
+    if let (Value::String(x), Value::String(y)) = (a, b) {
+        return Some(x.as_str().cmp(y.as_str()));
+    }
     if let (Some(x), Some(y)) = (as_i64(a), as_i64(b)) {
         return Some(x.cmp(&y));
     }
