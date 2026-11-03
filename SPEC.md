@@ -1,4 +1,4 @@
-# Flux Language Specification (draft)
+# Flux Language Specification
 
 Flux is a statically typed language with **built-in reactivity**: module-level bindings form a dataflow graph, and `watch` / `on` / `rfn` integrate declarative updates with imperative code.
 
@@ -15,7 +15,7 @@ Flux is a statically typed language with **built-in reactivity**: module-level b
 | Type | Description |
 |------|-------------|
 | `Int` | Primary integer type (alias for `Int64`; integer literals infer as `Int64`) |
-| `Int32`, `Int64`, `UInt64` | Fixed-width integers |
+| `Int8`, `Int16`, `Int32`, `Int64`, `UInt8`, `UInt16`, `UInt32`, `UInt64` | Fixed-width integers |
 | `Float`, `Float32`, `Float64` | Floating point (`Float` is an alias for `Float64`) |
 | `Bool`, `String`, `Unit` | Primitives |
 | `[T]` | Homogeneous array |
@@ -86,7 +86,7 @@ watch counter { ... }
 on Click { counter = counter + 1 }
 ```
 
-### Binding rules (v2)
+### Binding rules
 
 | Form | Role | Reassign in `on`/`watch` |
 |------|------|--------------------------|
@@ -96,12 +96,12 @@ on Click { counter = counter + 1 }
 | `derived name = expr` | **Derived** | No |
 | `const NAME = expr` | Compile-time constant | No |
 
-Top-level bare assignment (`x = 0`) and `set` statements are removed. Reassignment uses `name = expr` only inside `on`/`watch` for `let mut` sources, or `let mut` locals inside functions.
+There is no top-level assignment (`x = 0`). Reassignment uses `name = expr` only inside `on`/`watch` for `let mut` sources, or `let mut` locals inside functions.
 
 Inside `fn` / `rfn`:
 
 - `let x = 1` — immutable local
-- `let mut x = 1` — mutable local (replaces `set`)
+- `let mut x = 1` — mutable local
 - `x = expr` — assign to `let mut` local or module source from reactive context
 
 ### Modules and visibility
@@ -118,7 +118,7 @@ Each `.fl` file is a module with its own namespace. Inside a module, all of its 
 
 `let` / `let mut`, assignment, `if`/`else`, `while`, `for x in expr`, `return expr?`, `break`, `continue`, `emit Event(args?)`, expression statements.
 
-**Block value.** A function body's value is its final expression. When the final statement is an `if … else` (including `else if` chains), the value is the final expression of the branch that runs. Both branches must have compatible types, with no numeric widening. An `if` without `else` has type `Unit`.
+**Block value.** A function's value is its last statement's: an expression, a `return`, or an `if … else` (including `else if` chains), whose value is the final expression of the branch that runs. Both branches must have compatible types, with no numeric widening. Any other last statement (`let`, an assignment, `while`, `for`, an `if` without `else`) gives `Unit`. So `fn main() { let x = 7 }` exits with status 0, and `fn f() -> Int { 1\n let x = 2 }` is a type error.
 
 **Module initialization order.** Bindings with literal initializers have their values from the start. Computed initializers (`let a = f()`, `const C = B + 1`) run in dependency order: after the bindings they read, directly or through any function they call, and otherwise in declaration order. So a binding may use a `const` declared later. Top-level `if` and assignments keep their position. A cycle among initializers is an error.
 
@@ -135,8 +135,6 @@ Arithmetic (`+ - * / %`), comparisons, boolean ops (`&&`, `||`, `!`), `if e { a 
 `|x| expr` or `|x: T| expr`. Unannotated parameter types are inferred during type checking from the actual array element type for `map`/`filter`/`reduce` callbacks, the initial accumulator value for `reduce`, a called function’s function-typed parameter, or a binding’s function type annotation. An explicit parameter annotation takes precedence. A parameter with no usable context falls back to `Int`. Closures may capture module-level **Source** or **Derived** bindings from their enclosing scope (e.g. `filter(nums, |x| x > threshold)` or `filter(nums, |x| x > doubled)`); capturing **Derived** bindings is supported when the closure is used in a reactive (derived) context. A closure that captures a reactive binding is itself reactive: calls that use it are re-evaluated whenever captured dependencies change.
 
 A closure may also use the locals and parameters of the code around it (`map(xs, |x| x + k)`). They are captured **by value when the closure is created**: a later assignment to the local does not change what the closure sees, and assigning to a captured local inside the closure is **E009**. Module bindings are not copied: they are read when the closure runs, as above.
-
-**Block values.** A function's value is its last statement's: an expression, a `return`, or an `if` with `else`. Any other last statement (`let`, an assignment, `while`, `for`, an `if` without `else`) gives `Unit`. So `fn main() { let x = 7 }` exits with status 0, and `fn f() -> Int { 1\n let x = 2 }` is a type error.
 
 **Function values.** A function type is written `fn(A, B) -> C`; without `->` the function returns `Unit`. A declared function's name and a closure are values of such a type: they can be passed, returned, and stored in bindings, arrays, and struct fields, and called (`let add2 = adder(2)` then `add2(5)`; `adder(3)(5)`; `(op.f)(3)` or `op.f(3)`). Two function types match when their parameters and results do. Functions have no `==` and no text form. Calling anything else is **E023**. A closure passed directly to a function takes its unannotated parameter types from that function's declared `fn(...)` parameter. A closure's value is its body's value, so `return` inside a closure is a compile error. A callee is evaluated before its arguments. A derived value depends on what a function value it uses reads, and a function with side effects cannot reach a derived value as a value either (**E017**).
 
@@ -263,7 +261,7 @@ fn add(a: String, b: String) -> Result[Int, String] {
 
 ## 6. Standard library
 
-Standard-library symbols are **not** in the global prelude. Import the module you need:
+Apart from `Ok`, `Err`, `Some`, and `None`, standard-library symbols must be imported. Import the module you need:
 
 ```flux
 import io
@@ -274,7 +272,7 @@ import option
 import result
 ```
 
-Selective imports: `import io { println, read_line }`. Stdlib modules live under the project `stdlib/` directory and are resolved automatically — they are **not** listed in `flux.toml` dependencies. A local file with the same name (e.g. `./math.fl`) shadows the stdlib module.
+Selective imports: `import io { println, read_line }`. Stdlib modules are built in and are not listed in `flux.toml` dependencies. A local file with the same name (e.g. `./math.fl`) shadows the stdlib module.
 
 | Module | Symbols |
 |--------|---------|
@@ -303,7 +301,8 @@ Selective imports: `import io { println, read_line }`. Stdlib modules live under
 | `map` | `fn([T], fn(T) -> U) -> [U]` | Transform each element |
 | `filter` | `fn([T], fn(T) -> Bool) -> [T]` | Keep elements matching predicate |
 | `reduce` | `fn([T], U, fn(U, T) -> U) -> U` | Fold to a single accumulator |
-| `abs`, `min`, `max`, `clamp`, `sqrt`, `floor`, `ceil`, `pow` | math | Numeric intrinsics (`Int`/`Float` overloads where applicable). Integer arguments of `min`/`max`/`clamp` promote like arithmetic operands; a value that does not fit the promoted width (`min(-1, 0u64)`) is `integer overflow` |
+| `min`, `max`, `clamp` | math | Integer arguments promote like arithmetic operands and the result keeps their type; a value that does not fit the promoted width (`min(-1, 0u64)`) is `integer overflow` |
+| `abs`, `sqrt`, `floor`, `ceil`, `pow` | math | Return `Float`, also for integer arguments (`abs(-3)` is `3.0`) |
 | `str_len` | `fn(String) -> Int` | Length in Unicode scalar values |
 | `str_split` | `fn(String, String) -> [String]` | Split on separator (an empty separator also yields `""` at both ends) |
 | `str_chars` | `fn(String) -> [String]` | One string per character (Unicode scalar value) |
@@ -357,6 +356,10 @@ These limits keep extreme programs a language error rather than a native stack o
 | E009 | Assign to immutable local or const |
 | E010 | Cyclic dependency in reactive graph |
 | E011 | `watch`/`on` outside module level |
+| E012 | Import path outside the project |
+| E013 | Cyclic import |
+| E014 | Importing a name a module does not have |
+| E015 | Warning: unused binding |
 | E016 | `let` without `mut` cannot be reassigned (use `let mut`) |
 | E017 | Side effect (`print`, I/O) in derived expression |
 | E018 | Runtime error (overflow, division by zero, failed assertion, …) |
@@ -381,12 +384,11 @@ A UTF-8 byte-order mark at the start of a file is ignored, like whitespace.
 | `flux lock [--check]` | Create or update `flux.lock` for path dependencies; `--check` only reports whether it is up to date (exit 1 if not) |
 | `--locked` (on `run`, `check`, `test`) | Require `flux.lock` to match the dependency tree; never write it (§9) |
 | `flux fmt file.fl [--write] [--check]` | Format source (`--check` fails if reformat needed) |
-| `flux migrate [--write] path` | Migrate v1 top-level bindings to v2 `let` / `let mut` |
+| `flux migrate [--write] path` | Experimental: rewrite an older binding syntax to `let` / `let mut` |
 | `flux init [path] [--lib]` | Create a project: an app (`main.fl`) or, with `--lib`, a library (`lib.fl` + `lib_test.fl`). Refuses a directory that already has `flux.toml` and never overwrites a source file |
-| `flux lsp file.fl` | JSON diagnostics |
+| `flux lsp file.fl` | JSON diagnostics (one-shot; prefer `lsp-server`) |
 | `flux lsp-server` | Stdio LSP: diagnostics, hover, completion, go-to-def, format, document symbols, rename |
 | `flux wasm file.fl` | Experimental stub: always fails, writes nothing |
-| `flux repl` | Interactive shell (v2 syntax help) |
 
 **`flux test`.** Every `.fl` file under the project root (the nearest `flux.toml`, or the current directory) that defines `fn test_*()` is compiled as its own program. Hidden directories and `target/` are skipped. Each test function takes no parameters and runs in a fresh executor after module initialization; the file's `main` is not run. A test passes if it returns `Unit` or `true`. It fails if it returns `false`, raises any runtime error (including a failed `assert(cond)` or `assert_eq(a, b)`, which report `assertion failed[: a != b]`), or if its file does not compile. Each test is reported as `test <file>::<name> ... ok | FAILED: <reason>`, then a `test result` summary line; the exit status is 1 if anything failed. `filter` keeps tests whose `file::name` contains it. With no tests, it prints `no tests found` and exits 0.
 
@@ -421,6 +423,6 @@ Pipeline: **parse → resolve imports → HIR → monomorphize → typecheck →
 - **Entry point.** If the root module defines `fn main()` or `fn main() -> Int` (no parameters; any other signature is a compile error), `flux run` calls it after module initialization. The program then owns stdout: no banner and no binding dump are printed. The exit status is `main`'s `Int` result (it must be 0..=255; another value is an error with status 1), or 0 for a `Unit` `main`. A runtime error in `main` is reported on stderr with status 1. Without `main`, `flux run` prints the module's reactive bindings as before.
 - `const` bindings are compile-time constants: a pure `fn` (including `main`) may read them. Reading `let` / `let mut` module bindings from a pure `fn` is still a reactive read (E002).
 - JIT opt-in: `--jit`, environment `FLUX_JIT=1`, or `[run] jit = true` in `flux.toml`
-- Cranelift JIT compiles numeric derived nodes, pure functions (including loops, early `return`, recursion, and calls to functions defined earlier), and eligible `watch`/`on` bodies with tag-aware int/float arithmetic. `LazyIf` branch deps are collected statically. `match` on integers and on user enums (tuple payloads) and string `+` are compiled. Structs, struct-variant fields, `break`/`continue`, `emit`, calls through function values, and other ineligible IR fall back to the VM. So does any call whose inputs include a struct, a closure, `Option`, `Result`, or a map, which have no tagged form
+- Cranelift JIT compiles numeric derived nodes, pure functions (including loops, early `return`, recursion, and calls to functions defined earlier), and eligible `watch`/`on` bodies with tag-aware int/float arithmetic. `match` on integers and on user enums (tuple payloads), string `+` and ordering, `to_string`, and interpolation are compiled. A derived value whose conditional branch reads a reactive node, directly or through an `rfn`, runs on the VM, which records the dependencies of the branch it took (`dynamic_dependencies`). Structs, struct-variant fields, `break`/`continue`, `emit`, calls through function values, and other ineligible IR fall back to the VM. So does any call whose inputs include a struct, a closure, `Option`, `Result`, or a map, which have no tagged form
 - `flux run --jit --verbose` prints JIT compile/fallback statistics
-- WASM backend: stub module header (future: full codegen)
+- WASM backend: a stub that always fails; there is no code generation
