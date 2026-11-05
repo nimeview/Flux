@@ -78,7 +78,9 @@ An interactive shell. `:emit Event [payload]` fires an event, and `:help` lists 
 
 ## Editors
 
-`flux lsp-server` speaks the Language Server Protocol over standard input and output, and provides diagnostics, hover, completion, go-to-definition, formatting, document symbols, and rename. Point your editor's LSP client at it for `.fl` files:
+**VS Code** has an extension in [`editors/vscode`](https://github.com/nimeview/Flux/tree/main/editors/vscode), with highlighting, snippets, run and test buttons, and everything the language server offers. Its README explains how to install it.
+
+For other editors, `flux lsp-server` speaks the Language Server Protocol over standard input and output. It provides diagnostics, hover, completion with automatic imports, parameter hints, inlay type hints, go-to-definition, references, highlights, rename, formatting, document symbols, and a quick fix for missing imports. Point your editor's LSP client at it for `.fl` files:
 
 ```text
 command: flux

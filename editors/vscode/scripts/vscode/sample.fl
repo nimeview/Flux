@@ -1,0 +1,18 @@
+import io { println }
+
+struct Item {
+    price: Int
+}
+
+fn total(i: Item) -> Int {
+    i.price   +   1
+}
+
+fn test_total() {
+    println("x")
+}
+
+fn main() {
+    let it = Item { price: 2 }
+    println("{total(it)}")
+}

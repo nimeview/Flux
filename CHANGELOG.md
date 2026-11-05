@@ -18,6 +18,7 @@ The first version whose language surface is declared stable. The earlier history
 ### Tools
 
 - `flux init`, `run`, `check`, `test`, `fmt`, `lock`, `repl`, and `lsp-server`.
+- A VS Code extension in `editors/vscode`.
 - Standard library: `io`, `collections`, `math`, `str`, `option`, `result`, `testing`.
 - A `dist` build profile with link-time optimization.
 

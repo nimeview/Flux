@@ -50,7 +50,7 @@ cd my_app
 | `flux fmt file --write` | format a file |
 | `flux lock [--check]` | manage `flux.lock` for path dependencies |
 | `flux repl` | interactive shell |
-| `flux lsp-server` | language server for editors |
+| `flux lsp-server` | language server for editors; see [the VS Code extension](editors/vscode/README.md) |
 
 ## Documentation
 

@@ -1,0 +1,269 @@
+{
+  "Main": {
+    "prefix": "main",
+    "description": "Program entry point",
+    "body": [
+      "import io { println }",
+      "",
+      "fn main() {",
+      "\tprintln(\"${1:Hello, world!}\")$0",
+      "}"
+    ]
+  },
+  "Main with status": {
+    "prefix": "mainr",
+    "description": "Entry point that returns an exit status",
+    "body": [
+      "fn main() -> Int {",
+      "\t$0",
+      "\t0",
+      "}"
+    ]
+  },
+  "Reactive function": {
+    "prefix": "rfn",
+    "description": "Reactive function: callers depend on what it reads",
+    "body": [
+      "rfn ${1:name}(${2:arg}: ${3:Int}) -> ${4:Int} {",
+      "\t$0",
+      "}"
+    ]
+  },
+  "Generic function": {
+    "prefix": "fng",
+    "description": "Generic function",
+    "body": [
+      "fn ${1:name}[${2:T}](${3:x}: ${2:T}) -> ${2:T} {",
+      "\t$0",
+      "}"
+    ]
+  },
+  "Result function": {
+    "prefix": "fnr",
+    "description": "Function returning a Result",
+    "body": [
+      "fn ${1:name}(${2:arg}: ${3:String}) -> Result[${4:Int}, ${5:String}] {",
+      "\t$0",
+      "\tOk(${6:0})",
+      "}"
+    ]
+  },
+  "Test": {
+    "prefix": "test",
+    "description": "Test function, run by flux test",
+    "body": [
+      "fn test_${1:name}() {",
+      "\tassert_eq(${2:actual}, ${3:expected})$0",
+      "}"
+    ]
+  },
+  "Testing import": {
+    "prefix": "imptest",
+    "description": "Import assertions",
+    "body": [
+      "import testing { assert, assert_eq }"
+    ]
+  },
+  "Struct": {
+    "prefix": "struct",
+    "description": "Struct",
+    "body": [
+      "struct ${1:Name} {",
+      "\t${2:field}: ${3:Int}$0",
+      "}"
+    ]
+  },
+  "Enum": {
+    "prefix": "enum",
+    "description": "Enum",
+    "body": [
+      "enum ${1:Name} {",
+      "\t${2:First},",
+      "\t${3:Second}(${4:Int})$0",
+      "}"
+    ]
+  },
+  "Trait": {
+    "prefix": "trait",
+    "description": "Trait",
+    "body": [
+      "trait ${1:Name} {",
+      "\tfn ${2:method}(self: ${3:Int}) -> ${4:Int};",
+      "}"
+    ]
+  },
+  "Impl": {
+    "prefix": "impl",
+    "description": "Trait implementation",
+    "body": [
+      "impl ${1:Trait} for ${2:Type} {",
+      "\tfn ${3:method}(self: ${2:Type}) -> ${4:Int} {",
+      "\t\t$0",
+      "\t}",
+      "}"
+    ]
+  },
+  "Type alias": {
+    "prefix": "type",
+    "description": "Type alias",
+    "body": [
+      "type ${1:Name} = ${2:Int}"
+    ]
+  },
+  "Source": {
+    "prefix": "letm",
+    "description": "Mutable local, or a reactive source at the top level",
+    "body": [
+      "let mut ${1:name} = ${2:0}"
+    ]
+  },
+  "Constant": {
+    "prefix": "const",
+    "description": "Compile-time constant",
+    "body": [
+      "const ${1:NAME} = ${2:0}"
+    ]
+  },
+  "Event": {
+    "prefix": "event",
+    "description": "Event carrying a value",
+    "body": [
+      "event ${1:Name}(${2:value}: ${3:Int})"
+    ]
+  },
+  "Handler with value": {
+    "prefix": "onv",
+    "description": "Event handler that takes the event's value",
+    "body": [
+      "on ${1:Event} { ${2:value} ->",
+      "\t$0",
+      "}"
+    ]
+  },
+  "Emit": {
+    "prefix": "emit",
+    "description": "Send an event",
+    "body": [
+      "emit ${1:Event}($2)"
+    ]
+  },
+  "If": {
+    "prefix": "if",
+    "description": "If statement",
+    "body": [
+      "if ${1:condition} {",
+      "\t$0",
+      "}"
+    ]
+  },
+  "If else": {
+    "prefix": "ife",
+    "description": "If with else",
+    "body": [
+      "if ${1:condition} {",
+      "\t$2",
+      "} else {",
+      "\t$0",
+      "}"
+    ]
+  },
+  "For": {
+    "prefix": "for",
+    "description": "For loop",
+    "body": [
+      "for ${1:item} in ${2:items} {",
+      "\t$0",
+      "}"
+    ]
+  },
+  "For range": {
+    "prefix": "forr",
+    "description": "For loop over a range",
+    "body": [
+      "for ${1:i} in range(${2:10}) {",
+      "\t$0",
+      "}"
+    ]
+  },
+  "While": {
+    "prefix": "while",
+    "description": "While loop",
+    "body": [
+      "while ${1:condition} {",
+      "\t$0",
+      "}"
+    ]
+  },
+  "Match": {
+    "prefix": "match",
+    "description": "Match",
+    "body": [
+      "match ${1:value} {",
+      "\t${2:pattern} => ${3:result},",
+      "\t_ => ${4:other}",
+      "}"
+    ]
+  },
+  "Match Result": {
+    "prefix": "matchr",
+    "description": "Match on a Result",
+    "body": [
+      "match ${1:value} {",
+      "\tOk(${2:v}) => ${3:v},",
+      "\tErr(${4:e}) => ${5:e}",
+      "}"
+    ]
+  },
+  "Match Option": {
+    "prefix": "matcho",
+    "description": "Match on an Option",
+    "body": [
+      "match ${1:value} {",
+      "\tSome(${2:v}) => ${3:v},",
+      "\tNone => ${4:other}",
+      "}"
+    ]
+  },
+  "Closure": {
+    "prefix": "cl",
+    "description": "Closure",
+    "body": [
+      "|${1:x}| ${2:x}"
+    ]
+  },
+  "Map call": {
+    "prefix": "map",
+    "description": "Transform each element",
+    "body": [
+      "map(${1:items}, |${2:x}| ${3:x})"
+    ]
+  },
+  "Filter call": {
+    "prefix": "filter",
+    "description": "Keep matching elements",
+    "body": [
+      "filter(${1:items}, |${2:x}| ${3:true})"
+    ]
+  },
+  "Reduce call": {
+    "prefix": "reduce",
+    "description": "Fold to one value",
+    "body": [
+      "reduce(${1:items}, ${2:0}, |${3:sum}, ${4:x}| ${3:sum} + ${4:x})"
+    ]
+  },
+  "Import": {
+    "prefix": "imp",
+    "description": "Import names from a module",
+    "body": [
+      "import ${1:io} { ${2:println} }"
+    ]
+  },
+  "Println": {
+    "prefix": "pl",
+    "description": "Print a line",
+    "body": [
+      "println(\"${1:{value\\}}\")"
+    ]
+  }
+}

@@ -1,0 +1,264 @@
+{
+  "name": "flux-lang",
+  "displayName": "Flux",
+  "description": "Flux language support: highlighting, completion, hover, go to definition, rename, formatting, diagnostics, snippets, and run and test commands.",
+  "version": "0.1.0",
+  "publisher": "nimeview",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/nimeview/Flux.git",
+    "directory": "editors/vscode"
+  },
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Snippets",
+    "Formatters"
+  ],
+  "keywords": [
+    "flux",
+    "reactive",
+    "lsp"
+  ],
+  "main": "./extension.js",
+  "activationEvents": [
+    "workspaceContains:**/flux.toml",
+    "onLanguage:flux"
+  ],
+  "contributes": {
+    "languages": [
+      {
+        "id": "flux",
+        "aliases": [
+          "Flux",
+          "flux"
+        ],
+        "extensions": [
+          ".fl"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "flux",
+        "scopeName": "source.flux",
+        "path": "./syntaxes/flux.tmLanguage.json"
+      }
+    ],
+    "snippets": [
+      {
+        "language": "flux",
+        "path": "./snippets/flux.json"
+      }
+    ],
+    "configuration": {
+      "title": "Flux",
+      "properties": {
+        "flux.path": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Path to the `flux` binary. When empty, the extension looks in `target/dist`, `target/release`, and `target/debug` of the workspace, then on your `PATH`."
+        },
+        "flux.server.enable": {
+          "type": "boolean",
+          "default": true,
+          "description": "Start the Flux language server, which gives diagnostics, completion, hover, go to definition, rename, formatting, and outline."
+        },
+        "flux.run.jit": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "Pass `--jit` to the run and test commands. The JIT is experimental."
+        },
+        "flux.codeLens.enable": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Show Run above `fn main` and Run test above `fn test_*`."
+        },
+        "flux.trace.server": {
+          "type": "string",
+          "enum": [
+            "off",
+            "messages",
+            "verbose"
+          ],
+          "default": "off",
+          "description": "Log messages between VS Code and the language server."
+        }
+      }
+    },
+    "configurationDefaults": {
+      "[flux]": {
+        "editor.formatOnSave": true,
+        "editor.defaultFormatter": "nimeview.flux-lang",
+        "editor.tabSize": 4,
+        "editor.insertSpaces": true,
+        "editor.rulers": [
+          100
+        ],
+        "editor.inlayHints.enabled": "on"
+      }
+    },
+    "commands": [
+      {
+        "command": "flux.run",
+        "title": "Run File",
+        "category": "Flux",
+        "icon": "$(play)"
+      },
+      {
+        "command": "flux.runProject",
+        "title": "Run Project",
+        "category": "Flux"
+      },
+      {
+        "command": "flux.check",
+        "title": "Check File",
+        "category": "Flux"
+      },
+      {
+        "command": "flux.test",
+        "title": "Run All Tests",
+        "category": "Flux",
+        "icon": "$(beaker)"
+      },
+      {
+        "command": "flux.testFile",
+        "title": "Run Tests in File",
+        "category": "Flux"
+      },
+      {
+        "command": "flux.repl",
+        "title": "Open REPL",
+        "category": "Flux"
+      },
+      {
+        "command": "flux.init",
+        "title": "New Project in This Folder",
+        "category": "Flux"
+      },
+      {
+        "command": "flux.restartServer",
+        "title": "Restart Language Server",
+        "category": "Flux"
+      },
+      {
+        "command": "flux.showOutput",
+        "title": "Show Language Server Output",
+        "category": "Flux"
+      }
+    ],
+    "menus": {
+      "editor/title/run": [
+        {
+          "command": "flux.run",
+          "when": "resourceLangId == flux",
+          "group": "navigation@1"
+        }
+      ],
+      "editor/context": [
+        {
+          "command": "flux.run",
+          "when": "resourceLangId == flux",
+          "group": "z_flux@1"
+        },
+        {
+          "command": "flux.testFile",
+          "when": "resourceLangId == flux",
+          "group": "z_flux@2"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "flux.run",
+          "when": "resourceLangId == flux"
+        },
+        {
+          "command": "flux.check",
+          "when": "resourceLangId == flux"
+        },
+        {
+          "command": "flux.testFile",
+          "when": "resourceLangId == flux"
+        }
+      ]
+    },
+    "keybindings": [
+      {
+        "command": "flux.run",
+        "key": "ctrl+alt+r",
+        "mac": "cmd+alt+r",
+        "when": "editorLangId == flux"
+      },
+      {
+        "command": "flux.test",
+        "key": "ctrl+alt+t",
+        "mac": "cmd+alt+t",
+        "when": "editorLangId == flux"
+      }
+    ],
+    "taskDefinitions": [
+      {
+        "type": "flux",
+        "required": [
+          "command"
+        ],
+        "properties": {
+          "command": {
+            "type": "string",
+            "enum": [
+              "run",
+              "check",
+              "test"
+            ],
+            "description": "The flux command to run."
+          },
+          "file": {
+            "type": "string",
+            "description": "A file to pass to the command. When empty, the project's entry is used."
+          }
+        }
+      }
+    ],
+    "problemMatchers": [
+      {
+        "name": "flux",
+        "owner": "flux",
+        "source": "flux",
+        "fileLocation": "autoDetect",
+        "pattern": [
+          {
+            "regexp": "^flux::(E\\d+)\\s*$",
+            "code": 1
+          },
+          {
+            "regexp": "^\\s*x\\s+(.*)$",
+            "message": 1
+          },
+          {
+            "regexp": "^\\s*,-\\[(.+):(\\d+):(\\d+)\\]\\s*$",
+            "file": 1,
+            "line": 2,
+            "column": 3
+          }
+        ]
+      }
+    ]
+  },
+  "scripts": {
+    "test": "node scripts/test-grammar.js && node scripts/test-extension.js && node scripts/test-server.js",
+    "package": "vsce package"
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1"
+  },
+  "devDependencies": {
+    "@vscode/test-electron": "^2.5.2",
+    "@vscode/vsce": "^3.2.1",
+    "vscode-oniguruma": "^2.0.1",
+    "vscode-textmate": "^9.1.0"
+  }
+}
