@@ -50,6 +50,7 @@ impl<'a> Scope<'a> {
     }
 
     pub(crate) fn insert(&mut self, id: SymbolId, ty: Type) {
+        LOCAL_TYPES.with(|types| types.borrow_mut().insert(id, ty.clone()));
         self.locals.insert(id, ty);
     }
 
@@ -297,4 +298,16 @@ pub(crate) fn erase_type_variables(ty: Type) -> Type {
         },
         other => other,
     }
+}
+
+thread_local! {
+    /// Every local and parameter's type, kept for tools after checking ends. When a
+    /// closure is checked again with a better parameter type, the last one stays.
+    static LOCAL_TYPES: std::cell::RefCell<HashMap<SymbolId, Type>> =
+        std::cell::RefCell::new(HashMap::new());
+}
+
+/// The local types recorded since the last call.
+pub(crate) fn take_local_types() -> HashMap<SymbolId, Type> {
+    LOCAL_TYPES.with(|types| std::mem::take(&mut *types.borrow_mut()))
 }

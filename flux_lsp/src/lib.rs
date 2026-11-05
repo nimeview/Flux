@@ -7,6 +7,7 @@
 //!   wired up by `flux lsp-server`.
 
 mod analysis;
+mod assist;
 pub mod documents;
 pub mod position;
 pub mod server;

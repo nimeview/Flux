@@ -9,17 +9,24 @@ use lsp_types::notification::{
     Notification, PublishDiagnostics,
 };
 use lsp_types::request::{
-    Completion, DocumentSymbolRequest, Formatting, GotoDefinition, HoverRequest, Rename, Request,
+    CodeActionRequest, Completion, DocumentHighlightRequest, DocumentSymbolRequest, Formatting,
+    GotoDefinition, HoverRequest, InlayHintRequest, References, Rename, Request,
+    SignatureHelpRequest,
 };
 use lsp_types::{
-    CompletionItem, CompletionItemKind, CompletionOptions, CompletionParams, Diagnostic,
-    DiagnosticSeverity, DidChangeTextDocumentParams, DidCloseTextDocumentParams,
-    DidOpenTextDocumentParams, DidSaveTextDocumentParams, DocumentFormattingParams, DocumentSymbol,
-    DocumentSymbolParams, DocumentSymbolResponse, GotoDefinitionParams, GotoDefinitionResponse,
-    Hover, HoverContents, HoverParams, HoverProviderCapability, Location, MarkupContent,
-    MarkupKind, NumberOrString, OneOf, Position, PublishDiagnosticsParams, Range, RenameParams,
-    ServerCapabilities, SymbolKind, TextDocumentSyncCapability, TextDocumentSyncKind,
-    TextDocumentSyncOptions, TextDocumentSyncSaveOptions, TextEdit, Url, WorkspaceEdit,
+    CodeAction, CodeActionKind, CodeActionOrCommand, CodeActionParams,
+    CodeActionProviderCapability, CompletionItem, CompletionItemKind, CompletionOptions,
+    CompletionParams, Diagnostic, DiagnosticSeverity, DidChangeTextDocumentParams,
+    DidCloseTextDocumentParams, DidOpenTextDocumentParams, DidSaveTextDocumentParams,
+    DocumentFormattingParams, DocumentHighlight, DocumentHighlightParams, DocumentSymbol,
+    DocumentSymbolParams, DocumentSymbolResponse, Documentation, GotoDefinitionParams,
+    GotoDefinitionResponse, Hover, HoverContents, HoverParams, HoverProviderCapability, InlayHint,
+    InlayHintKind, InlayHintLabel, InlayHintParams, Location, MarkupContent, MarkupKind,
+    NumberOrString, OneOf, ParameterInformation, ParameterLabel, Position,
+    PublishDiagnosticsParams, Range, ReferenceParams, RenameParams, ServerCapabilities,
+    SignatureHelp, SignatureHelpOptions, SignatureHelpParams, SignatureInformation, SymbolKind,
+    TextDocumentSyncCapability, TextDocumentSyncKind, TextDocumentSyncOptions,
+    TextDocumentSyncSaveOptions, TextEdit, Url, WorkspaceEdit,
 };
 
 use flux_fmt::format_source;
@@ -28,11 +35,16 @@ use flux_hir::HirItem;
 
 use crate::analysis::{
     completion_prefix, definition_at_position, describe_type, hover_for_name,
-    hover_range_for_symbol, member_completions, outline_symbols, position_to_offset,
-    rename_edits_for_symbol, span_to_lsp_range, symbol_at_position, word_at_offset, MemberKind,
-    OutlineKind,
+    hover_range_for_symbol, inferred_bindings, local_type, member_completions, outline_symbols,
+    position_to_offset, rename_edits_for_symbol, span_to_lsp_range, symbol_at_position,
+    user_signature, word_at_offset, MemberKind, OutlineKind,
+};
+use crate::assist::{
+    enclosing_call, import_edit, imports, is_imported, names_in_scope, signature_params, std_doc,
+    PRELUDE, STD_DOCS, TYPE_NAMES,
 };
 use crate::documents::DocumentStore;
+use crate::position::offset_to_position;
 
 const KEYWORDS: &[&str] = &[
     "fn", "rfn", "watch", "on", "event", "emit", "let", "mut", "derived", "const", "if", "else",
@@ -61,6 +73,14 @@ pub fn server_capabilities() -> ServerCapabilities {
         document_formatting_provider: Some(OneOf::Left(true)),
         document_symbol_provider: Some(OneOf::Left(true)),
         rename_provider: Some(OneOf::Left(true)),
+        references_provider: Some(OneOf::Left(true)),
+        document_highlight_provider: Some(OneOf::Left(true)),
+        signature_help_provider: Some(SignatureHelpOptions {
+            trigger_characters: Some(vec!["(".to_string(), ",".to_string()]),
+            ..Default::default()
+        }),
+        inlay_hint_provider: Some(OneOf::Left(true)),
+        code_action_provider: Some(CodeActionProviderCapability::Simple(true)),
         ..Default::default()
     }
 }
@@ -218,6 +238,34 @@ fn dispatch_request(
             let edit = compute_rename(store, params);
             respond(connection, id, edit)?;
         }
+        SignatureHelpRequest::METHOD => {
+            let (id, params): (RequestId, SignatureHelpParams) =
+                cast_request::<SignatureHelpRequest>(req)?;
+            let help = compute_signature_help(store, params);
+            respond(connection, id, help)?;
+        }
+        References::METHOD => {
+            let (id, params): (RequestId, ReferenceParams) = cast_request::<References>(req)?;
+            let found = compute_references(store, params);
+            respond(connection, id, found)?;
+        }
+        DocumentHighlightRequest::METHOD => {
+            let (id, params): (RequestId, DocumentHighlightParams) =
+                cast_request::<DocumentHighlightRequest>(req)?;
+            let found = compute_highlights(store, params);
+            respond(connection, id, found)?;
+        }
+        InlayHintRequest::METHOD => {
+            let (id, params): (RequestId, InlayHintParams) = cast_request::<InlayHintRequest>(req)?;
+            let hints = compute_inlay_hints(store, params);
+            respond(connection, id, Some(hints))?;
+        }
+        CodeActionRequest::METHOD => {
+            let (id, params): (RequestId, CodeActionParams) =
+                cast_request::<CodeActionRequest>(req)?;
+            let actions = compute_code_actions(store, params);
+            respond(connection, id, Some(actions))?;
+        }
         _ => {
             connection.sender.send(Message::Response(Response::new_err(
                 req.id,
@@ -371,12 +419,31 @@ fn compute_hover(store: &mut DocumentStore, params: HoverParams) -> Option<Hover
     let word = word_at_offset(&text, offset)?;
     let analysis = store.analyze(&uri);
 
-    let text_str = if let Some(doc) = keyword_doc(word) {
-        doc.to_string()
-    } else {
-        let analysis = analysis.as_ref()?;
-        let hir = analysis.hir.as_ref()?;
-        hover_for_name(hir, analysis.typed.as_ref(), word)?
+    // A name the program defines itself hides the library's.
+    let own_name = analysis.as_ref().is_some_and(|a| {
+        a.hir.as_ref().is_some_and(|hir| {
+            hir.symbols
+                .values()
+                .any(|s| s.name == word && s.kind != flux_hir::SymbolKind::Builtin)
+        })
+    });
+    if !own_name {
+        if let Some(value) = library_markdown(word) {
+            return Some(Hover {
+                contents: HoverContents::Markup(MarkupContent {
+                    kind: MarkupKind::Markdown,
+                    value,
+                }),
+                range: None,
+            });
+        }
+    }
+    let user = analysis
+        .as_ref()
+        .and_then(|a| hover_for_name(a.hir.as_ref()?, a.typed.as_ref(), word));
+    let text_str = match keyword_doc(word) {
+        Some(doc) => doc.to_string(),
+        None => user?,
     };
 
     Some(Hover {
@@ -420,15 +487,50 @@ fn compute_completion(store: &mut DocumentStore, params: CompletionParams) -> Ve
     }
 
     let mut items = keyword_completions();
+    let offset = position_to_offset(&text, position.line, position.character);
+    let mut seen: HashSet<String> = HashSet::new();
 
-    let Some(analysis) = store.analyze(&uri) else {
+    // Everything from here on works from the text, while the file is broken too.
+    let analysis = store.analyze(&uri);
+    let (locals, item_range) = names_in_scope(&text, offset - prefix.len());
+    for name in locals {
+        if seen.insert(name.clone()) {
+            let detail = analysis
+                .as_ref()
+                .and_then(|a| local_type(a, &name, &item_range));
+            items.push(CompletionItem {
+                label: name,
+                kind: Some(CompletionItemKind::VARIABLE),
+                detail,
+                sort_text: Some("0".to_string()),
+                ..Default::default()
+            });
+        }
+    }
+    library_completions(&text, &prefix, &mut seen, &mut items);
+    items.extend(TYPE_NAMES.iter().map(|name| CompletionItem {
+        label: name.to_string(),
+        kind: Some(CompletionItemKind::CLASS),
+        ..Default::default()
+    }));
+
+    let Some(analysis) = analysis else {
         return filter_completions(items, &prefix);
     };
     let Some(hir) = &analysis.hir else {
         return filter_completions(items, &prefix);
     };
 
-    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for (variant, owner) in &hir.enum_variants {
+        if !variant.starts_with("__") && seen.insert(variant.clone()) {
+            items.push(CompletionItem {
+                label: variant.clone(),
+                kind: Some(CompletionItemKind::ENUM_MEMBER),
+                detail: Some(owner.clone()),
+                ..Default::default()
+            });
+        }
+    }
     for item in &hir.items {
         let (symbol, kind) = match item {
             HirItem::Binding(b) => (b.name, CompletionItemKind::VARIABLE),
@@ -463,10 +565,275 @@ fn filter_completions(items: Vec<CompletionItem>, prefix: &str) -> Vec<Completio
     if prefix.is_empty() {
         return items;
     }
+    let prefix = prefix.to_lowercase();
     items
         .into_iter()
-        .filter(|item| item.label.starts_with(prefix))
+        .filter(|item| item.label.to_lowercase().starts_with(&prefix))
         .collect()
+}
+
+/// The documentation of a standard library or prelude name.
+fn library_markdown(name: &str) -> Option<String> {
+    if let Some((_, module, signature, doc)) = std_doc(name) {
+        return Some(format!(
+            "```flux\n{signature}\n```\n{doc}\n\nFrom `{module}`."
+        ));
+    }
+    PRELUDE
+        .iter()
+        .find(|entry| entry.0 == name)
+        .map(|(_, signature, doc)| format!("```flux\n{signature}\n```\n{doc}"))
+}
+
+fn import_text_edit(text: &str, module: &str, name: &str) -> TextEdit {
+    let (line, start, end, new_text) = import_edit(text, module, name);
+    TextEdit {
+        range: Range::new(Position::new(line, start), Position::new(line, end)),
+        new_text,
+    }
+}
+
+/// The prelude, what the file imports, and, once a name is being typed, the rest of
+/// the standard library, with the import added on accept.
+fn library_completions(
+    text: &str,
+    prefix: &str,
+    seen: &mut HashSet<String>,
+    items: &mut Vec<CompletionItem>,
+) {
+    let imported = imports(text);
+    for (name, signature, doc) in PRELUDE {
+        if seen.insert(name.to_string()) {
+            items.push(CompletionItem {
+                label: name.to_string(),
+                kind: Some(CompletionItemKind::CONSTRUCTOR),
+                detail: Some(signature.to_string()),
+                documentation: Some(Documentation::String(doc.to_string())),
+                ..Default::default()
+            });
+        }
+    }
+    for (name, module, signature, doc) in STD_DOCS {
+        let available = is_imported(&imported, module, name)
+            // `assert` and `assert_eq` are exported by `math` too.
+            || (*module == "testing" && is_imported(&imported, "math", name));
+        if !available && prefix.is_empty() {
+            continue;
+        }
+        if !seen.insert(name.to_string()) {
+            continue;
+        }
+        items.push(CompletionItem {
+            label: name.to_string(),
+            kind: Some(CompletionItemKind::FUNCTION),
+            detail: Some(if available {
+                signature.to_string()
+            } else {
+                format!("{signature} (import from {module})")
+            }),
+            documentation: Some(Documentation::String(doc.to_string())),
+            sort_text: Some(format!("{}{name}", if available { "1" } else { "9" })),
+            additional_text_edits: (!available).then(|| vec![import_text_edit(text, module, name)]),
+            ..Default::default()
+        });
+    }
+}
+
+fn compute_signature_help(
+    store: &mut DocumentStore,
+    params: SignatureHelpParams,
+) -> Option<SignatureHelp> {
+    let uri = params.text_document_position_params.text_document.uri;
+    let position = params.text_document_position_params.position;
+    let text = store.text(&uri)?.to_string();
+    let offset = position_to_offset(&text, position.line, position.character);
+    let (name, argument) = enclosing_call(&text, offset)?;
+    let analysis = store.analyze(&uri);
+    let user = analysis.as_ref().and_then(|a| user_signature(a, &name));
+    let (label, parameters, documentation) = match user {
+        Some((parameters, ret)) => {
+            let ret = ret.map(|r| format!(" -> {r}")).unwrap_or_default();
+            (
+                format!("{name}({}){ret}", parameters.join(", ")),
+                parameters,
+                None,
+            )
+        }
+        None => {
+            let (signature, doc) =
+                std_doc(&name).map(|entry| (entry.2, entry.3)).or_else(|| {
+                    PRELUDE
+                        .iter()
+                        .find(|entry| entry.0 == name)
+                        .map(|entry| (entry.1, entry.2))
+                })?;
+            (
+                signature.to_string(),
+                signature_params(signature),
+                Some(doc),
+            )
+        }
+    };
+    let active = argument.min(parameters.len().saturating_sub(1)) as u32;
+    Some(SignatureHelp {
+        signatures: vec![SignatureInformation {
+            label,
+            documentation: documentation.map(|d| Documentation::String(d.to_string())),
+            parameters: Some(
+                parameters
+                    .into_iter()
+                    .map(|p| ParameterInformation {
+                        label: ParameterLabel::Simple(p),
+                        documentation: None,
+                    })
+                    .collect(),
+            ),
+            active_parameter: Some(active),
+        }],
+        active_signature: Some(0),
+        active_parameter: Some(active),
+    })
+}
+
+/// Where a symbol occurs, by file path, as start and end line and column.
+type Occurrences = HashMap<String, Vec<(u32, u32, u32, u32)>>;
+
+/// The buffer's path and where the symbol at `position` occurs.
+fn symbol_occurrences(
+    store: &mut DocumentStore,
+    uri: &Url,
+    position: Position,
+) -> Option<(String, Occurrences)> {
+    let text = store.text(uri)?.to_string();
+    let analysis = store.analyze(uri)?;
+    let symbol = symbol_at_position(&analysis, &text, position.line, position.character)?;
+    let buffer_path = uri
+        .to_file_path()
+        .ok()
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|| "<buffer>".to_string());
+    let edits = rename_edits_for_symbol(&analysis, &text, &buffer_path, symbol);
+    Some((buffer_path, edits))
+}
+
+fn lsp_range((sl, sc, el, ec): (u32, u32, u32, u32)) -> Range {
+    Range::new(Position::new(sl, sc), Position::new(el, ec))
+}
+
+fn compute_references(store: &mut DocumentStore, params: ReferenceParams) -> Option<Vec<Location>> {
+    let uri = params.text_document_position.text_document.uri;
+    let position = params.text_document_position.position;
+    let (buffer_path, occurrences) = symbol_occurrences(store, &uri, position)?;
+    let mut out = Vec::new();
+    for (path, ranges) in occurrences {
+        let target = if path == buffer_path {
+            uri.clone()
+        } else {
+            Url::from_file_path(&path).ok()?
+        };
+        out.extend(
+            ranges
+                .into_iter()
+                .map(|range| Location::new(target.clone(), lsp_range(range))),
+        );
+    }
+    out.sort_by_key(|l| {
+        (
+            l.uri.to_string(),
+            l.range.start.line,
+            l.range.start.character,
+        )
+    });
+    Some(out)
+}
+
+fn compute_highlights(
+    store: &mut DocumentStore,
+    params: DocumentHighlightParams,
+) -> Option<Vec<DocumentHighlight>> {
+    let uri = params.text_document_position_params.text_document.uri;
+    let position = params.text_document_position_params.position;
+    let (buffer_path, mut occurrences) = symbol_occurrences(store, &uri, position)?;
+    Some(
+        occurrences
+            .remove(&buffer_path)?
+            .into_iter()
+            .map(|range| DocumentHighlight {
+                range: lsp_range(range),
+                kind: None,
+            })
+            .collect(),
+    )
+}
+
+fn compute_inlay_hints(store: &mut DocumentStore, params: InlayHintParams) -> Vec<InlayHint> {
+    let uri = params.text_document.uri;
+    let Some(text) = store.text(&uri).map(str::to_string) else {
+        return Vec::new();
+    };
+    let Some(analysis) = store.analyze(&uri) else {
+        return Vec::new();
+    };
+    inferred_bindings(&analysis, &text)
+        .into_iter()
+        .filter_map(|(offset, ty)| {
+            let (line, character) = offset_to_position(&text, offset);
+            let position = Position::new(line, character);
+            let wanted = params.range.start <= position && position <= params.range.end;
+            wanted.then(|| InlayHint {
+                position,
+                label: InlayHintLabel::String(format!(": {ty}")),
+                kind: Some(InlayHintKind::TYPE),
+                text_edits: None,
+                tooltip: None,
+                padding_left: None,
+                padding_right: None,
+                data: None,
+            })
+        })
+        .collect()
+}
+
+/// A quick fix for each undefined standard library name: import it.
+fn compute_code_actions(
+    store: &mut DocumentStore,
+    params: CodeActionParams,
+) -> Vec<CodeActionOrCommand> {
+    let uri = params.text_document.uri;
+    let Some(text) = store.text(&uri).map(str::to_string) else {
+        return Vec::new();
+    };
+    let mut seen = HashSet::new();
+    let mut out = Vec::new();
+    for diagnostic in &params.context.diagnostics {
+        let Some(name) = diagnostic
+            .message
+            .strip_prefix("undefined name `")
+            .and_then(|rest| rest.strip_suffix('`'))
+        else {
+            continue;
+        };
+        let Some((name, module, ..)) = std_doc(name) else {
+            continue;
+        };
+        if !seen.insert(*name) {
+            continue;
+        }
+        let edit = import_text_edit(&text, module, name);
+        out.push(CodeActionOrCommand::CodeAction(CodeAction {
+            title: format!("Import `{name}` from `{module}`"),
+            kind: Some(CodeActionKind::QUICKFIX),
+            diagnostics: Some(vec![diagnostic.clone()]),
+            edit: Some(WorkspaceEdit {
+                changes: Some(HashMap::from([(uri.clone(), vec![edit])])),
+                document_changes: None,
+                change_annotations: None,
+            }),
+            is_preferred: Some(true),
+            ..Default::default()
+        }));
+    }
+    out
 }
 
 fn compute_formatting(

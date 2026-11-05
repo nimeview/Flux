@@ -11,7 +11,7 @@ use crate::position::{byte_range_to_lsp, LineIndex};
 use flux_driver::analyze_document_with as driver_analyze;
 use flux_hir::{
     build_reference_index, rename_spans, symbol_at_offset, HirItem, HirProgram, ReferenceIndex,
-    SymbolId,
+    SymbolId, SymbolKind,
 };
 use flux_types::{Type, TypeCheckContext, TypedProgram};
 
@@ -481,7 +481,10 @@ pub fn hover_for_name(
         .map(|(id, _)| *id)?;
 
     let typed = typed?;
-    let ty = typed.types.get(&symbol_id)?;
+    let ty = typed
+        .types
+        .get(&symbol_id)
+        .or_else(|| typed.local_types.get(&symbol_id))?;
     Some(format!("{word}: {}", describe_type(ty)))
 }
 
@@ -609,6 +612,122 @@ pub fn outline_symbols(hir: &HirProgram) -> Vec<OutlineSymbol> {
     out
 }
 
+/// The type of the local or parameter `name` declared last inside `range` of the
+/// buffer, when the file type-checks.
+pub fn local_type(
+    analysis: &DocAnalysis,
+    name: &str,
+    range: &std::ops::Range<usize>,
+) -> Option<String> {
+    let hir = analysis.hir.as_ref()?;
+    let typed = analysis.typed.as_ref()?;
+    let source = buffer_source_id(analysis)?;
+    hir.symbols
+        .values()
+        .filter(|s| {
+            s.name == name
+                && matches!(s.kind, SymbolKind::Local { .. } | SymbolKind::Param)
+                && s.span.source == source
+                && range.contains(&s.span.start)
+        })
+        .max_by_key(|s| s.span.start)
+        .and_then(|s| {
+            typed
+                .local_types
+                .get(&s.id)
+                .or_else(|| typed.types.get(&s.id))
+        })
+        .map(|ty| describe_type(&unwrap_type(ty)))
+}
+
+/// `(byte offset just after the name, type)` for each binding in the buffer whose
+/// type is not written in the source, for inlay hints.
+pub fn inferred_bindings(analysis: &DocAnalysis, contents: &str) -> Vec<(usize, String)> {
+    let (Some(hir), Some(typed), Some(source)) = (
+        analysis.hir.as_ref(),
+        analysis.typed.as_ref(),
+        buffer_source_id(analysis),
+    ) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for symbol in hir.symbols.values() {
+        if symbol.span.source != source
+            || symbol.name.starts_with('_')
+            || symbol.name == "self"
+            || !matches!(
+                symbol.kind,
+                SymbolKind::Local { .. }
+                    | SymbolKind::Param
+                    | SymbolKind::Source
+                    | SymbolKind::Derived
+            )
+        {
+            continue;
+        }
+        // A symbol's span may cover its whole declaration.
+        let Some(text) = contents.get(symbol.span.start..symbol.span.end) else {
+            continue;
+        };
+        let Some(at) = find_word(text, &symbol.name) else {
+            continue;
+        };
+        let end = symbol.span.start + at + symbol.name.len();
+        if contents[end..].trim_start().starts_with(':') {
+            continue;
+        }
+        let Some(ty) = typed
+            .local_types
+            .get(&symbol.id)
+            .or_else(|| typed.types.get(&symbol.id))
+        else {
+            continue;
+        };
+        let ty = unwrap_type(ty);
+        if !ty.is_error() {
+            out.push((end, describe_type(&ty)));
+        }
+    }
+    out.sort();
+    out
+}
+
+/// Where `word` first occurs in `text` as a whole word.
+fn find_word(text: &str, word: &str) -> Option<usize> {
+    let is_part = |c: char| c.is_ascii_alphanumeric() || c == '_';
+    text.match_indices(word)
+        .map(|(at, _)| at)
+        .find(|&at| !text[..at].ends_with(is_part) && !text[at + word.len()..].starts_with(is_part))
+}
+
+/// A user function's signature: its parameters and return type, as text.
+pub fn user_signature(analysis: &DocAnalysis, name: &str) -> Option<(Vec<String>, Option<String>)> {
+    let hir = analysis.hir.as_ref()?;
+    let typed = analysis.typed.as_ref()?;
+    let function = hir.items.iter().find_map(|item| match item {
+        HirItem::Fn(f) if hir.names.get(&f.name).is_some_and(|n| n == name) => Some(f),
+        _ => None,
+    })?;
+    let (types, ret) = match typed.types.get(&function.name).map(unwrap_type) {
+        Some(Type::Func { params, ret }) => (params, Some(*ret)),
+        _ => (Vec::new(), None),
+    };
+    let params = function
+        .params
+        .iter()
+        .enumerate()
+        .map(|(i, p)| {
+            let param = hir.names.get(&p.name).cloned().unwrap_or_default();
+            match types.get(i) {
+                Some(ty) => format!("{param}: {}", describe_type(ty)),
+                None => param,
+            }
+        })
+        .collect();
+    let ret = ret.filter(|r| *r != Type::Unit).map(|r| describe_type(&r));
+    Some((params, ret))
+}
+
 /// Resolve the symbol under the cursor using the reference index.
 pub fn symbol_at_position(
     analysis: &DocAnalysis,
@@ -706,11 +825,18 @@ fn paths_equal(a: &str, b: &str) -> bool {
 }
 
 fn normalize_path(path: &str, buffer_path: &str) -> String {
-    if path == "<buffer>" {
-        buffer_path.to_string()
-    } else {
-        path.to_string()
+    if path == buffer_path || path == "<buffer>" {
+        return buffer_path.to_string();
     }
+    // The same file reached through a symlink is still the open buffer.
+    let same = std::fs::canonicalize(path)
+        .ok()
+        .zip(std::fs::canonicalize(buffer_path).ok())
+        .is_some_and(|(a, b)| a == b);
+    if same {
+        return buffer_path.to_string();
+    }
+    path.to_string()
 }
 
 /// Legacy text-based rename helper (superseded by [`rename_edits_for_symbol`]).

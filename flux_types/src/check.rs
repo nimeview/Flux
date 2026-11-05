@@ -44,6 +44,8 @@ pub struct TypedProgram {
     /// Resolved impls by enclosing function (None at module level) and call span;
     /// [`resolve_method_calls`] turns these into direct calls.
     pub method_calls: HashMap<(Option<SymbolId>, flux_diagnostics::Span), SymbolId>,
+    /// The types of locals and parameters, for hover and inlay hints.
+    pub local_types: HashMap<SymbolId, Type>,
 }
 
 pub fn typecheck_program(
@@ -566,6 +568,7 @@ fn typecheck_with_context(
 
     types.extend(ctx.closure_types.borrow().clone());
     check_main_signature(program, diagnostics);
+    let local_types = state::take_local_types();
 
     if diagnostics.has_errors() {
         None
@@ -573,6 +576,7 @@ fn typecheck_with_context(
         Some(TypedProgram {
             types,
             method_calls: ctx.method_calls.borrow().clone(),
+            local_types,
         })
     }
 }

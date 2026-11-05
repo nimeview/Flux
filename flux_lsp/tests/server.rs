@@ -874,3 +874,188 @@ fn shutdown(client: &Connection, handle: thread::JoinHandle<()>) {
         .join()
         .expect("server thread should exit cleanly after shutdown");
 }
+
+/// Sends a request by its raw parameters and returns the result as JSON.
+fn ask(client: &Connection, id: i32, method: &str, params: serde_json::Value) -> serde_json::Value {
+    client
+        .sender
+        .send(Message::Request(Request::new(
+            RequestId::from(id),
+            method.to_string(),
+            params,
+        )))
+        .unwrap();
+    loop {
+        match client.receiver.recv().expect("expected a message") {
+            Message::Response(resp) if resp.id == RequestId::from(id) => {
+                return resp.result.expect("a result");
+            }
+            _ => continue,
+        }
+    }
+}
+
+fn at(line: u32, character: u32) -> serde_json::Value {
+    serde_json::json!({
+        "textDocument": { "uri": test_uri() },
+        "position": { "line": line, "character": character },
+    })
+}
+
+const ASSIST_SOURCE: &str = "import io { println }\n\nstruct Item {\n    price: Int\n}\n\nfn total(i: Item, extra: Int) -> Int {\n    i.price + extra\n}\n\nfn main() {\n    let it = Item { price: 2 }\n    println(\"{total(it, 1)}\")\n    \n}\n";
+
+fn labels(result: &serde_json::Value) -> Vec<String> {
+    result
+        .as_array()
+        .expect("items")
+        .iter()
+        .map(|item| item["label"].as_str().unwrap().to_string())
+        .collect()
+}
+
+#[test]
+fn completion_offers_locals_imports_and_library_names() {
+    let (client, handle) = start_server();
+    did_open(&client, ASSIST_SOURCE);
+    let _ = recv_diagnostics(&client);
+
+    let found = labels(&ask(&client, 2, "textDocument/completion", at(13, 4)));
+    for name in [
+        "it", "println", "total", "Item", "Ok", "None", "Int", "match",
+    ] {
+        assert!(found.iter().any(|l| l == name), "no {name} in {found:?}");
+    }
+    // Library names not imported yet wait until a name is being typed.
+    assert!(!found.iter().any(|l| l == "str_len"), "{found:?}");
+    // Nothing from outside this function.
+    assert!(!found.iter().any(|l| l == "extra"), "{found:?}");
+
+    shutdown(&client, handle);
+}
+
+#[test]
+fn completing_an_unimported_name_adds_its_import() {
+    let (client, handle) = start_server();
+    let text = "import io { println }\n\nfn main() {\n    le\n}\n";
+    did_open(&client, text);
+    let _ = recv_diagnostics(&client);
+
+    let result = ask(&client, 2, "textDocument/completion", at(3, 6));
+    let len = result
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|item| item["label"] == "len")
+        .expect("len offered");
+    assert_eq!(
+        len["additionalTextEdits"][0]["newText"],
+        "import collections { len }\n"
+    );
+
+    shutdown(&client, handle);
+}
+
+#[test]
+fn signature_help_covers_user_functions_and_the_library() {
+    let (client, handle) = start_server();
+    did_open(&client, ASSIST_SOURCE);
+    let _ = recv_diagnostics(&client);
+
+    // Inside `total(it, 1)`, on the second argument.
+    let help = ask(&client, 2, "textDocument/signatureHelp", at(12, 24));
+    assert_eq!(
+        help["signatures"][0]["label"],
+        "total(i: Item, extra: Int64) -> Int64"
+    );
+    assert_eq!(help["activeParameter"], 1);
+    // Inside `println(`.
+    let help = ask(&client, 3, "textDocument/signatureHelp", at(12, 12));
+    assert_eq!(help["signatures"][0]["label"], "println(text: String)");
+
+    shutdown(&client, handle);
+}
+
+#[test]
+fn references_and_highlights_find_every_use() {
+    let (client, handle) = start_server();
+    did_open(&client, ASSIST_SOURCE);
+    let _ = recv_diagnostics(&client);
+
+    let mut params = at(6, 4);
+    params["context"] = serde_json::json!({ "includeDeclaration": true });
+    let found = ask(&client, 2, "textDocument/references", params);
+    assert_eq!(found.as_array().unwrap().len(), 2, "{found}");
+    let found = ask(&client, 3, "textDocument/documentHighlight", at(6, 4));
+    assert_eq!(found.as_array().unwrap().len(), 2, "{found}");
+
+    shutdown(&client, handle);
+}
+
+#[test]
+fn inlay_hints_show_only_types_not_written() {
+    let (client, handle) = start_server();
+    did_open(&client, ASSIST_SOURCE);
+    let _ = recv_diagnostics(&client);
+
+    let hints = ask(
+        &client,
+        2,
+        "textDocument/inlayHint",
+        serde_json::json!({
+            "textDocument": { "uri": test_uri() },
+            "range": { "start": { "line": 0, "character": 0 }, "end": { "line": 20, "character": 0 } },
+        }),
+    );
+    let hints = hints.as_array().unwrap();
+    assert_eq!(hints.len(), 1, "{hints:?}");
+    assert_eq!(hints[0]["label"], ": Item");
+    assert_eq!(hints[0]["position"]["line"], 11);
+
+    shutdown(&client, handle);
+}
+
+#[test]
+fn hover_documents_the_library_unless_the_program_owns_the_name() {
+    let (client, handle) = start_server();
+    did_open(&client, ASSIST_SOURCE);
+    let _ = recv_diagnostics(&client);
+    let hover = ask(&client, 2, "textDocument/hover", at(12, 6)).to_string();
+    assert!(hover.contains("From `io`"), "{hover}");
+    shutdown(&client, handle);
+
+    let (client, handle) = start_server();
+    did_open(
+        &client,
+        "fn len(a: Int) -> Int {\n    a\n}\n\nfn main() {\n    let _b = len(1)\n}\n",
+    );
+    let _ = recv_diagnostics(&client);
+    let hover = ask(&client, 2, "textDocument/hover", at(5, 14)).to_string();
+    assert!(!hover.contains("From `collections`"), "{hover}");
+    shutdown(&client, handle);
+}
+
+#[test]
+fn quick_fix_imports_an_undefined_library_name() {
+    let (client, handle) = start_server();
+    let text = "fn main() {\n    println(\"x\")\n}\n";
+    did_open(&client, text);
+    let diagnostics = recv_diagnostics(&client).diagnostics;
+    assert!(!diagnostics.is_empty());
+
+    let actions = ask(
+        &client,
+        2,
+        "textDocument/codeAction",
+        serde_json::json!({
+            "textDocument": { "uri": test_uri() },
+            "range": diagnostics[0].range,
+            "context": { "diagnostics": diagnostics },
+        }),
+    );
+    let action = &actions[0];
+    assert_eq!(action["title"], "Import `println` from `io`");
+    let edit = action["edit"]["changes"][test_uri().as_str()][0].clone();
+    assert_eq!(edit["newText"], "import io { println }\n\n");
+
+    shutdown(&client, handle);
+}
