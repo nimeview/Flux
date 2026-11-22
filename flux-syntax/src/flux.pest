@@ -2,7 +2,8 @@
 WHITESPACE = _{ " " | "\t" | "\r" | "\n" | "\u{FEFF}" }
 COMMENT = _{ "//" ~ (!"\n" ~ ANY)* }
 
-program = { SOI ~ item* ~ EOI }
+// `;` only separates items or statements on one line; it has no meaning.
+program = { SOI ~ (item | ";")* ~ EOI }
 
 item = {
     import_decl
@@ -32,26 +33,27 @@ import_decl = { "import" ~ import_path ~ import_as? ~ import_symbols? }
 import_as = { kw_as ~ ident }
 import_path = @{ (ASCII_ALPHANUMERIC | "_" | "." | "/")+ }
 import_symbols = { "{" ~ ident_list ~ "}" }
-ident_list = { ident ~ ("," ~ ident)* }
+// A comma may follow the last element of any list.
+ident_list = { ident ~ ("," ~ ident)* ~ ","? }
 
 pub_modifier = { "pub" }
 
 struct_decl = { pub_modifier? ~ "struct" ~ ident ~ type_params? ~ struct_fields }
-struct_fields = { "{" ~ struct_field ~ ("," ~ struct_field)* ~ "}" }
+struct_fields = { "{" ~ struct_field ~ ("," ~ struct_field)* ~ ","? ~ "}" }
 struct_field = { ident ~ ":" ~ type_name }
 
 enum_decl = { pub_modifier? ~ "enum" ~ ident ~ enum_variants }
-enum_variants = { "{" ~ enum_variant ~ ("," ~ enum_variant)* ~ "}" }
+enum_variants = { "{" ~ enum_variant ~ ("," ~ enum_variant)* ~ ","? ~ "}" }
 enum_variant = { ident ~ enum_payload? }
 enum_payload = { tuple_payload | struct_payload }
 // More than one type parses so that the parser can explain the rule.
-tuple_payload = { "(" ~ type_name ~ ("," ~ type_name)* ~ ")" }
-struct_payload = { "{" ~ struct_field ~ ("," ~ struct_field)* ~ "}" }
+tuple_payload = { "(" ~ type_name ~ ("," ~ type_name)* ~ ","? ~ ")" }
+struct_payload = { "{" ~ struct_field ~ ("," ~ struct_field)* ~ ","? ~ "}" }
 
 event_decl = { pub_modifier? ~ "event" ~ ident ~ event_params? }
 event_params = { "(" ~ param_list? ~ ")" }
 
-type_params = { "[" ~ ident ~ ("," ~ ident)* ~ "]" }
+type_params = { "[" ~ ident ~ ("," ~ ident)* ~ ","? ~ "]" }
 
 trait_decl = { pub_modifier? ~ "trait" ~ ident ~ trait_body }
 trait_body = { "{" ~ trait_method* ~ "}" }
@@ -74,7 +76,7 @@ handler_body = { handler_param ~ block_stmts | block_stmts }
 handler_param = { ident ~ "->" }
 
 block = { "{" ~ block_stmts ~ "}" }
-block_stmts = { stmt* }
+block_stmts = { (stmt | ";")* }
 
 stmt = {
     let_stmt
@@ -114,7 +116,7 @@ for_stmt = { "for" ~ ident ~ kw_in ~ expr ~ block }
 // `match`/`if` are reached as operands (see `primary_expr`).
 expr = { or_expr }
 
-match_expr = { kw_match ~ or_expr ~ "{" ~ match_arm ~ ("," ~ match_arm)* ~ "}" }
+match_expr = { kw_match ~ or_expr ~ "{" ~ match_arm ~ ("," ~ match_arm)* ~ ","? ~ "}" }
 kw_match = @{ "match" ~ kw_end }
 match_arm = { match_pattern ~ guard? ~ "=>" ~ (arm_block | arm_jump | expr) }
 // An arm that leaves instead of producing a value: `Err(e) => return Err(e)`.
@@ -123,7 +125,7 @@ arm_block = { "{" ~ block_stmts ~ "}" }
 guard = { kw_if ~ expr }
 match_pattern = { lit_pat | tuple_pat | struct_pat | simple_pat }
 // Int, String, and Bool literals; compared with `==`.
-lit_pat = { float_lit | neg_int_lit | int_lit | string_lit | bool_lit }
+lit_pat = { float_lit | neg_int_lit | int_lit | raw_string_lit | string_lit | bool_lit }
 neg_int_lit = ${ "-" ~ int_lit }
 simple_pat = { ident }
 // The payload may itself be a pattern: `Some(Num(n))`, `Ok(0)`, `Some(LParen)`.
@@ -166,6 +168,7 @@ primary_expr = {
   | array_lit
   | float_lit
   | int_lit
+  | raw_string_lit
   | string_lit
   | bool_lit
   | ident
@@ -173,24 +176,24 @@ primary_expr = {
 }
 
 closure_expr = { "|" ~ closure_params? ~ "|" ~ expr }
-closure_params = { closure_param ~ ("," ~ closure_param)* }
+closure_params = { closure_param ~ ("," ~ closure_param)* ~ ","? }
 closure_param = { ident ~ (":" ~ type_name)? }
 
 array_lit = { "[" ~ expr_list? ~ "]" }
-struct_lit = { ident ~ "{" ~ field_init ~ ("," ~ field_init)* ~ "}" }
+struct_lit = { ident ~ "{" ~ field_init ~ ("," ~ field_init)* ~ ","? ~ "}" }
 field_init = { ident ~ ":" ~ expr }
 
-param_list = { param ~ ("," ~ param)* }
+param_list = { param ~ ("," ~ param)* ~ ","? }
 param = { ident ~ ":" ~ type_name }
-expr_list = { expr ~ ("," ~ expr)* }
+expr_list = { expr ~ ("," ~ expr)* ~ ","? }
 
 type_ann = { ":" ~ type_name }
 type_name = { function_type | generic_type | result_type | option_type | array_type | simple_type }
-function_type = { "fn" ~ "(" ~ (type_name ~ ("," ~ type_name)*)? ~ ")" ~ ("->" ~ function_ret)? }
+function_type = { "fn" ~ "(" ~ (type_name ~ ("," ~ type_name)* ~ ","?)? ~ ")" ~ ("->" ~ function_ret)? }
 function_ret = { type_name }
-generic_type = { ident ~ "[" ~ type_name ~ ("," ~ type_name)* ~ "]" }
-option_type = { "Option" ~ "[" ~ type_name ~ "]" }
-result_type = { "Result" ~ "[" ~ type_name ~ "," ~ type_name ~ "]" }
+generic_type = { ident ~ "[" ~ type_name ~ ("," ~ type_name)* ~ ","? ~ "]" }
+option_type = { "Option" ~ "[" ~ type_name ~ ","? ~ "]" }
+result_type = { "Result" ~ "[" ~ type_name ~ "," ~ type_name ~ ","? ~ "]" }
 array_type = { "[" ~ type_name ~ "]" }
 simple_type = { ident }
 
@@ -214,6 +217,11 @@ exponent = _{ ("e" | "E") ~ ("+" | "-")? ~ digits }
 number_end = _{ !(ASCII_ALPHANUMERIC | "_") }
 int_suffix = _{ "i8" | "i16" | "i32" | "i64" | "u8" | "u16" | "u32" | "u64" }
 string_lit = ${ "\"" ~ string_content* ~ "\"" }
+// `r"..."` and `r#"..."#`: the text as written, with no escapes and no `{...}`.
+// Each `#` lets the text contain one more level of `"#`: it ends at `"` and
+// the same number of `#`.
+raw_string_lit = ${ "r" ~ PUSH("#"*) ~ "\"" ~ raw_string_text ~ "\"" ~ POP }
+raw_string_text = @{ (!("\"" ~ PEEK) ~ ANY)* }
 string_content = _{ string_escape | string_char | interp_expr }
 string_escape = @{ "\\" ~ ANY }
 string_char = @{ !( "\"" | "{" | "\\" ) ~ ANY }

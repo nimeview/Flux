@@ -2,72 +2,166 @@
   "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
   "name": "Flux",
   "scopeName": "source.flux",
-  "patterns": [{ "include": "#code" }],
+  "patterns": [
+    {
+      "include": "#code"
+    }
+  ],
   "repository": {
     "code": {
       "patterns": [
-        { "include": "#comment" },
-        { "include": "#string" },
-        { "include": "#import" },
-        { "include": "#number" },
-        { "include": "#declaration" },
-        { "include": "#handler" },
-        { "include": "#binding" },
-        { "include": "#keyword" },
-        { "include": "#constant" },
-        { "include": "#type" },
-        { "include": "#call" },
-        { "include": "#field" },
-        { "include": "#operator" },
-        { "include": "#punctuation" },
-        { "include": "#name" }
+        {
+          "include": "#comment"
+        },
+        {
+          "include": "#raw-string"
+        },
+        {
+          "include": "#string"
+        },
+        {
+          "include": "#import"
+        },
+        {
+          "include": "#number"
+        },
+        {
+          "include": "#declaration"
+        },
+        {
+          "include": "#handler"
+        },
+        {
+          "include": "#binding"
+        },
+        {
+          "include": "#keyword"
+        },
+        {
+          "include": "#constant"
+        },
+        {
+          "include": "#type"
+        },
+        {
+          "include": "#call"
+        },
+        {
+          "include": "#field"
+        },
+        {
+          "include": "#operator"
+        },
+        {
+          "include": "#punctuation"
+        },
+        {
+          "include": "#name"
+        }
       ]
     },
     "comment": {
       "name": "comment.line.double-slash.flux",
       "begin": "//",
-      "beginCaptures": { "0": { "name": "punctuation.definition.comment.flux" } },
+      "beginCaptures": {
+        "0": {
+          "name": "punctuation.definition.comment.flux"
+        }
+      },
       "end": "$"
     },
     "string": {
       "name": "string.quoted.double.flux",
       "begin": "\"",
-      "beginCaptures": { "0": { "name": "punctuation.definition.string.begin.flux" } },
+      "beginCaptures": {
+        "0": {
+          "name": "punctuation.definition.string.begin.flux"
+        }
+      },
       "end": "\"",
-      "endCaptures": { "0": { "name": "punctuation.definition.string.end.flux" } },
+      "endCaptures": {
+        "0": {
+          "name": "punctuation.definition.string.end.flux"
+        }
+      },
       "patterns": [
-        { "name": "constant.character.escape.flux", "match": "\\\\[ntr0\\\\\"{}]" },
-        { "name": "invalid.illegal.escape.flux", "match": "\\\\." },
-        { "include": "#interpolation" }
+        {
+          "name": "constant.character.escape.flux",
+          "match": "\\\\[ntr0\\\\\"{}]"
+        },
+        {
+          "name": "invalid.illegal.escape.flux",
+          "match": "\\\\."
+        },
+        {
+          "include": "#interpolation"
+        }
       ]
     },
     "interpolation": {
       "name": "meta.interpolation.flux",
       "contentName": "source.flux",
       "begin": "\\{",
-      "beginCaptures": { "0": { "name": "punctuation.section.interpolation.begin.flux" } },
+      "beginCaptures": {
+        "0": {
+          "name": "punctuation.section.interpolation.begin.flux"
+        }
+      },
       "end": "\\}",
-      "endCaptures": { "0": { "name": "punctuation.section.interpolation.end.flux" } },
-      "patterns": [{ "include": "#nested-braces" }, { "include": "#code" }]
+      "endCaptures": {
+        "0": {
+          "name": "punctuation.section.interpolation.end.flux"
+        }
+      },
+      "patterns": [
+        {
+          "include": "#nested-braces"
+        },
+        {
+          "include": "#code"
+        }
+      ]
     },
     "nested-braces": {
       "begin": "\\{",
       "end": "\\}",
-      "patterns": [{ "include": "#nested-braces" }, { "include": "#code" }]
+      "patterns": [
+        {
+          "include": "#nested-braces"
+        },
+        {
+          "include": "#code"
+        }
+      ]
     },
     "import": {
       "name": "meta.import.flux",
       "begin": "\\b(import)\\b\\s*([A-Za-z_][A-Za-z0-9_.]*)?",
       "beginCaptures": {
-        "1": { "name": "keyword.control.import.flux" },
-        "2": { "name": "entity.name.namespace.flux" }
+        "1": {
+          "name": "keyword.control.import.flux"
+        },
+        "2": {
+          "name": "entity.name.namespace.flux"
+        }
       },
       "end": "$|(?=//)",
       "patterns": [
-        { "name": "keyword.control.as.flux", "match": "\\bas\\b" },
-        { "include": "#punctuation" },
-        { "name": "entity.name.type.flux", "match": "\\b[A-Z][A-Za-z0-9_]*\\b" },
-        { "name": "variable.other.flux", "match": "\\b[A-Za-z_][A-Za-z0-9_]*\\b" }
+        {
+          "name": "keyword.control.as.flux",
+          "match": "\\bas\\b"
+        },
+        {
+          "include": "#punctuation"
+        },
+        {
+          "name": "entity.name.type.flux",
+          "match": "\\b[A-Z][A-Za-z0-9_]*\\b"
+        },
+        {
+          "name": "variable.other.flux",
+          "match": "\\b[A-Za-z_][A-Za-z0-9_]*\\b"
+        }
       ]
     },
     "number": {
@@ -91,33 +185,57 @@
         {
           "match": "\\b(pub)?\\s*\\b(fn|rfn)\\s+([A-Za-z_][A-Za-z0-9_]*)",
           "captures": {
-            "1": { "name": "storage.modifier.flux" },
-            "2": { "name": "storage.type.function.flux" },
-            "3": { "name": "entity.name.function.flux" }
+            "1": {
+              "name": "storage.modifier.flux"
+            },
+            "2": {
+              "name": "storage.type.function.flux"
+            },
+            "3": {
+              "name": "entity.name.function.flux"
+            }
           }
         },
         {
           "match": "\\b(pub)?\\s*\\b(struct|enum|trait|type)\\s+([A-Za-z_][A-Za-z0-9_]*)",
           "captures": {
-            "1": { "name": "storage.modifier.flux" },
-            "2": { "name": "storage.type.flux" },
-            "3": { "name": "entity.name.type.flux" }
+            "1": {
+              "name": "storage.modifier.flux"
+            },
+            "2": {
+              "name": "storage.type.flux"
+            },
+            "3": {
+              "name": "entity.name.type.flux"
+            }
           }
         },
         {
           "match": "\\b(impl)\\s+([A-Za-z_][A-Za-z0-9_]*)\\s+(for)\\b",
           "captures": {
-            "1": { "name": "storage.type.impl.flux" },
-            "2": { "name": "entity.name.type.flux" },
-            "3": { "name": "keyword.other.for.flux" }
+            "1": {
+              "name": "storage.type.impl.flux"
+            },
+            "2": {
+              "name": "entity.name.type.flux"
+            },
+            "3": {
+              "name": "keyword.other.for.flux"
+            }
           }
         },
         {
           "match": "\\b(pub)?\\s*\\b(event)\\s+([A-Za-z_][A-Za-z0-9_]*)",
           "captures": {
-            "1": { "name": "storage.modifier.flux" },
-            "2": { "name": "storage.type.event.flux" },
-            "3": { "name": "entity.name.function.event.flux" }
+            "1": {
+              "name": "storage.modifier.flux"
+            },
+            "2": {
+              "name": "storage.type.event.flux"
+            },
+            "3": {
+              "name": "entity.name.function.event.flux"
+            }
           }
         }
       ]
@@ -127,22 +245,34 @@
         {
           "match": "\\b(on)\\s+([A-Za-z_][A-Za-z0-9_]*)",
           "captures": {
-            "1": { "name": "keyword.control.reactive.flux" },
-            "2": { "name": "entity.name.function.event.flux" }
+            "1": {
+              "name": "keyword.control.reactive.flux"
+            },
+            "2": {
+              "name": "entity.name.function.event.flux"
+            }
           }
         },
         {
           "match": "\\b(emit)\\s+([A-Za-z_][A-Za-z0-9_]*)",
           "captures": {
-            "1": { "name": "keyword.control.reactive.flux" },
-            "2": { "name": "entity.name.function.event.flux" }
+            "1": {
+              "name": "keyword.control.reactive.flux"
+            },
+            "2": {
+              "name": "entity.name.function.event.flux"
+            }
           }
         },
         {
           "match": "\\b(watch)\\b(?:\\s+([a-z_][A-Za-z0-9_]*))?",
           "captures": {
-            "1": { "name": "keyword.control.reactive.flux" },
-            "2": { "name": "variable.other.reactive.flux" }
+            "1": {
+              "name": "keyword.control.reactive.flux"
+            },
+            "2": {
+              "name": "variable.other.reactive.flux"
+            }
           }
         }
       ]
@@ -150,27 +280,62 @@
     "binding": {
       "match": "\\b(pub)?\\s*\\b(let|const|derived)\\b(?:\\s+(mut)\\b)?(?:\\s+([A-Za-z_][A-Za-z0-9_]*))?",
       "captures": {
-        "1": { "name": "storage.modifier.flux" },
-        "2": { "name": "storage.type.binding.flux" },
-        "3": { "name": "storage.modifier.mut.flux" },
-        "4": { "name": "variable.other.declaration.flux" }
+        "1": {
+          "name": "storage.modifier.flux"
+        },
+        "2": {
+          "name": "storage.type.binding.flux"
+        },
+        "3": {
+          "name": "storage.modifier.mut.flux"
+        },
+        "4": {
+          "name": "variable.other.declaration.flux"
+        }
       }
     },
     "keyword": {
       "patterns": [
-        { "name": "keyword.control.flux", "match": "\\b(if|else|while|for|in|match|return|break|continue)\\b" },
-        { "name": "keyword.operator.cast.flux", "match": "\\bas\\b" },
-        { "name": "storage.type.function.flux", "match": "\\bfn\\b" },
-        { "name": "support.function.reactive.flux", "match": "\\bsnap\\b(?=\\s*\\()" },
-        { "name": "storage.modifier.flux", "match": "\\bpub\\b" }
+        {
+          "name": "keyword.control.flux",
+          "match": "\\b(if|else|while|for|in|match|return|break|continue)\\b"
+        },
+        {
+          "name": "keyword.operator.cast.flux",
+          "match": "\\bas\\b"
+        },
+        {
+          "name": "storage.type.function.flux",
+          "match": "\\bfn\\b"
+        },
+        {
+          "name": "support.function.reactive.flux",
+          "match": "\\bsnap\\b(?=\\s*\\()"
+        },
+        {
+          "name": "storage.modifier.flux",
+          "match": "\\bpub\\b"
+        }
       ]
     },
     "constant": {
       "patterns": [
-        { "name": "constant.language.boolean.flux", "match": "\\b(true|false)\\b" },
-        { "name": "support.constant.prelude.flux", "match": "\\b(Some|None|Ok|Err)\\b" },
-        { "name": "variable.language.self.flux", "match": "\\bself\\b" },
-        { "name": "constant.other.flux", "match": "\\b[A-Z][A-Z0-9_]+\\b" }
+        {
+          "name": "constant.language.boolean.flux",
+          "match": "\\b(true|false)\\b"
+        },
+        {
+          "name": "support.constant.prelude.flux",
+          "match": "\\b(Some|None|Ok|Err)\\b"
+        },
+        {
+          "name": "variable.language.self.flux",
+          "match": "\\bself\\b"
+        },
+        {
+          "name": "constant.other.flux",
+          "match": "\\b[A-Z][A-Z0-9_]+\\b"
+        }
       ]
     },
     "type": {
@@ -179,12 +344,19 @@
           "name": "support.type.primitive.flux",
           "match": "\\b(Int|Int8|Int16|Int32|Int64|UInt8|UInt16|UInt32|UInt64|Float|Float32|Float64|Bool|Char|String|Unit|Option|Result|Map)\\b"
         },
-        { "name": "entity.name.type.flux", "match": "\\b[A-Z][A-Za-z0-9_]*\\b" }
+        {
+          "name": "entity.name.type.flux",
+          "match": "\\b[A-Z][A-Za-z0-9_]*\\b"
+        }
       ]
     },
     "call": {
       "match": "\\b([a-z_][A-Za-z0-9_]*)\\s*(?=\\(|\\[[A-Z][^\\]]*\\]\\s*\\()",
-      "captures": { "1": { "name": "entity.name.function.call.flux" } }
+      "captures": {
+        "1": {
+          "name": "entity.name.function.call.flux"
+        }
+      }
     },
     "field": {
       "match": "(?<=\\.)[A-Za-z_][A-Za-z0-9_]*",
@@ -192,25 +364,70 @@
     },
     "operator": {
       "patterns": [
-        { "name": "keyword.operator.arrow.flux", "match": "->|=>" },
-        { "name": "keyword.operator.comparison.flux", "match": "==|!=|<=|>=|<|>" },
-        { "name": "keyword.operator.logical.flux", "match": "&&|\\|\\||!" },
-        { "name": "keyword.operator.arithmetic.flux", "match": "[+\\-*/%]" },
-        { "name": "keyword.operator.assignment.flux", "match": "=" },
-        { "name": "keyword.operator.try.flux", "match": "\\?" },
-        { "name": "keyword.operator.closure.flux", "match": "\\|" }
+        {
+          "name": "keyword.operator.arrow.flux",
+          "match": "->|=>"
+        },
+        {
+          "name": "keyword.operator.comparison.flux",
+          "match": "==|!=|<=|>=|<|>"
+        },
+        {
+          "name": "keyword.operator.logical.flux",
+          "match": "&&|\\|\\||!"
+        },
+        {
+          "name": "keyword.operator.arithmetic.flux",
+          "match": "[+\\-*/%]"
+        },
+        {
+          "name": "keyword.operator.assignment.flux",
+          "match": "="
+        },
+        {
+          "name": "keyword.operator.try.flux",
+          "match": "\\?"
+        },
+        {
+          "name": "keyword.operator.closure.flux",
+          "match": "\\|"
+        }
       ]
     },
     "punctuation": {
       "patterns": [
-        { "name": "punctuation.separator.flux", "match": "[,:;]" },
-        { "name": "punctuation.accessor.flux", "match": "\\." },
-        { "name": "punctuation.brackets.flux", "match": "[{}\\[\\]()]" }
+        {
+          "name": "punctuation.separator.flux",
+          "match": "[,:;]"
+        },
+        {
+          "name": "punctuation.accessor.flux",
+          "match": "\\."
+        },
+        {
+          "name": "punctuation.brackets.flux",
+          "match": "[{}\\[\\]()]"
+        }
       ]
     },
     "name": {
       "name": "variable.other.flux",
       "match": "\\b[a-z_][A-Za-z0-9_]*\\b"
+    },
+    "raw-string": {
+      "name": "string.quoted.raw.flux",
+      "begin": "\\br(#*)\"",
+      "beginCaptures": {
+        "0": {
+          "name": "punctuation.definition.string.begin.flux"
+        }
+      },
+      "end": "\"\\1",
+      "endCaptures": {
+        "0": {
+          "name": "punctuation.definition.string.end.flux"
+        }
+      }
     }
   }
 }

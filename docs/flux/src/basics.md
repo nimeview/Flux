@@ -145,6 +145,22 @@ ab
 true
 ```
 
+A raw string, `r"..."`, keeps its text exactly as written: no escapes and no braces. Add `#` around it when the text has quotes in it, which is handy for JSON:
+
+```flux
+import io { println }
+
+fn main() {
+    println(r"C:\files\{name}")
+    println(r#"{"key": "value"}"#)
+}
+```
+
+```output
+C:\files\{name}
+{"key": "value"}
+```
+
 `<` and the other comparisons order strings by Unicode code point. That is not alphabetical order: every capital letter sorts before every lowercase one, so `"Z" < "a"`.
 
 ## Functions
@@ -220,6 +236,8 @@ fn main() {
 16 big
 0
 ```
+
+Statements are separated by newlines. To put two on one line, separate them with `;`, which has no other meaning. A comma may follow the last element of any list, so `[1, 2, 3,]` is fine; `flux fmt` removes such commas and puts each statement on its own line.
 
 A line starting with `-` is an error, rather than a subtraction from the line above. End the previous line with the operator if you mean to continue it:
 

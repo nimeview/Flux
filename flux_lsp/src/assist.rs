@@ -127,6 +127,23 @@ fn tokens(src: &str) -> Vec<Tok<'_>> {
                 continue;
             }
             b'"' => in_string = true,
+            // `r"..."` or `r#"..."#`: text only, no code inside.
+            b'r' if matches!(bytes.get(i + 1), Some(b'"' | b'#')) && {
+                let hashes = bytes[i + 1..].iter().take_while(|b| **b == b'#').count();
+                bytes.get(i + 1 + hashes) == Some(&b'"')
+            } =>
+            {
+                let hashes = bytes[i + 1..].iter().take_while(|b| **b == b'#').count();
+                let close: Vec<u8> = std::iter::once(b'"')
+                    .chain(std::iter::repeat_n(b'#', hashes))
+                    .collect();
+                let body = i + 2 + hashes;
+                i = bytes[body.min(bytes.len())..]
+                    .windows(close.len())
+                    .position(|w| w == close.as_slice())
+                    .map_or(bytes.len(), |at| body + at + close.len());
+                continue;
+            }
             b'a'..=b'z' | b'A'..=b'Z' | b'_' => {
                 let start = i;
                 while i < bytes.len() && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_') {
@@ -536,6 +553,13 @@ mod tests {
     fn scope_stays_inside_the_item_and_ignores_text() {
         let names = scope("fn g(other: Int) {\n}\n\nfn f() {\n    // let hidden = 1\n    let s = \"let quoted = {1}\"\n    @\n}\n");
         assert_eq!(names, ["s"]);
+    }
+
+    #[test]
+    fn raw_strings_hide_their_text() {
+        let names =
+            scope("fn f() {\n    let a = r#\"let fake = {1}\"#\n    let b = r\"{x}\"\n    @\n}\n");
+        assert_eq!(names, ["a", "b"]);
     }
 
     #[test]

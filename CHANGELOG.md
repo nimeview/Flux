@@ -2,6 +2,21 @@
 
 Notable changes to Flux. The versioning policy is in [`RELEASE.md`](RELEASE.md).
 
+## [Unreleased]
+
+### Added
+
+- Raw strings `r"..."` and `r#"..."#`, with no escapes or interpolation.
+- `;` between statements on one line, and a comma after the last element of any list.
+
+### Fixed
+
+- An event declared with more than one value, such as `event Move(x: Int, y: Int)`, silently dropped all but the first. It is now an error until events with several values arrive.
+
+### Tools
+
+- Warning E026 marks an older form and carries its replacement. The editor offers it as a quick fix, and `flux migrate` applies it.
+
 ## [0.1.0] - 2026-11-03
 
 The first version whose language surface is declared stable. The earlier history is in the git log.

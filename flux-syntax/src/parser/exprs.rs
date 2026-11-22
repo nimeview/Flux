@@ -167,6 +167,15 @@ pub(super) fn parse_expr(source_id: SourceId, pair: pest::iterators::Pair<'_, Ru
                 })
                 .unwrap_or(value)
         }
+        Rule::raw_string_lit => Expr::String {
+            value: pair
+                .clone()
+                .into_inner()
+                .find(|p| p.as_rule() == Rule::raw_string_text)
+                .map(|p| p.as_str().to_string())
+                .unwrap_or_default(),
+            span: span_of(source_id, &pair),
+        },
         Rule::string_lit => parse_string_lit(source_id, pair),
         Rule::bool_lit => {
             let span = span_of(source_id, &pair);

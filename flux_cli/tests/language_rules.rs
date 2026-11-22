@@ -256,3 +256,63 @@ fn a_module_gets_the_names_and_its_own_win_only_there() {
     assert_eq!(vm.1, "1 0\n");
     assert_eq!(vm, run(dir.path(), "--jit"));
 }
+
+#[test]
+fn an_event_with_several_values_is_an_error_not_a_silent_drop() {
+    rejects(
+        "event Move(x: Int, y: Int)\nfn main() { }\n",
+        "declares more than one value",
+    );
+}
+
+#[test]
+fn migrate_leaves_current_code_alone() {
+    let dir = tempfile::tempdir().unwrap();
+    let source =
+        "import io { println }\n\n// rfn in a comment\nfn main() {\n    println(\"rfn\")\n}\n";
+    std::fs::write(dir.path().join("main.fl"), source).unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_flux"))
+        .args(["migrate", "--write", "main.fl"])
+        .current_dir(dir.path())
+        .output()
+        .expect("spawn flux");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("main.fl")).unwrap(),
+        source
+    );
+}
+
+#[test]
+fn trailing_commas_semicolons_and_raw_strings() {
+    prints(
+        "import io { println, }\n\
+         struct P {\n    x: Int,\n    y: Int,\n}\n\
+         enum E {\n    A,\n    B(Int,),\n}\n\
+         fn add(a: Int, b: Int,) -> Int {\n    a + b\n}\n\
+         fn pick(e: E) -> Int {\n    match e {\n        A => 0,\n        B(n) => n,\n    }\n}\n\
+         fn main() {\n    let a = 1; let b = 2;\n    let p = P { x: a, y: b, }\n\
+         \x20   let f = |u: Int, v: Int,| u + v\n\
+         \x20   println(\"{add(a, b,)} {[1, 2,]} {p.y} {pick(B(7))} {f(1, 2)}\"); println(\"two\")\n}\n",
+        "3 [1, 2] 2 7 3\ntwo\n",
+    );
+    prints(
+        "import io { println }\nfn main() {\n    println(r\"no {x} \\n\")\n    println(r#\"{\"k\": \"v\"}\"#)\n    println(r##\"a \"# b\"##)\n}\n",
+        "no {x} \\n\n{\"k\": \"v\"}\na \"# b\n",
+    );
+    prints(
+        "import io { println }\nfn main() {\n    let s = r\"x\"\n    println(match s { r\"x\" => \"raw\", _ => \"other\" })\n}\n",
+        "raw\n",
+    );
+    // A semicolon is only a separator: the block keeps its value.
+    prints(
+        "import io { println }\nfn f() -> Int {\n    let a = 1; a + 1;\n}\nfn main() {\n    println(\"{f()}\")\n}\n",
+        "2\n",
+    );
+    rejects("fn main() {\n    let s = r\"open\n}\n", "parse error");
+    rejects("fn main() {\n    let a = [,]\n}\n", "parse error");
+}

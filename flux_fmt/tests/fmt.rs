@@ -240,3 +240,16 @@ fn numeric_literals_keep_their_spelling() {
     assert_eq!(formatted, src);
     assert_eq!(format_source(&formatted).expect("formats again"), formatted);
 }
+
+#[test]
+fn trailing_commas_and_semicolons_format_away() {
+    let src = "import io { println, }\nstruct P {\n    x: Int,\n}\nfn add(a: Int, b: Int,) -> Int {\n    a + b\n}\nfn main() {\n    let a = 1; let b = 2;\n    let xs = [a, b,]\n    let m = match a {\n        1 => 2,\n        _ => 3,\n    }\n    println(\"{add(a, b,)} {xs} {m}\");\n}\n";
+    let want = "import io { println }\n\nstruct P {\n    x: Int\n}\n\nfn add(a: Int, b: Int) -> Int {\n    a + b\n}\n\nfn main() {\n    let a = 1\n    let b = 2\n    let xs = [a, b]\n    let m = match a { 1 => 2, _ => 3 }\n    println(\"{add(a, b)} {xs} {m}\")\n}\n";
+    assert_format_idempotent(src, want);
+}
+
+#[test]
+fn raw_strings_keep_their_spelling() {
+    let src = "fn main() {\n    let a = r\"no {x} \\n\"\n    let b = r#\"say \"hi\"\"#\n    let c = r##\"a \"# b\"##\n}\n";
+    assert_format_idempotent(src, src);
+}

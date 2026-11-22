@@ -364,6 +364,9 @@ pub fn document_diagnostics(store: &mut DocumentStore, uri: &Url) -> Vec<Publish
             code: Some(NumberOrString::String(d.code)),
             source: Some("flux".to_string()),
             message: d.message,
+            data: d
+                .replacement
+                .map(|replacement| serde_json::json!({ "replacement": replacement })),
             ..Default::default()
         });
     }
@@ -806,6 +809,33 @@ fn compute_code_actions(
     let mut seen = HashSet::new();
     let mut out = Vec::new();
     for diagnostic in &params.context.diagnostics {
+        // A warning about an older form carries its replacement.
+        if let Some(replacement) = diagnostic
+            .data
+            .as_ref()
+            .and_then(|data| data.get("replacement"))
+            .and_then(|value| value.as_str())
+        {
+            out.push(CodeActionOrCommand::CodeAction(CodeAction {
+                title: format!("Replace with `{replacement}`"),
+                kind: Some(CodeActionKind::QUICKFIX),
+                diagnostics: Some(vec![diagnostic.clone()]),
+                edit: Some(WorkspaceEdit {
+                    changes: Some(HashMap::from([(
+                        uri.clone(),
+                        vec![TextEdit {
+                            range: diagnostic.range,
+                            new_text: replacement.to_string(),
+                        }],
+                    )])),
+                    document_changes: None,
+                    change_annotations: None,
+                }),
+                is_preferred: Some(true),
+                ..Default::default()
+            }));
+            continue;
+        }
         let Some(name) = diagnostic
             .message
             .strip_prefix("undefined name `")

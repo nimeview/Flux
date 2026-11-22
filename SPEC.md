@@ -8,6 +8,8 @@ Flux is a statically typed language with **built-in reactivity**: module-level b
 - **Identifiers**: `[A-Za-z_][A-Za-z0-9_]*`
 - **Literals**: integers, floats, booleans (`true`/`false`), double-quoted strings
 - **Numbers**: integers are decimal (`1000`, `1_000`) or hexadecimal (`0xff`, `0xFF_FF`). Floats need a fraction, an exponent, or both (`1.5`, `1e3`, `2.5e-3`), and `1e3` is a Float. `_` may separate digits, one at a time. A type suffix may follow (`255u8`, `0x10u8`, `1e3f32`). A value out of range for its type is a parse error, including a float too large to represent, and so is a letter, digit, or `_` right after a number (`1e`, `12abc`). `flux fmt` keeps the spelling.
+- **Raw strings**: `r"..."` holds its text exactly as written, with no escapes and no `{...}` interpolation, across lines too. To include `"`, add `#` signs: `r#"say "hi""#` ends at `"#`, and `r##"..."##` at `"##`.
+- **Separators**: a newline ends a statement where the expression cannot continue. `;` may also separate items or statements on one line; it is only a separator, so a final `;` does not change a block's value. A comma may follow the last element of any list: arguments, parameters, array and struct literals, struct fields, enum variants, match arms, imports, and type arguments.
 - **String escapes**: `\n` (newline), `\t`, `\r`, `\0`, `\\`, `\"`, and `\{` / `\}` for literal braces (a bare `{name}` interpolates). Any other `\x` is a parse error.
 
 ## 2. Types
@@ -157,6 +159,8 @@ An `impl` must match its trait (**E020**): the trait must be declared, and the i
 `watch` and `on` are only valid at module level; using them inside a `fn` or `rfn` body is a compile error (**E011**).
 
 **Writes and settling.** Assignments in an `on` or `watch` body take effect on the source at once, but they propagate as a batch when the body ends: until then, a derived value read in the body keeps its old value. When the body ends, derived values recompute. Watches that depend on what changed then run, and what they write settles the same way, within the same event. Each watch runs at most once per settling, so a cycle of watches ends: a change that reaches a watch that has already run does not run it again. Assigning a source its current value still counts as a change for watches that depend on it.
+
+**Events.** `event Name` or `event Name(value: T)` declares an event that carries at most one value; declaring more than one is an error (put several values in a struct).
 
 **`emit`.** Handlers run at the `emit`, in declaration order, before the next statement. Their writes settle when each handler ends. The writes of the body that emitted stay pending until that body ends. Nested `emit`s count toward the call depth limit, so an unbounded chain is the runtime error `call depth limit exceeded`.
 
@@ -361,6 +365,7 @@ These limits keep extreme programs a language error rather than a native stack o
 | E013 | Cyclic import |
 | E014 | Importing a name a module does not have |
 | E015 | Warning: unused binding |
+| E026 | Warning: an older form that still works; it names its replacement, which the editor's quick fix and `flux migrate` apply |
 | E016 | `let` without `mut` cannot be reassigned (use `let mut`) |
 | E017 | Side effect (`print`, I/O) in derived expression |
 | E018 | Runtime error (overflow, division by zero, failed assertion, …) |
@@ -385,7 +390,7 @@ A UTF-8 byte-order mark at the start of a file is ignored, like whitespace.
 | `flux lock [--check]` | Create or update `flux.lock` for path dependencies; `--check` only reports whether it is up to date (exit 1 if not) |
 | `--locked` (on `run`, `check`, `test`) | Require `flux.lock` to match the dependency tree; never write it (§9) |
 | `flux fmt file.fl [--write] [--check]` | Format source (`--check` fails if reformat needed) |
-| `flux migrate [--write] path` | Experimental: rewrite an older binding syntax to `let` / `let mut` |
+| `flux migrate [--write] path` | Experimental: rewrite older forms. It applies the replacement of every E026 warning (repeatedly, as fixes can uncover others) and the old `let` / `let mut` binding rewrite |
 | `flux init [path] [--lib]` | Create a project: an app (`main.fl`) or, with `--lib`, a library (`lib.fl` + `lib_test.fl`). Refuses a directory that already has `flux.toml` and never overwrites a source file |
 | `flux lsp file.fl` | JSON diagnostics (one-shot; prefer `lsp-server`) |
 | `flux lsp-server` | Stdio LSP: diagnostics, hover, completion, go-to-def, format, document symbols, rename |

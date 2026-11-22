@@ -466,6 +466,16 @@ thread_local! {
     static SOURCE: std::cell::RefCell<String> = const { std::cell::RefCell::new(String::new()) };
 }
 
+/// A raw string (`r"..."`, `r#"..."#`) as the source writes it.
+fn raw_spelling(span: Span) -> Option<String> {
+    SOURCE.with(|s| {
+        let source = s.borrow();
+        let text = source.get(span.start..span.end)?;
+        let raw = text.starts_with("r\"") || text.starts_with("r#");
+        raw.then(|| text.to_string())
+    })
+}
+
 /// A numeric literal as the source spells it, without a type suffix.
 fn literal_spelling(span: Span) -> Option<String> {
     SOURCE.with(|s| {
@@ -709,7 +719,9 @@ fn expr_fmt(expr: &flux_syntax::Expr) -> String {
             }
         }
         flux_syntax::Expr::Bool { value, .. } => value.to_string(),
-        flux_syntax::Expr::String { value, .. } => format!("\"{}\"", escape_text(value)),
+        flux_syntax::Expr::String { value, span } => {
+            raw_spelling(*span).unwrap_or_else(|| format!("\"{}\"", escape_text(value)))
+        }
         flux_syntax::Expr::InterpolatedString { parts, .. } => {
             let mut out = String::from("\"");
             for part in parts {

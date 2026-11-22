@@ -104,6 +104,9 @@ function files(dir, out = []) {
         ['"{"<{n}>"}"', "n", "variable.other"],
         ['"{Point { x: 1 }}" // c', " c", "comment.line"],
         ["|x| x + 1", "|", "keyword.operator"],
+        ['let a = r"{x} \\n"', '{x} \\n', "string.quoted.raw"],
+        ['let a = r#"say "hi""# // c', 'say "hi"', "string.quoted.raw"],
+        ['let a = r#"say "hi""# // c', " c", "comment.line"],
     ];
     for (const [source, text, scope] of cases) {
         const got = scopeOf(tokens(g, source), text);

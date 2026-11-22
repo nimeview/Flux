@@ -67,3 +67,4 @@ flux::E002
 | E023 | calling something that is not a function |
 | E024 | a type alias that refers to itself |
 | E025 | a type with no possible values |
+| E026 | warning: an older form; the warning says what to write instead, and `flux migrate` can rewrite it |
