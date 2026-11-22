@@ -178,8 +178,8 @@ fn a_write_in_a_watch_updates_derived_values_and_their_watches_in_the_same_event
 
 #[test]
 fn a_watch_writes_as_a_batch_and_later_watches_see_the_result() {
-    // Inside the body the derived value keeps its old value; the body's writes
-    // apply together when it ends, as in `on`.
+    // Inside the body a derived value read is current; the body's writes notify
+    // watches together when it ends, as in `on`.
     let src = "import io { println }\n\
         event T(n: Int)\n\
         let mut a = 0\n\
@@ -189,7 +189,7 @@ fn a_watch_writes_as_a_batch_and_later_watches_see_the_result() {
         watch b {\n    println(\"after b={b} d={d}\")\n}\n\
         on T { n ->\n    a = n\n}\n\
         fn main() {\n    emit T(5)\n}\n";
-    assert_stdout_on_both(src, "in d=0\nafter b=1 d=10\nin d=10\nafter b=6 d=60\n");
+    assert_stdout_on_both(src, "in d=10\nafter b=1 d=10\nin d=60\nafter b=6 d=60\n");
 }
 
 #[test]
@@ -238,7 +238,8 @@ fn a_nested_emit_keeps_the_outer_bodys_writes_pending() {
         on T { n ->\n    x = 1\n    emit U(0)\n    println(\"in {d}\")\n}\n\
         on U { n ->\n    y = 1\n}\n\
         fn main() {\n    emit T(0)\n}\n";
-    assert_stdout_on_both(src, "d=0\nin 0\nd=2\n");
+    // The outer body reads `d` current, but its watch waits for that body to end.
+    assert_stdout_on_both(src, "d=0\nin 2\nd=2\n");
 }
 
 #[test]

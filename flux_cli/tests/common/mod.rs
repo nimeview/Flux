@@ -111,8 +111,5 @@ pub fn is_fail_regression_root(path: &Path, contents: &str) -> bool {
         .and_then(|n| n.to_str())
         .unwrap_or_default();
     // Legacy fallback until every stub carries `// test: stub`.
-    if name.ends_with("_stub.fl") || name == "cyclic_a.fl" || name == "cyclic_b.fl" {
-        return false;
-    }
-    true
+    !(name.ends_with("_stub.fl") || name == "cyclic_a.fl" || name == "cyclic_b.fl")
 }

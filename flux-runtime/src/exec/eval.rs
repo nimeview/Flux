@@ -416,7 +416,12 @@ impl Executor {
     /// A binding, function, or builtin by name, recording a reactive read;
     /// `None` if nothing has that name.
     fn load_global(&mut self, name: &str) -> Option<RuntimeValue> {
-        self.record_dep_load(name);
+        // One lookup serves the dependency record, the refresh, and the read.
+        if let Some(&id) = self.graph.name_to_id.get(name) {
+            self.record_dep(id);
+            self.refresh(id);
+            return Some(self.graph.get(id).clone());
+        }
         is_bound(name, &self.graph, &self.functions)
             .then(|| resolve_load(name, &self.graph, &self.functions))
     }
@@ -598,7 +603,9 @@ impl Executor {
     ) -> RuntimeValue {
         // Compiled code does not report what it reads, and a derived value being
         // tracked depends on the reads of what it calls.
-        if !self.vm_only && self.tracking_scope.is_none() {
+        // While some value is stale, a tracked function could read its old slot.
+        let reads_graph = func.reactive && self.reactive_stale();
+        if !self.vm_only && !self.is_tracking() && !reads_graph {
             match self
                 .backend
                 .try_call_fn(name, args, &self.graph, self.call_depth)

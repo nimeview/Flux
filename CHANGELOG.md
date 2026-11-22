@@ -4,6 +4,11 @@ Notable changes to Flux. The versioning policy is in [`RELEASE.md`](RELEASE.md).
 
 ## [Unreleased]
 
+### Changes that can alter programs
+
+- Reading a derived value in an `on` or `watch` body after changing one of its sources gives the new value; it used to give the value from before the body. Nested handlers read current values too. Watches still run once, when the body ends. Migration: none needed unless a program relied on reading the old value; keep it in a local before the write.
+- A derived value counts as changed only when its new value differs by `==`: `0.0` becoming `-0.0` no longer runs its watches.
+
 ### Added
 
 - Raw strings `r"..."` and `r#"..."#`, with no escapes or interpolation.

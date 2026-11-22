@@ -87,7 +87,7 @@ fn main() {
 
 ## When things update
 
-Inside an `on` or `watch` body, a write changes the source at once, but derived values do not update until the body ends. So a body sees a consistent old state, and several writes count as one change:
+Inside an `on` or `watch` body, a write changes the source at once, and reading a value derived from it gives the new value: it is recomputed when read. Watches, though, wait until the body ends, so several writes reach them as one change:
 
 ```flux
 import io { println }
@@ -101,6 +101,7 @@ let doubled = x * 2
 on Tick {
     x = 1
     println("in handler: x={x} doubled={doubled}")
+    x = 2
 }
 
 watch doubled {
@@ -115,12 +116,16 @@ fn main() {
 
 ```output
 watch: doubled=0
-in handler: x=1 doubled=0
-watch: doubled=2
+in handler: x=1 doubled=2
+watch: doubled=4
 done
 ```
 
+The watch saw `doubled` once, at 4; the intermediate 2 was read in the handler but never reached a watch. A derived value nobody reads is not computed at all until the body ends, so a value that would fail for a moment, such as `10 / a` while `a` is briefly 0, does no harm.
+
 When a body ends, derived values recompute, then the watches they affect run. A watch's own writes settle the same way, within the same event. Each watch runs at most once per settling, so a cycle of watches always ends.
+
+A nested `emit` runs its handlers right away, and they also read current values. Their writes reach watches when each of those handlers ends, while the writes of the body that emitted wait for that body.
 
 ## Functions and reactive values
 

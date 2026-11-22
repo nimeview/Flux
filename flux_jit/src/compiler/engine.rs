@@ -4,7 +4,7 @@ use cranelift::prelude::*;
 use cranelift_jit::{JITBuilder, JITModule};
 use cranelift_module::{default_libcall_names, FuncId, Linkage, Module};
 
-use flux_ir::{CompiledProgram, Inst, IrStmt};
+use flux_ir::{CompiledProgram, Inst, IrStmt, NodeKind};
 
 use flux_value::TaggedVal;
 
@@ -464,6 +464,34 @@ impl JitEngine {
             }
         }
 
+        // A body that writes a source and reads a derived value must see the
+        // value recomputed, which only the VM does; so does a tracked call.
+        let derived_names: HashSet<&str> = program
+            .nodes
+            .iter()
+            .filter(|n| n.kind == NodeKind::Derived)
+            .map(|n| n.name.as_str())
+            .collect();
+        let tracked_fns: HashSet<&str> = program
+            .functions
+            .iter()
+            .filter(|f| f.reactive)
+            .map(|f| f.name.as_str())
+            .collect();
+        let reads_after_write = |body: &[IrStmt]| {
+            let mut targets = HashSet::new();
+            top_level_targets(body, &mut targets);
+            if targets.is_empty() {
+                return false;
+            }
+            let mut loads = HashSet::new();
+            loads_in_stmts(body, &mut loads);
+            loads
+                .iter()
+                .any(|name| derived_names.contains(name.as_str()))
+                || stmts_call_any(body, &tracked_fns)
+        };
+
         for (i, watch) in program.watches.iter().enumerate() {
             call_scratch_pairs = call_scratch_pairs.max(max_call_argc_in_stmts(&watch.body));
             let key = format!("__watch_{i}");
@@ -480,6 +508,10 @@ impl JitEngine {
             // As for handlers: only top-level assignments are read back.
             if nested_node_assignment(&watch.body, &engine.layout.name_to_idx, false) {
                 engine.note_fallback(&key, "conditional_source_assignment");
+                continue;
+            }
+            if reads_after_write(&watch.body) {
+                engine.note_fallback(&key, "reads_derived_after_write");
                 continue;
             }
             let label = format!("stmt___watch_{i}");
@@ -512,6 +544,10 @@ impl JitEngine {
             // so a conditional one must run where its execution is visible.
             if nested_node_assignment(&handler.body, &engine.layout.name_to_idx, false) {
                 engine.note_fallback(&key, "conditional_source_assignment");
+                continue;
+            }
+            if reads_after_write(&handler.body) {
+                engine.note_fallback(&key, "reads_derived_after_write");
                 continue;
             }
             let label = format!("stmt___on_{i}");
@@ -942,4 +978,40 @@ fn top_level_targets(stmts: &[IrStmt], set: &mut HashSet<String>) {
             set.insert(target.clone());
         }
     }
+}
+
+/// Whether `stmts` call one of `names`, at any depth.
+fn stmts_call_any(stmts: &[IrStmt], names: &HashSet<&str>) -> bool {
+    fn code_calls(code: &[Inst], names: &HashSet<&str>) -> bool {
+        code.iter().any(|inst| match inst {
+            Inst::Call { name, .. } => names.contains(name.as_str()),
+            Inst::LazyIf {
+                then_branch,
+                else_branch,
+            } => code_calls(then_branch, names) || code_calls(else_branch, names),
+            Inst::ShortAnd(inner) | Inst::ShortOr(inner) => code_calls(inner, names),
+            Inst::Block(block) => stmts_call_any(block, names),
+            _ => false,
+        })
+    }
+    stmts.iter().any(|stmt| match stmt {
+        IrStmt::Assign { expr, .. } | IrStmt::Let { expr, .. } | IrStmt::Expr { code: expr } => {
+            code_calls(expr, names)
+        }
+        IrStmt::Emit { arg, .. } | IrStmt::Return { expr: arg } => {
+            arg.as_ref().is_some_and(|code| code_calls(code, names))
+        }
+        IrStmt::If {
+            cond,
+            then_body,
+            else_body,
+        } => {
+            code_calls(cond, names)
+                || stmts_call_any(then_body, names)
+                || else_body.as_ref().is_some_and(|b| stmts_call_any(b, names))
+        }
+        IrStmt::While { cond, body } => code_calls(cond, names) || stmts_call_any(body, names),
+        IrStmt::For { iter, body, .. } => code_calls(iter, names) || stmts_call_any(body, names),
+        IrStmt::Break | IrStmt::Continue => false,
+    })
 }

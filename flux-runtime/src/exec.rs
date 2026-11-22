@@ -105,7 +105,13 @@ struct ReactiveState {
     /// Runnable watches in graph order, with the nodes that trigger each.
     watch_triggers: Vec<(usize, Vec<NodeId>)>,
     /// Reused while finding what a write dirtied.
-    dirty_marks: Vec<bool>,
+    /// Per graph node: a source it reads has changed since it was computed. Set
+    /// at the write, cleared when the value is recomputed, by a read or a flush.
+    stale: Vec<bool>,
+    /// How many nodes are stale; zero is the common case and skips all checks.
+    stale_count: usize,
+    /// Scratch marks for what a flush's sources reach.
+    reached: Vec<bool>,
     dirty_stack: Vec<NodeId>,
     dirty_order: Vec<NodeId>,
 }
@@ -125,8 +131,10 @@ pub struct Executor {
     /// Kept apart so it does not spread the fields calls use over more cache lines.
     reactive: Box<ReactiveState>,
     backend: ActiveBackend,
-    /// Active while evaluating a derived node with lazy `if` — records graph reads.
-    tracking_scope: Option<Vec<NodeId>>,
+    /// One entry per derived value being computed, innermost last: the graph
+    /// reads it records when its dependencies are dynamic, or `None`. A stack,
+    /// because reading a stale value computes it in the middle of another.
+    tracking: Vec<Option<Vec<NodeId>>>,
     /// First runtime error; once set, evaluation unwinds and nothing else runs.
     trap: Option<Box<RuntimeError>>,
     /// Compiled code failed: the VM reruns it, and runs everything from then on.
@@ -311,12 +319,14 @@ impl Executor {
                 watch_bodies,
                 watch_keys,
                 watch_triggers,
-                dirty_marks: vec![false; node_count],
+                stale: vec![false; node_count],
+                stale_count: 0,
+                reached: vec![false; node_count],
                 dirty_stack: Vec::new(),
                 dirty_order: Vec::new(),
             }),
             backend,
-            tracking_scope: None,
+            tracking: Vec::new(),
             stack_pool: Vec::new(),
             locals_pool: Vec::new(),
             pending_flow: None,
@@ -486,6 +496,9 @@ impl Executor {
         // (Taken only when present: an event must not drop the set's capacity.)
         let outer_writes = (!self.reactive.mutated_sources.is_empty())
             .then(|| std::mem::take(&mut self.reactive.mutated_sources));
+        // So are the changes its reads found: they wait for its watches.
+        let outer_changes = (!self.reactive.changed_nodes.is_empty())
+            .then(|| std::mem::take(&mut self.reactive.changed_nodes));
         let was_deferred = self.defer_propagation;
         self.defer_propagation = true;
         for &idx in handlers.iter() {
@@ -518,6 +531,9 @@ impl Executor {
         if let Some(outer_writes) = outer_writes {
             self.reactive.mutated_sources.extend(outer_writes);
         }
+        if let Some(outer_changes) = outer_changes {
+            self.reactive.changed_nodes.extend(outer_changes);
+        }
     }
 
     pub fn set_source(&mut self, name: &str, value: RuntimeValue) {
@@ -531,6 +547,7 @@ impl Executor {
             return;
         }
         self.graph.set_source(id, value);
+        self.mark_stale(id);
         // A handler or watch body writes as a batch, applied when it ends.
         if self.defer_propagation || self.in_watch {
             if !self.reactive.mutated_sources.contains(&id) {
@@ -543,7 +560,7 @@ impl Executor {
 
     fn propagate_source_change(&mut self, id: NodeId) {
         self.reactive.changed_nodes.push(id);
-        self.recompute_from_sources(&[id]);
+        self.recompute_from(&[id]);
         if !self.in_watch {
             self.run_watches();
         }
@@ -555,7 +572,7 @@ impl Executor {
         }
         let mut sources = std::mem::take(&mut self.reactive.mutated_sources);
         self.reactive.changed_nodes.extend_from_slice(&sources);
-        self.recompute_from_sources(&sources);
+        self.recompute_from(&sources);
         sources.clear();
         self.reactive.mutated_sources = sources;
         if !self.in_watch {
@@ -597,9 +614,8 @@ impl Executor {
     /// Evaluate one derived node via the active backend, falling back to VM bytecode.
     fn eval_derived(&mut self, id: NodeId, idx: usize) -> RuntimeValue {
         let dynamic = self.reactive.node_dynamic[idx];
-        if dynamic {
-            self.tracking_scope = Some(Vec::new());
-        }
+        // A static node records nothing, and hides its reads from an outer one.
+        self.tracking.push(dynamic.then(Vec::new));
 
         let ctx = EvalContext {
             graph: &self.graph,
@@ -607,7 +623,8 @@ impl Executor {
             node_index: &self.node_index,
         };
         let name = &self.graph.nodes[id.0 as usize].name;
-        let native = if self.vm_only {
+        // Compiled code reads slot values, which are stale until recomputed.
+        let native = if self.vm_only || self.reactive.stale_count > 0 {
             None
         } else {
             self.backend.try_eval_derived(name, &ctx)
@@ -621,8 +638,8 @@ impl Executor {
             None => self.eval_derived_vm(idx),
         };
 
-        if dynamic {
-            self.commit_tracked_deps(id);
+        if let Some(Some(tracked)) = self.tracking.pop() {
+            self.commit_tracked_deps(id, tracked);
         }
         value
     }
@@ -639,10 +656,7 @@ impl Executor {
         value
     }
 
-    fn commit_tracked_deps(&mut self, id: NodeId) {
-        let Some(mut new_deps) = self.tracking_scope.take() else {
-            return;
-        };
+    fn commit_tracked_deps(&mut self, id: NodeId, mut new_deps: Vec<NodeId>) {
         if new_deps.is_empty() {
             return;
         }
@@ -650,59 +664,112 @@ impl Executor {
         self.graph.set_derived_deps(id, new_deps);
     }
 
-    /// Records a read of global `name` (a local is never a dependency).
-    pub(super) fn record_dep_load(&mut self, name: &str) {
-        let Some(tracked) = self.tracking_scope.as_mut() else {
-            return;
-        };
-        if let Some(&id) = self.graph.name_to_id.get(name) {
+    /// Whether a derived value is stale right now.
+    pub(super) fn reactive_stale(&self) -> bool {
+        self.reactive.stale_count > 0
+    }
+
+    /// Whether the innermost value being computed records its reads.
+    pub(super) fn is_tracking(&self) -> bool {
+        matches!(self.tracking.last(), Some(Some(_)))
+    }
+
+    /// Records a read of graph node `id` by the value being computed.
+    pub(super) fn record_dep(&mut self, id: NodeId) {
+        if let Some(Some(tracked)) = self.tracking.last_mut() {
             if !tracked.contains(&id) {
                 tracked.push(id);
             }
         }
     }
 
-    fn recompute_from_sources(&mut self, sources: &[NodeId]) {
+    /// Marks everything computed from source `id` as stale.
+    fn mark_stale(&mut self, id: NodeId) {
         let mut stack = std::mem::take(&mut self.reactive.dirty_stack);
+        stack.extend_from_slice(&self.graph.dependents[id.0 as usize]);
+        while let Some(node) = stack.pop() {
+            let at = node.0 as usize;
+            let derived = self.reactive.node_of[at]
+                .is_some_and(|idx| !self.program.nodes[idx].code.is_empty());
+            if !derived || self.reactive.stale[at] {
+                continue;
+            }
+            self.reactive.stale[at] = true;
+            self.reactive.stale_count += 1;
+            stack.extend_from_slice(&self.graph.dependents[at]);
+        }
+        self.reactive.dirty_stack = stack;
+    }
+
+    /// Brings node `id` up to date before it is read, if it is a stale
+    /// derived value.
+    pub(super) fn refresh(&mut self, id: NodeId) {
+        if self.reactive.stale_count > 0 {
+            self.ensure_current(id);
+        }
+    }
+
+    /// Recomputes `id` if it is stale. Its own reads bring its dependencies up
+    /// to date first. A changed value is noted for the watches.
+    fn ensure_current(&mut self, id: NodeId) {
+        let at = id.0 as usize;
+        if !self.reactive.stale[at] {
+            return;
+        }
+        self.reactive.stale[at] = false;
+        self.reactive.stale_count -= 1;
+        let Some(idx) = self.reactive.node_of[at] else {
+            return;
+        };
+        let value = self.eval_derived(id, idx);
+        if self.trap.is_some() {
+            self.note_derived_failure(id);
+            return;
+        }
+        let slot = &mut self.graph.nodes[at].value;
+        if !flux_value::values_equal(slot, &value) {
+            self.reactive.changed_nodes.push(id);
+        }
+        *slot = value;
+    }
+
+    /// Recomputes, in dependency order, the stale values that `sources` reach.
+    /// Values made stale by writes still pending elsewhere (an outer handler's,
+    /// around a nested `emit`) wait for their own flush, or for a read.
+    fn recompute_from(&mut self, sources: &[NodeId]) {
+        if self.reactive.stale_count == 0 {
+            return;
+        }
+        let mut stack = std::mem::take(&mut self.reactive.dirty_stack);
+        let mut reached = std::mem::take(&mut self.reactive.reached);
         for source in sources {
             stack.extend_from_slice(&self.graph.dependents[source.0 as usize]);
             while let Some(id) = stack.pop() {
-                let mark = &mut self.reactive.dirty_marks[id.0 as usize];
-                if !*mark {
-                    *mark = true;
-                    stack.extend_from_slice(&self.graph.dependents[id.0 as usize]);
+                let at = id.0 as usize;
+                if !reached[at] {
+                    reached[at] = true;
+                    stack.extend_from_slice(&self.graph.dependents[at]);
                 }
             }
         }
         self.reactive.dirty_stack = stack;
-
         // Recomputing can rewrite `topo_order`, so the order is fixed first.
         let mut order = std::mem::take(&mut self.reactive.dirty_order);
         for &id in &self.graph.topo_order {
-            let mark = &mut self.reactive.dirty_marks[id.0 as usize];
-            if *mark {
-                *mark = false;
-                order.push(id);
+            let at = id.0 as usize;
+            if reached[at] {
+                reached[at] = false;
+                if self.reactive.stale[at] {
+                    order.push(id);
+                }
             }
         }
-
+        self.reactive.reached = reached;
         for &id in &order {
-            let Some(idx) = self.reactive.node_of[id.0 as usize] else {
-                continue;
-            };
-            if self.program.nodes[idx].code.is_empty() {
-                continue;
-            }
-            let value = self.eval_derived(id, idx);
+            self.ensure_current(id);
             if self.trap.is_some() {
-                self.note_derived_failure(id);
                 break;
             }
-            let slot = &mut self.graph.nodes[id.0 as usize].value;
-            if *slot != value {
-                self.reactive.changed_nodes.push(id);
-            }
-            *slot = value;
         }
         order.clear();
         self.reactive.dirty_order = order;
