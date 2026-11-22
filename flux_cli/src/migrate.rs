@@ -25,11 +25,42 @@ pub fn migrate_source(input: &str) -> String {
     out
 }
 
+/// The most rounds of compiler fixes on one file: a fix can uncover another,
+/// but a pair of fixes that undo each other must not loop forever.
+const MAX_FIX_ROUNDS: usize = 8;
+
+/// Applies every replacement the compiler offers for older forms in `contents`,
+/// read as the file at `path` so that its imports resolve. The compiler knows
+/// what each name is, so a rename never touches a string or a comment.
+pub fn apply_compiler_fixes(path: &Path, contents: &str) -> String {
+    let mut text = contents.to_string();
+    for _ in 0..MAX_FIX_ROUNDS {
+        let analyzed = flux_driver::analyze_document(Some(path), &text);
+        let Some(root) = analyzed.sources.first().map(|s| s.id) else {
+            break;
+        };
+        let fixes: Vec<(usize, usize, String)> = analyzed
+            .diagnostics
+            .warnings
+            .iter()
+            .filter_map(|w| w.fix())
+            .filter(|fix| fix.span.source == root)
+            .map(|fix| (fix.span.start, fix.span.end, fix.replacement))
+            .collect();
+        let (next, applied) = flux_diagnostics::apply_fixes(&text, &fixes);
+        if applied == 0 || next == text {
+            break;
+        }
+        text = next;
+    }
+    text
+}
+
 /// Migrate a single file; returns `(output, changed)`.
 pub fn migrate_file(path: &Path, write: bool) -> miette::Result<(String, bool)> {
     let input = fs::read_to_string(path)
         .map_err(|e| miette::miette!("failed to read {}: {e}", path.display()))?;
-    let output = migrate_source(&input);
+    let output = apply_compiler_fixes(path, &migrate_source(&input));
     let changed = output != input;
     if write && changed {
         fs::write(path, &output)

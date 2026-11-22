@@ -451,7 +451,23 @@ fn lower_module_binding(
     }
 }
 
-pub(super) fn lower_event(decl: &EventDecl, symbols: &SymbolTable) -> Option<HirItem> {
+pub(super) fn lower_event(
+    decl: &EventDecl,
+    symbols: &SymbolTable,
+    diagnostics: &mut DiagnosticBag,
+) -> Option<HirItem> {
+    // Several values are planned (`on Move(x, y)`); until then a second
+    // parameter must not be dropped without a word.
+    if let Some(extra) = decl.params.get(1) {
+        diagnostics.push(FluxError::Parse {
+            message: format!(
+                "event `{}` declares more than one value; an event carries one value for now, so put them in a struct",
+                decl.name.name
+            ),
+            span: span_to_miette(extra.span),
+            source_id: extra.span.source,
+        });
+    }
     let sym = symbols.lookup(&decl.name.name)?;
     let payload = decl.params.first().map(|p| EventField {
         name: p.name.name.clone(),

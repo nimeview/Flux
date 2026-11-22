@@ -740,7 +740,7 @@ pub(super) fn lower_item(
     reassigned_sources: &HashSet<String>,
 ) -> Option<HirItem> {
     match item {
-        Item::Event(decl) => lower_event(decl, symbols),
+        Item::Event(decl) => lower_event(decl, symbols, diagnostics),
         Item::Const(decl) => lower_const_binding(decl, symbols, diagnostics).map(HirItem::Binding),
         Item::Derived(stmt) => lower_derived(stmt, symbols, diagnostics),
         Item::Let(let_stmt) => lower_module_let(let_stmt, symbols, diagnostics, reassigned_sources),

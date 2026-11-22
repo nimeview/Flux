@@ -9,4 +9,4 @@ mod warning;
 
 pub use error::{span_to_miette, DiagnosticBag, FluxError, ReportedError};
 pub use source::{line_col_to_offset, offset_to_line_col, SourceFile, SourceId, Span};
-pub use warning::FluxWarning;
+pub use warning::{apply_fixes, Fix, FluxWarning};

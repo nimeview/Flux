@@ -345,7 +345,7 @@ impl FluxError {
         }
     }
 
-    /// Stable diagnostic code (`E000`–`E025`).
+    /// Stable diagnostic code (`E000`–`E025`; warnings use E015 and E026).
     pub fn code(&self) -> &'static str {
         match self {
             Self::Parse { .. } => "E000",

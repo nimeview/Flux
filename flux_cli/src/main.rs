@@ -487,7 +487,7 @@ fn wasm_file(path: &str) -> Result<(), ()> {
 }
 
 fn migrate_cmd(path: &str, write: bool) -> Result<(), ()> {
-    use flux_cli::migrate::{migrate_file, migrate_source, migrate_tree};
+    use flux_cli::migrate::{apply_compiler_fixes, migrate_file, migrate_source, migrate_tree};
 
     let p = std::path::Path::new(path);
     if p.is_dir() {
@@ -502,7 +502,7 @@ fn migrate_cmd(path: &str, write: bool) -> Result<(), ()> {
                     let input = fs::read_to_string(&file).map_err(|e| {
                         eprintln!("read {}: {e}", file.display());
                     })?;
-                    let output = migrate_source(&input);
+                    let output = apply_compiler_fixes(&file, &migrate_source(&input));
                     println!("--- {}\n+++ migrated\n{output}", file.display());
                 }
             }

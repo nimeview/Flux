@@ -360,7 +360,7 @@ fn lower_item_renamed(
             renamed.name.name = mangled.to_string();
             super::decls::lower_const_binding(&renamed, symbols, diagnostics).map(HirItem::Binding)
         }
-        Item::Event(decl) => super::decls::lower_event(decl, symbols),
+        Item::Event(decl) => super::decls::lower_event(decl, symbols, diagnostics),
         Item::Impl(_) | Item::Watch(_) | Item::On(_) | Item::If(_) | Item::Import(_) => None,
         Item::TypeAlias(_) | Item::Struct(_) | Item::Enum(_) | Item::Trait(_) => None,
     }

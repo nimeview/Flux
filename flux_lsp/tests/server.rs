@@ -1059,3 +1059,38 @@ fn quick_fix_imports_an_undefined_library_name() {
 
     shutdown(&client, handle);
 }
+
+#[test]
+fn quick_fix_applies_the_replacement_a_warning_carries() {
+    let (client, handle) = start_server();
+    let text = "rfn f() -> Int {\n    1\n}\n";
+    did_open(&client, text);
+    let _ = recv_diagnostics(&client);
+
+    // The compiler attaches `data.replacement` to an older form's warning.
+    let warning = serde_json::json!({
+        "range": { "start": { "line": 0, "character": 0 }, "end": { "line": 0, "character": 3 } },
+        "severity": 2,
+        "code": "E026",
+        "source": "flux",
+        "message": "`rfn` is now written `track fn`",
+        "data": { "replacement": "track fn" },
+    });
+    let actions = ask(
+        &client,
+        2,
+        "textDocument/codeAction",
+        serde_json::json!({
+            "textDocument": { "uri": test_uri() },
+            "range": warning["range"],
+            "context": { "diagnostics": [warning] },
+        }),
+    );
+    let action = &actions[0];
+    assert_eq!(action["title"], "Replace with `track fn`");
+    let edit = &action["edit"]["changes"][test_uri().as_str()][0];
+    assert_eq!(edit["newText"], "track fn");
+    assert_eq!(edit["range"]["end"]["character"], 3);
+
+    shutdown(&client, handle);
+}

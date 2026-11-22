@@ -35,6 +35,8 @@ pub struct RangedDiagnostic {
     pub level: DiagnosticLevel,
     /// File the range is in; `None` means the analyzed document itself.
     pub path: Option<String>,
+    /// Text that replaces the range, for a warning about an older form.
+    pub replacement: Option<String>,
 }
 
 /// Definition site for a symbol, keyed by file path and source span.
@@ -515,6 +517,7 @@ fn to_ranged(
             code,
             level,
             path,
+            replacement: None,
         }
     };
     let mut out = Vec::with_capacity(bag.errors.len() + bag.warnings.len());
@@ -527,12 +530,14 @@ fn to_ranged(
         ));
     }
     for w in &bag.warnings {
-        out.push(ranged(
+        let mut diagnostic = ranged(
             w.label_span(),
             w.to_string(),
             w.code().to_string(),
             DiagnosticLevel::Warning,
-        ));
+        );
+        diagnostic.replacement = w.fix().map(|fix| fix.replacement);
+        out.push(diagnostic);
     }
     out
 }
