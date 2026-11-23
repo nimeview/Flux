@@ -216,6 +216,23 @@ pub enum HirPlaceStep {
 /// `(base, "x", v, "y", w)`. No user name can be spelled with a NUL.
 pub const WITH_FIELDS: &str = "\0with";
 
+/// The hidden builtin a tuple literal `(a, b)` calls, and the name of the
+/// generic type `(A, B)` is lowered to. At run time a tuple is a struct of
+/// this name with fields `"0"`, `"1"`, ….
+pub const TUPLE: &str = "\0tuple";
+
+/// The hidden builtin that checks a destructured value: `(value, n)` is
+/// `value`, which must be a tuple of exactly `n` values.
+pub const TUPLE_CHECK: &str = "\0untuple";
+
+/// The position `t.i` names: digits without leading zeros (`0`, `12`).
+pub fn tuple_index(field: &str) -> Option<usize> {
+    field
+        .parse::<usize>()
+        .ok()
+        .filter(|i| i.to_string() == field)
+}
+
 impl HirAssign {
     /// The assigned part read as an expression (`p.x`, `grid[i][j]`), for
     /// type checking.
@@ -434,6 +451,10 @@ pub enum PatShape {
         name: String,
         payload: Option<Box<PatShape>>,
     },
+    /// `true` or `false`.
+    Bool(bool),
+    /// A tuple, with the shape of each value.
+    Tuple(Vec<PatShape>),
 }
 
 impl HirMatchArm {
@@ -540,6 +561,11 @@ pub fn lower_type(ty: &TypeName) -> HirType {
     match ty {
         TypeName::Simple { name, span } => HirType::Named {
             name: name.clone(),
+            span: *span,
+        },
+        TypeName::Tuple { elems, span } => HirType::Generic {
+            name: TUPLE.to_string(),
+            args: elems.iter().map(lower_type).collect(),
             span: *span,
         },
         TypeName::Generic { name, args, span } => HirType::Generic {

@@ -23,6 +23,7 @@ Flux is a statically typed language with **built-in reactivity**: module-level b
 | `[T]` | Homogeneous array |
 | `Option[T]` | Optional value (`Some`, `None`) |
 | `Result[T, E]` | Success or error (`Ok`, `Err`) |
+| `(A, B, ...)` | Tuple of two or more values |
 | `struct Name { f: T, ... }` | Product type |
 | `enum Name { A, B(T), ... }` | Sum type |
 | `fn(T, ...) -> U` | Function |
@@ -120,6 +121,8 @@ Each `.fl` file is a module with its own namespace. Inside a module, all of its 
 ## 4. Statements
 
 `let` / `let mut`, assignment, `if`/`else`, `while`, `for x in expr`, `return expr?`, `break`, `continue`, `emit Event(args?)`, expression statements.
+
+**`for`.** `for x in xs` runs the body once per element of an array, in order. Over a map it runs once per entry, in key order, with `x` the tuple `(key, value)`. `for (a, b) in …` takes each element apart as `let (a, b) = element` does.
 
 **Assignment.** `x = v` assigns a `let mut` local, or a source where sources may change. A place may also be a part of one: an element `xs[i] = v` or `m[k] = v`, a struct field `p.x = v`, or a path of them, `todos[i].done = true`, `grid[i][j] = v`, `board.cells[k].owner = p`. The index expressions are evaluated once each, left to right, then `v`; then the part is replaced. The root must be assignable as for `x = v`, and a part of a source is a write to that source. An index out of range, or a map key missing on the way to a deeper part, is a runtime error and changes nothing; `m[k] = v` on its own adds `k`. Arrays, maps, and structs are updated in place when nothing else holds them; a copy someone else holds keeps its old contents.
 
@@ -222,6 +225,10 @@ An `if … else` expression and a `match` are operands like any other value: `1 
 
 `match n { 0 => "zero", -1 => "minus one", _ => "other" }`, `match s { "y" => true, _ => false }`, and `true =>` / `false =>` compare the scrutinee with `==`. Allowed literals are Int (optionally negative), String without `{…}` interpolation, and Bool. A Float literal pattern is an error, because exact float equality is a trap. The literal must have the scrutinee's type. Literal arms do not make a match exhaustive, so a `_` or binding arm is required. The exception is `Bool`: unguarded `true` and `false` arms cover it.
 
+### Tuple patterns
+
+A `match` arm may take a tuple apart: `(0, name) => …`, `(Some(x), _) => …`, `(true, false) => …`. Each position is any pattern (a literal, a variant, a binding, `_`, or a nested tuple), and the arm matches when every position does; a guard runs after all of them. A tuple pattern also fits inside a variant: `Some((a, 0))`. The arms of a `match` must cover every value: positions whose type has finitely many cases (`Bool`, enums, `Option`, `Result`, tuples of them) are checked case by case, so `(true, _)`, `(false, true)`, and `(false, false)` together cover `(Bool, Bool)`; a position of any other type (numbers, strings) is covered only by a binding or `_`.
+
 ### Nested patterns
 
 A variant's payload may itself be a pattern: `Some(Num(n))`, `Some(LParen)`, `Ok(0)`, `Some(Some(_))`, to any depth. A name inside is a payload-free variant if one with that name exists (including `None`), and otherwise a binding. Bindings from every level are visible in the guard and the arm. Nested arms count toward exhaustiveness when, together, they cover the payload's type: `Some(A)`, `Some(B)`, `None` is exhaustive for `Option[AB]` with `enum AB { A, B }`. A nested arm with a guard does not count, just like a top-level one. `None` in a pattern is always `Option`'s variant, never a binding.
@@ -273,7 +280,11 @@ fn add(a: String, b: String) -> Result[Int, String] {
 
 ### Destructuring let
 
-`let Point { x, y } = pt` binds struct fields from a value.
+`let Point { x, y } = pt` binds struct fields from a value. `let (a, b) = t` binds the values of a tuple, and tuples nest: `let (name, (x, y)) = entry`. `_` binds nothing. The value is evaluated once (inside a function; at module level each name is its own binding).
+
+### Tuples
+
+`(a, b)` is a tuple of two or more values, of the type `(A, B)`; `(x)` is only grouping, and `(x,)` is an error. `t.0`, `t.1`, … read a value, and an index the type does not have is a compile error; `t.0 = v` and `t.0 += v` assign one in a `let mut` tuple. Tuples compare with `==` value by value, display as `(1, "a")`, and may be passed, returned, stored in arrays, captured, and used as generic arguments. They cannot be map keys.
 
 ### Record update
 

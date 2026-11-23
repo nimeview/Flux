@@ -90,6 +90,12 @@ pub(super) fn resolve_hir_type(
                     ok: Box::new(resolve_hir_type(ctx, &args[0], diagnostics)?),
                     err: Box::new(resolve_hir_type(ctx, &args[1], diagnostics)?),
                 })
+            } else if name == flux_hir::TUPLE {
+                Some(Type::Tuple(
+                    args.iter()
+                        .map(|a| resolve_hir_type(ctx, a, diagnostics))
+                        .collect::<Option<Vec<_>>>()?,
+                ))
             } else if name == "Map" && args.len() == 2 {
                 let key = resolve_hir_type(ctx, &args[0], diagnostics)?;
                 if !is_map_key(&key) {
@@ -174,6 +180,8 @@ pub(crate) fn resolve_hir_type_simple(ty: &HirType) -> Type {
                     ok: Box::new(resolve_hir_type_simple(&args[0])),
                     err: Box::new(resolve_hir_type_simple(&args[1])),
                 }
+            } else if name == flux_hir::TUPLE {
+                Type::Tuple(args.iter().map(resolve_hir_type_simple).collect())
             } else if name == "Map" && args.len() == 2 {
                 Type::Map {
                     key: Box::new(resolve_hir_type_simple(&args[0])),

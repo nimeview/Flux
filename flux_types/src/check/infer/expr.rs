@@ -158,36 +158,98 @@ fn variant_payload_type(ctx: &TypeCheckContext, ty: &Type, variant: &str) -> Opt
 
 /// Whether the pattern shapes together match every value of `ty`.
 fn shapes_cover(ctx: &TypeCheckContext, shapes: &[&flux_hir::PatShape], ty: &Type) -> bool {
+    let rows = shapes.iter().map(|s| vec![*s]).collect();
+    rows_cover(ctx, rows, std::slice::from_ref(ty))
+}
+
+static ANY_SHAPE: flux_hir::PatShape = flux_hir::PatShape::Any;
+
+/// Whether the rows of shapes, one column per type in `types`, together match
+/// every combination of values. Splits the first column by its type's
+/// constructors (variants, `true`/`false`, a tuple's values) and checks each
+/// case on the rows it leaves, as in ML exhaustiveness checking. A type with
+/// unboundedly many values (numbers, strings) is covered only by `_`.
+fn rows_cover(ctx: &TypeCheckContext, rows: Vec<Vec<&flux_hir::PatShape>>, types: &[Type]) -> bool {
     use flux_hir::PatShape;
-    if shapes.iter().any(|s| matches!(s, PatShape::Any)) {
+    if rows
+        .iter()
+        .any(|row| row.iter().all(|s| matches!(s, PatShape::Any)))
+    {
         return true;
     }
-    let variants: Vec<String> = match ctx.expand(unwrap_value_type(ty)) {
-        Type::Option(_) => vec!["Some".into(), "None".into()],
-        Type::Result { .. } => vec!["Ok".into(), "Err".into()],
-        Type::Enum { variants, .. } => variants.into_iter().map(|(name, _)| name).collect(),
-        _ => return false,
+    let Some((first, rest)) = types.split_first() else {
+        return !rows.is_empty();
     };
-    variants.iter().all(|variant| {
-        let payloads: Vec<&Option<Box<PatShape>>> = shapes
+    if rows.is_empty() {
+        return false;
+    }
+    // A column of only `_` decides nothing: drop it. (Splitting it would
+    // recurse forever through a recursive type, and multiply the work.)
+    if rows.iter().all(|row| matches!(row[0], PatShape::Any)) {
+        let rows = rows.iter().map(|row| row[1..].to_vec()).collect();
+        return rows_cover(ctx, rows, rest);
+    }
+    /// What a value of the column's type can be made of.
+    enum Ctor {
+        Variant(String),
+        Bool(bool),
+        Tuple,
+    }
+    let ctors: Option<Vec<(Ctor, Vec<Type>)>> = match ctx.expand(unwrap_value_type(first)) {
+        Type::Option(inner) => Some(vec![
+            (Ctor::Variant("Some".into()), vec![*inner]),
+            (Ctor::Variant("None".into()), vec![]),
+        ]),
+        Type::Result { ok, err } => Some(vec![
+            (Ctor::Variant("Ok".into()), vec![*ok]),
+            (Ctor::Variant("Err".into()), vec![*err]),
+        ]),
+        Type::Enum { variants, .. } => Some(
+            variants
+                .into_iter()
+                .map(|(name, payload)| (Ctor::Variant(name), payload.into_iter().collect()))
+                .collect(),
+        ),
+        Type::Bool => Some(vec![
+            (Ctor::Bool(true), vec![]),
+            (Ctor::Bool(false), vec![]),
+        ]),
+        Type::Tuple(elems) => Some(vec![(Ctor::Tuple, elems)]),
+        _ => None,
+    };
+    let Some(ctors) = ctors else {
+        // Only `_` covers such a column.
+        let rows = rows
             .iter()
-            .filter_map(|s| match s {
-                PatShape::Variant { name, payload } if name == variant => Some(payload),
-                _ => None,
+            .filter(|row| matches!(row[0], PatShape::Any))
+            .map(|row| row[1..].to_vec())
+            .collect();
+        return rows_cover(ctx, rows, rest);
+    };
+    ctors.iter().all(|(ctor, fields)| {
+        let any = || vec![&ANY_SHAPE; fields.len()];
+        let rows: Vec<Vec<&PatShape>> = rows
+            .iter()
+            .filter_map(|row| {
+                let parts: Vec<&PatShape> = match (row[0], ctor) {
+                    (PatShape::Any, _) => any(),
+                    (PatShape::Variant { name, payload }, Ctor::Variant(c)) if name == c => {
+                        match payload.as_deref() {
+                            Some(inner) if fields.len() == 1 => vec![inner],
+                            _ => any(),
+                        }
+                    }
+                    (PatShape::Bool(b), Ctor::Bool(c)) if b == c => vec![],
+                    (PatShape::Tuple(elems), Ctor::Tuple) if elems.len() == fields.len() => {
+                        elems.iter().collect()
+                    }
+                    _ => return None,
+                };
+                Some(parts.into_iter().chain(row[1..].iter().copied()).collect())
             })
             .collect();
-        if payloads.is_empty() {
-            return false;
-        }
-        if payloads
-            .iter()
-            .any(|p| p.as_deref().is_none_or(|p| *p == PatShape::Any))
-        {
-            return true;
-        }
-        let inner: Vec<&PatShape> = payloads.iter().filter_map(|p| p.as_deref()).collect();
-        variant_payload_type(ctx, ty, variant)
-            .is_some_and(|payload| shapes_cover(ctx, &inner, &payload))
+        let types: Vec<Type> = fields.iter().chain(rest).cloned().collect();
+        rows_cover(ctx, rows, &types)
     })
 }
 
@@ -295,6 +357,35 @@ pub(crate) fn infer_expr(
                 if let Some(name) =
                     lookup_name(names, *symbol).filter(|_| ctx.is_builtin_symbol(*symbol))
                 {
+                    // A destructured value: a tuple of exactly `n` values.
+                    if name == flux_hir::TUPLE_CHECK {
+                        let value = args.first()?;
+                        let ty = infer_expr(ctx, value, types, names, source, diagnostics)?;
+                        let ty = unwrap_value_type(&ty);
+                        let want = match args.get(1) {
+                            Some(HirExpr::Int { value, .. }) => *value as usize,
+                            _ => 0,
+                        };
+                        let fits = matches!(&ty, Type::Tuple(elems) if elems.len() == want);
+                        if !fits && !ty.is_error() {
+                            diagnostics.push(FluxError::TypeMismatch {
+                                expected: format!("a tuple of {want} values"),
+                                found: ty.display(),
+                                span: span_to_miette(*span),
+                                source_id: span.source,
+                            });
+                            return Some(Type::Error);
+                        }
+                        return Some(ty);
+                    }
+                    if name == flux_hir::TUPLE {
+                        let mut elems = Vec::with_capacity(args.len());
+                        for arg in args {
+                            let ty = infer_expr(ctx, arg, types, names, source, diagnostics)?;
+                            elems.push(unwrap_value_type(&ty));
+                        }
+                        return Some(Type::Tuple(elems));
+                    }
                     if name == flux_hir::WITH_FIELDS {
                         return super::builtins::infer_with(
                             ctx,
@@ -497,6 +588,8 @@ pub(crate) fn infer_expr(
             // Payload shapes of nested-pattern arms, per outer variant.
             let mut nested_arms: HashMap<String, Vec<flux_hir::PatShape>> = HashMap::new();
             let mut has_catch_all = false;
+            // Shapes of pattern arms over the whole value (tuple patterns).
+            let mut whole_shapes: Vec<flux_hir::PatShape> = Vec::new();
             let mut bools_covered = [false; 2];
             for arm in arms {
                 let mut arm_scope = types.clone();
@@ -533,6 +626,9 @@ pub(crate) fn infer_expr(
                 } else if arm.variant.is_empty() {
                     if arm.guard.is_none() {
                         has_catch_all = true;
+                    } else if let Some(shape) = &arm.nested {
+                        // A tuple pattern: its guard only checks the pattern.
+                        whole_shapes.push(shape.clone());
                     }
                 } else if let Some(variants) = &variants {
                     if !variants.iter().any(|variant| variant == &arm.variant) {
@@ -571,8 +667,11 @@ pub(crate) fn infer_expr(
                     }
                 }
                 infer_arm_body(ctx, arm, &mut arm_scope, names, source, diagnostics);
-                // An arm that leaves (`return`/`break`/`continue`) has no value.
+                // An arm that leaves (`return`/`break`/`continue`) has no value,
+                // but what it runs is still checked (a tuple arm's body is
+                // inside its expression).
                 if arm.diverges {
+                    let _ = infer_expr(ctx, &arm.expr, &arm_scope, names, source, diagnostics);
                     continue;
                 }
                 // A block arm ending in a statement is `()`.
@@ -601,6 +700,10 @@ pub(crate) fn infer_expr(
             if bools_covered == [true, true] {
                 has_catch_all = true;
             }
+            if !has_catch_all && !whole_shapes.is_empty() {
+                let refs: Vec<&flux_hir::PatShape> = whole_shapes.iter().collect();
+                has_catch_all = shapes_cover(ctx, &refs, &scrut_value_ty);
+            }
             if !has_catch_all {
                 if let Some(variants) = &variants {
                     let missing: Vec<_> = variants
@@ -616,6 +719,13 @@ pub(crate) fn infer_expr(
                             source_id: span.source,
                         });
                     }
+                } else if matches!(scrut_value_ty, Type::Tuple(_)) {
+                    diagnostics.push(FluxError::TypeMismatch {
+                        expected: "patterns that cover every tuple, or a catch-all `_`".into(),
+                        found: scrut_value_ty.display(),
+                        span: span_to_miette(*span),
+                        source_id: span.source,
+                    });
                 } else {
                     diagnostics.push(FluxError::TypeMismatch {
                         expected: "catch-all pattern".into(),
@@ -798,6 +908,19 @@ pub(crate) fn infer_expr(
                 if let Some((_, ft)) = fields.iter().find(|(n, _)| n == field) {
                     return Some(ft.clone());
                 }
+            }
+            // `t.0`: a tuple's value at that position.
+            if let Type::Tuple(ref elems) = inner {
+                if let Some(ty) = flux_hir::tuple_index(field).and_then(|i| elems.get(i)) {
+                    return Some(ty.clone());
+                }
+                diagnostics.push(FluxError::TypeMismatch {
+                    expected: format!("`.0` to `.{}`", elems.len() - 1),
+                    found: format!("`.{field}` on `{}`", inner.display()),
+                    span: span_to_miette(*span),
+                    source_id: span.source,
+                });
+                return Some(Type::Error);
             }
             let defaulted_param = match base.as_ref() {
                 HirExpr::Ident { symbol, .. }
@@ -1103,6 +1226,7 @@ pub(crate) fn usable_context(ty: &Type) -> bool {
         Type::Array(t) | Type::Option(t) | Type::Cell(t) | Type::Read(t) => usable_context(t),
         Type::Event(values) => values.iter().all(usable_context),
         Type::Map { key, value } => usable_context(key) && usable_context(value),
+        Type::Tuple(elems) => elems.iter().all(usable_context),
         Type::Result { ok, err } => usable_context(ok) && usable_context(err),
         Type::Func { params, ret } => params.iter().all(usable_context) && usable_context(ret),
         _ => true,

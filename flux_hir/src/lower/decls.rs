@@ -6,6 +6,7 @@ use flux_syntax::{
     ConstBinding, DerivedStmt, EventDecl, Expr, Ident, IfStmt, ImplDecl, LetPattern, LetStmt,
     TraitDecl, TypeName,
 };
+use std::collections::HashMap;
 
 use crate::context::ScopeKind;
 use crate::nodes::{lower_type, *};
@@ -188,6 +189,14 @@ fn type_key(ty: &HirType) -> String {
 fn type_name_str(ty: &TypeName) -> String {
     match ty {
         TypeName::Simple { name, .. } => name.clone(),
+        TypeName::Tuple { elems, .. } => format!(
+            "Tuple_{}",
+            elems
+                .iter()
+                .map(type_name_str)
+                .collect::<Vec<_>>()
+                .join("_")
+        ),
         TypeName::Generic { name, args, .. } => {
             format!(
                 "{name}_{}",
@@ -399,11 +408,7 @@ fn lower_module_binding(
             diagnostics,
         )
         .map(HirItem::Binding),
-        LetPattern::Struct {
-            name,
-            fields,
-            span: pat_span,
-        } => {
+        LetPattern::Struct { span: pat_span, .. } | LetPattern::Tuple { span: pat_span, .. } => {
             let mut reads_reactive = false;
             let base = lower_expr(
                 value,
@@ -412,13 +417,32 @@ fn lower_module_binding(
                 diagnostics,
                 &mut reads_reactive,
             )?;
+            // Each name with the expression for its part of the value.
+            let mut parts = Vec::new();
+            match pattern {
+                LetPattern::Struct { fields, .. } => {
+                    for field in fields {
+                        let field_expr = HirExpr::Field {
+                            base: Box::new(base.clone()),
+                            field: field.name.clone(),
+                            span: *pat_span,
+                        };
+                        parts.push((field.clone(), field_expr));
+                    }
+                }
+                _ => super::stmts::tuple_parts(pattern, &base, symbols, &mut parts),
+            }
+            // `let (a, b): (A, B) = …`: each name gets its part of the type.
+            let mut leaf_types = HashMap::new();
+            if let (Some(ty), LetPattern::Tuple { .. }) = (ty, pattern) {
+                annotated_leaves(pattern, ty, &mut leaf_types, diagnostics);
+            }
             let mut items = Vec::new();
-            for field in fields {
-                let field_expr = HirExpr::Field {
-                    base: Box::new(base.clone()),
-                    field: field.name.clone(),
-                    span: *pat_span,
-                };
+            for (field, field_expr) in parts {
+                // A shape check: each name's part already checks its path.
+                if field.name == "_" {
+                    continue;
+                }
                 let sym_id = symbols.lookup(&field.name)?.id;
                 let kind = if force_derived || (!mutable && reads_reactive) {
                     BindingKind::Derived
@@ -439,16 +463,59 @@ fn lower_module_binding(
                 items.push(HirItem::Binding(HirBinding {
                     name: sym_id,
                     kind,
-                    ty: None,
+                    ty: leaf_types.get(&field.name).map(lower_type),
                     value,
                     span: *pat_span,
                 }));
             }
-            let _ = name;
             let first = items.first()?.clone();
             symbols.pending_bindings.extend(items.into_iter().skip(1));
             Some(first)
         }
+    }
+}
+
+/// The part of the annotation `ty` each name of a tuple pattern gets; reports
+/// an annotation whose shape differs from the pattern's.
+fn annotated_leaves(
+    pattern: &LetPattern,
+    ty: &TypeName,
+    out: &mut HashMap<String, TypeName>,
+    diagnostics: &mut DiagnosticBag,
+) {
+    match (pattern, ty) {
+        (LetPattern::Ident(name), _) if name.name != "_" => {
+            out.insert(name.name.clone(), ty.clone());
+        }
+        (LetPattern::Ident(_), _) => {}
+        (LetPattern::Tuple { elems, .. }, TypeName::Tuple { elems: types, .. })
+            if elems.len() == types.len() =>
+        {
+            for (elem, ty) in elems.iter().zip(types) {
+                annotated_leaves(elem, ty, out, diagnostics);
+            }
+        }
+        (pattern, ty) => {
+            let span = pattern.span();
+            diagnostics.push(FluxError::TypeMismatch {
+                expected: format!("a tuple type with {} values", pattern_width(pattern)),
+                found: match ty {
+                    TypeName::Tuple { elems, .. } => {
+                        format!("a tuple type with {} values", elems.len())
+                    }
+                    _ => "a type that is not a tuple".to_string(),
+                },
+                span: span_to_miette(span),
+                source_id: span.source,
+            });
+        }
+    }
+}
+
+fn pattern_width(pattern: &LetPattern) -> usize {
+    match pattern {
+        LetPattern::Tuple { elems, .. } => elems.len(),
+        _ => 1,
     }
 }
 

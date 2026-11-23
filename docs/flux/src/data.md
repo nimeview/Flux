@@ -233,6 +233,52 @@ got 4
 -1 9
 ```
 
+## Tuples
+
+A tuple groups a few values of different types without declaring a struct. It is handy for returning two results:
+
+```flux
+import collections { map_new }
+
+import io { println }
+
+fn divide(a: Int, b: Int) -> (Int, Int) {
+    (a / b, a % b)
+}
+
+fn sign(p: (Int, Int)) -> String {
+    match p {
+        (0, 0) => "origin",
+        (0, _) => "on the y axis",
+        (_, 0) => "on the x axis",
+        (x, y) if x * y > 0 => "same signs",
+        _ => "different signs"
+    }
+}
+
+fn main() {
+    let (q, r) = divide(17, 5)
+    let pair = (q, "three")
+    println("{q} {r} {pair} {pair.1}")
+    println("{sign((0, 4))} {sign((2, 3))}")
+    let mut stock: Map[String, Int] = map_new()
+    stock["pears"] = 2
+    stock["apples"] = 5
+    for (fruit, count) in stock {
+        println("{fruit}: {count}")
+    }
+}
+```
+
+```output
+3 2 (3, "three") three
+on the y axis same signs
+apples: 5
+pears: 2
+```
+
+`t.0`, `t.1`, … read a tuple's values, and `let (a, b) = t` takes it apart. A loop over a map gives `(key, value)` tuples in key order. A `match` must cover every tuple: `(true, _)` and `(false, _)` together cover `(Bool, Bool)`, while a number or a string in a position needs a `_` or a name to cover the rest.
+
 ## Recursive types
 
 A struct or enum can contain itself, as long as a finite value exists:

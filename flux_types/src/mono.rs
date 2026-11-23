@@ -199,6 +199,7 @@ fn type_depth(ty: &Type) -> usize {
         Type::Array(inner) | Type::Option(inner) => 1 + type_depth(inner),
         Type::Result { ok, err } => 1 + type_depth(ok).max(type_depth(err)),
         Type::Map { key, value } => 1 + type_depth(key).max(type_depth(value)),
+        Type::Tuple(elems) => 1 + elems.iter().map(type_depth).max().unwrap_or(0),
         Type::Func { params, ret } => {
             1 + params
                 .iter()
@@ -240,6 +241,11 @@ pub(crate) fn type_to_hir_type(ty: &Type, span: flux_diagnostics::Span) -> HirTy
         Type::Result { ok, err } => HirType::Result {
             ok: Box::new(type_to_hir_type(ok, span)),
             err: Box::new(type_to_hir_type(err, span)),
+            span,
+        },
+        Type::Tuple(elems) => HirType::Generic {
+            name: flux_hir::TUPLE.into(),
+            args: elems.iter().map(|e| type_to_hir_type(e, span)).collect(),
             span,
         },
         Type::Map { key, value } => HirType::Generic {
@@ -364,6 +370,9 @@ fn infer_mono_type(
                 }
                 other => other,
             };
+            if let Type::Tuple(elems) = &base {
+                return flux_hir::tuple_index(field).and_then(|i| elems.get(i).cloned());
+            }
             let Type::Struct { fields, .. } = base else {
                 return None;
             };
@@ -391,6 +400,12 @@ fn infer_mono_type(
             match name {
                 // `base with { ... }` has the base's type.
                 flux_hir::WITH_FIELDS => infer_mono_type(args.first()?, symbols, program),
+                flux_hir::TUPLE_CHECK => infer_mono_type(args.first()?, symbols, program),
+                flux_hir::TUPLE => Some(Type::Tuple(
+                    args.iter()
+                        .map(|a| infer_mono_type(a, symbols, program))
+                        .collect::<Option<Vec<_>>>()?,
+                )),
                 "Some" => Some(Type::Option(Box::new(infer_mono_type(
                     args.first()?,
                     symbols,
@@ -599,6 +614,17 @@ fn hir_to_mono(ty: &HirType, program: &HirProgram, expanding: &mut Vec<String>) 
                 None => Type::Unit,
             }),
         }),
+        HirType::Generic { name, args, .. } if name == "Map" && args.len() == 2 => {
+            Some(Type::Map {
+                key: Box::new(hir_to_mono(&args[0], program, expanding)?),
+                value: Box::new(hir_to_mono(&args[1], program, expanding)?),
+            })
+        }
+        HirType::Generic { name, args, .. } if name == flux_hir::TUPLE => Some(Type::Tuple(
+            args.iter()
+                .map(|a| hir_to_mono(a, program, expanding))
+                .collect::<Option<Vec<_>>>()?,
+        )),
         HirType::Generic { name, .. } => resolve_named(name, program, expanding),
     }
 }
@@ -705,6 +731,14 @@ fn unify_generic_type(
                 }
                 None => (**actual_ret == Type::Unit).then_some(()),
             }
+        }
+        (HirType::Generic { name, args, .. }, Type::Tuple(actual))
+            if name == flux_hir::TUPLE && args.len() == actual.len() =>
+        {
+            for (arg, actual) in args.iter().zip(actual) {
+                unify_generic_type(arg, actual, type_params, program, substitutions)?;
+            }
+            Some(())
         }
         (HirType::Generic { name, args, .. }, Type::Option(actual_inner))
             if name == "Option" && args.len() == 1 =>
@@ -1236,9 +1270,15 @@ fn collect_block_symbol_types(
             }
             HirStmt::For(loop_stmt) => {
                 collect_expr_symbol_types(&loop_stmt.iter, symbols, program);
-                if let Some(Type::Array(inner)) = infer_mono_type(&loop_stmt.iter, symbols, program)
-                {
-                    symbols.insert(loop_stmt.name, *inner);
+                match infer_mono_type(&loop_stmt.iter, symbols, program) {
+                    Some(Type::Array(inner)) => {
+                        symbols.insert(loop_stmt.name, *inner);
+                    }
+                    // A map gives `(key, value)` tuples.
+                    Some(Type::Map { key, value }) => {
+                        symbols.insert(loop_stmt.name, Type::Tuple(vec![*key, *value]));
+                    }
+                    _ => {}
                 }
                 collect_block_symbol_types(&loop_stmt.body, symbols, program);
             }

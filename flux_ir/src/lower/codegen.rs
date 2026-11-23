@@ -201,6 +201,26 @@ fn emit_expr(expr: &HirExpr, program: &HirProgram, code: &mut Vec<Inst>) {
             });
         }
         HirExpr::Call { callee, args, .. } => {
+            // A tuple is a struct with fields "0", "1", …
+            if let HirExpr::Ident { symbol, .. } = callee.as_ref() {
+                // A destructuring check is only for the type checker.
+                if program.names.get(symbol).map(String::as_str) == Some(flux_hir::TUPLE_CHECK) {
+                    if let Some(value) = args.first() {
+                        emit_expr(value, program, code);
+                    }
+                    return;
+                }
+                if program.names.get(symbol).map(String::as_str) == Some(flux_hir::TUPLE) {
+                    for arg in args {
+                        emit_expr(arg, program, code);
+                    }
+                    code.push(Inst::MakeUserStruct {
+                        type_name: flux_hir::TUPLE.to_string(),
+                        fields: (0..args.len()).map(|i| i.to_string()).collect(),
+                    });
+                    return;
+                }
+            }
             if let HirExpr::Field { base, field, .. } = callee.as_ref() {
                 // Checked programs reach here with method calls already
                 // rewritten to direct calls (`flux_types::resolve_method_calls`).

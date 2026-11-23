@@ -65,6 +65,61 @@ fn lower_local_decl(
                 span,
             })])
         }
+        LetPattern::Tuple { span: pat_span, .. } => {
+            let ctx = symbols.current_context();
+            let mut reads_reactive = false;
+            let scope = tracking_scope(ctx);
+            let value = lower_expr(value, symbols, scope, diagnostics, &mut reads_reactive)?;
+            // The value is evaluated once, into a hidden local; each name
+            // then takes its part.
+            let tmp = symbols
+                .declare(
+                    &format!("\0tup{}", pat_span.start),
+                    SymbolKind::Local { mutable: false },
+                    *pat_span,
+                )
+                .ok()?;
+            let mut stmts = vec![HirStmt::Let(HirLet {
+                name: tmp,
+                ty: ty.as_ref().map(lower_type),
+                value,
+                mutable: false,
+                span,
+            })];
+            let mut parts = Vec::new();
+            let base = HirExpr::Ident {
+                symbol: tmp,
+                span: *pat_span,
+            };
+            tuple_parts(pattern, &base, symbols, &mut parts);
+            for (name, part) in parts {
+                if name.name == "_" {
+                    stmts.push(HirStmt::Expr(part));
+                    continue;
+                }
+                let id = match symbols.declare(&name.name, SymbolKind::Local { mutable }, name.span)
+                {
+                    Ok(id) => id,
+                    Err(prev) => {
+                        diagnostics.push(FluxError::DuplicateDefinition {
+                            name: name.name.clone(),
+                            prev_span: span_to_miette(prev.span),
+                            span: span_to_miette(name.span),
+                            source_id: name.span.source,
+                        });
+                        return None;
+                    }
+                };
+                stmts.push(HirStmt::Let(HirLet {
+                    name: id,
+                    ty: None,
+                    value: part,
+                    mutable,
+                    span: name.span,
+                }));
+            }
+            Some(stmts)
+        }
         LetPattern::Struct {
             fields,
             span: pat_span,
@@ -108,6 +163,57 @@ fn lower_local_decl(
     }
 }
 
+/// The names a tuple pattern binds, each with the expression for its part of
+/// `base` (`base.0`, `base.1.0`, …); `_` binds nothing. Each level of the
+/// pattern first checks that its value is a tuple of exactly that many
+/// values (the hidden builtin [`TUPLE_CHECK`]); those checks come out under
+/// the name `_`, so that a level of only `_` is still checked.
+pub(super) fn tuple_parts(
+    pattern: &LetPattern,
+    base: &HirExpr,
+    symbols: &mut SymbolTable,
+    out: &mut Vec<(Ident, HirExpr)>,
+) {
+    let LetPattern::Tuple { elems, span } = pattern else {
+        return;
+    };
+    let checked = HirExpr::Call {
+        callee: Box::new(HirExpr::Ident {
+            symbol: symbols.hidden_builtin(TUPLE_CHECK, *span),
+            span: *span,
+        }),
+        args: vec![
+            base.clone(),
+            HirExpr::Int {
+                value: elems.len() as i128,
+                span: *span,
+            },
+        ],
+        span: *span,
+    };
+    out.push((
+        Ident {
+            name: "_".into(),
+            span: *span,
+        },
+        checked.clone(),
+    ));
+    for (i, elem) in elems.iter().enumerate() {
+        let part = HirExpr::Field {
+            base: Box::new(checked.clone()),
+            field: i.to_string(),
+            span: elem.span(),
+        };
+        match elem {
+            LetPattern::Ident(name) if name.name == "_" => {}
+            LetPattern::Ident(name) => out.push((name.clone(), part)),
+            LetPattern::Tuple { .. } => tuple_parts(elem, &part, symbols, out),
+            // The grammar allows only names and tuples inside a tuple.
+            LetPattern::Struct { .. } => {}
+        }
+    }
+}
+
 /// The payload pattern of `Variant(…)` when it is more than a binding:
 /// a nested pattern, or a lone name that is a payload-free variant.
 fn nested_payload(pattern: &MatchPattern, symbols: &SymbolTable) -> Option<MatchPattern> {
@@ -130,7 +236,9 @@ fn pattern_span(pattern: &MatchPattern) -> Option<Span> {
     match pattern {
         MatchPattern::Simple(v) => Some(v.span),
         MatchPattern::Literal(value) => Some(value.span()),
-        MatchPattern::Tuple { span, .. } | MatchPattern::Struct { span, .. } => Some(*span),
+        MatchPattern::Tuple { span, .. }
+        | MatchPattern::Struct { span, .. }
+        | MatchPattern::TupleValue { span, .. } => Some(*span),
     }
 }
 
@@ -140,7 +248,11 @@ fn is_variant_name(name: &str, symbols: &SymbolTable) -> bool {
 
 fn pattern_shape(pattern: &MatchPattern, symbols: &SymbolTable) -> PatShape {
     match pattern {
+        MatchPattern::Literal(Expr::Bool { value, .. }) => PatShape::Bool(*value),
         MatchPattern::Literal(_) => PatShape::Literal,
+        MatchPattern::TupleValue { elems, .. } => {
+            PatShape::Tuple(elems.iter().map(|e| pattern_shape(e, symbols)).collect())
+        }
         MatchPattern::Simple(v) if is_variant_name(&v.name, symbols) => PatShape::Variant {
             name: v.name.clone(),
             payload: None,
@@ -181,7 +293,8 @@ fn lower_nested_arm(
     let shape = arm.guard.is_none().then(|| pattern_shape(&inner, symbols));
     symbols.push(ScopeKind::Block);
     // NUL cannot appear in source names; each level declares its own symbol.
-    let tmp_name = "\0pat".to_string();
+    // Each level's name differs, so an inner level never hides an outer one.
+    let tmp_name = format!("\0pat{}", span.start);
     let Ok(tmp) = symbols.declare(&tmp_name, SymbolKind::Local { mutable: false }, span) else {
         symbols.pop();
         return None;
@@ -258,6 +371,153 @@ fn lower_nested_arm(
     })
 }
 
+/// `(p0, …, pn) [if g] => body` lowers to `tmp if test => value`, where
+/// `test` matches `tmp.0` against `p0`, then `tmp.1` against `p1`, …, and
+/// is `true` when all match (and `g` holds), and `value` is the same chain
+/// with `body` innermost. Each value is matched by an ordinary `match`, so
+/// literals, variants, nested patterns, and bindings work as anywhere else.
+#[allow(clippy::too_many_arguments)]
+fn lower_tuple_arm(
+    arm: &MatchArm,
+    elems: &[MatchPattern],
+    span: Span,
+    symbols: &mut SymbolTable,
+    scope: ScopeKind,
+    diagnostics: &mut DiagnosticBag,
+    reads_reactive: &mut bool,
+) -> Option<HirMatchArm> {
+    let shape = arm
+        .guard
+        .is_none()
+        .then(|| pattern_shape(&arm.pattern, symbols));
+    symbols.push(ScopeKind::Block);
+    // Each level's name differs, so an inner level never hides an outer one.
+    let tmp_name = format!("\0pat{}", span.start);
+    let Ok(tmp) = symbols.declare(&tmp_name, SymbolKind::Local { mutable: false }, span) else {
+        symbols.pop();
+        return None;
+    };
+    // Each level's match takes its element's span: a match's scrutinee
+    // temporary is named after its span start, so levels must differ.
+    let level = |i: usize, inner: MatchArm| {
+        let at = pattern_span(&elems[i]).unwrap_or(span);
+        Expr::Match {
+            scrutinee: Box::new(Expr::Field {
+                base: Box::new(Expr::Ident {
+                    name: tmp_name.clone(),
+                    span: at,
+                }),
+                field: i.to_string(),
+                span: at,
+            }),
+            arms: vec![
+                inner,
+                MatchArm {
+                    pattern: MatchPattern::Simple(Ident {
+                        name: "_".into(),
+                        span: at,
+                    }),
+                    guard: None,
+                    stmts: vec![],
+                    expr: Some(Expr::Bool {
+                        value: false,
+                        span: at,
+                    }),
+                    span: at,
+                },
+            ],
+            span: at,
+        }
+    };
+    let chain = |leaf: MatchArm| {
+        let last = elems.len() - 1;
+        let mut expr = level(last, leaf);
+        for i in (0..last).rev() {
+            let at = pattern_span(&elems[i]).unwrap_or(span);
+            expr = level(
+                i,
+                MatchArm {
+                    pattern: elems[i].clone(),
+                    guard: None,
+                    stmts: vec![],
+                    expr: Some(expr),
+                    span: at,
+                },
+            );
+        }
+        expr
+    };
+    let last = elems.last()?.clone();
+    let test = chain(MatchArm {
+        pattern: last.clone(),
+        guard: arm.guard.clone(),
+        stmts: vec![],
+        expr: Some(Expr::Bool { value: true, span }),
+        span,
+    });
+    let value = chain(MatchArm {
+        pattern: last,
+        guard: None,
+        stmts: arm.stmts.clone(),
+        expr: arm.expr.clone(),
+        span: arm.span,
+    });
+    let guard = lower_expr(&test, symbols, scope, diagnostics, reads_reactive);
+    let mut expr = lower_expr(&value, symbols, scope, diagnostics, reads_reactive);
+    symbols.pop();
+    let (guard, expr) = (guard?, expr.as_mut()?);
+    // The fallbacks never run (the guard checked every value): they take no
+    // part in the type. Each level leaves exactly when the body does.
+    // The body leaves when it ends in `return`/`break`/`continue`.
+    let diverges = arm.expr.is_none()
+        && matches!(
+            arm.stmts.last(),
+            Some(Stmt::Return(_) | Stmt::Break(_) | Stmt::Continue(_))
+        );
+    let levels: Vec<Span> = elems
+        .iter()
+        .map(|e| pattern_span(e).unwrap_or(span))
+        .collect();
+    mark_levels(expr, &levels, diverges);
+    Some(HirMatchArm {
+        variant: String::new(),
+        bindings: vec![tmp],
+        binding_fields: vec![],
+        guard: Some(guard),
+        literal: None,
+        body: HirBlock {
+            stmts: vec![],
+            span,
+        },
+        expr: expr.clone(),
+        diverges,
+        unit: false,
+        nested: shape,
+    })
+}
+
+/// Marks, in the matches of a tuple arm's value chain (found by their spans,
+/// which are the element patterns'), the fallback as never running and the
+/// arm that goes on as leaving exactly when the body does. The chain may pass
+/// through other arms (an element that is itself a tuple or a nested
+/// pattern), so every match inside is visited.
+fn mark_levels(expr: &mut HirExpr, levels: &[Span], diverges: bool) {
+    let HirExpr::Match { arms, span, .. } = expr else {
+        return;
+    };
+    if levels.contains(span) {
+        if let Some(fallback) = arms.last_mut() {
+            fallback.diverges = true;
+        }
+        if let Some(first) = arms.first_mut() {
+            first.diverges = diverges;
+        }
+    }
+    for arm in arms.iter_mut() {
+        mark_levels(&mut arm.expr, levels, diverges);
+    }
+}
+
 pub(super) fn lower_match_arm(
     arm: &flux_syntax::MatchArm,
     symbols: &mut SymbolTable,
@@ -265,6 +525,17 @@ pub(super) fn lower_match_arm(
     diagnostics: &mut DiagnosticBag,
     reads_reactive: &mut bool,
 ) -> Option<HirMatchArm> {
+    if let MatchPattern::TupleValue { elems, span } = &arm.pattern {
+        return lower_tuple_arm(
+            arm,
+            elems,
+            *span,
+            symbols,
+            scope,
+            diagnostics,
+            reads_reactive,
+        );
+    }
     if let MatchPattern::Tuple { variant, .. } = &arm.pattern {
         if let Some(inner) = nested_payload(&arm.pattern, symbols) {
             return lower_nested_arm(
@@ -325,6 +596,8 @@ pub(super) fn lower_match_arm(
                 .collect();
             (variant.name.clone(), ids, vec![])
         }
+        // Lowered by `lower_tuple_arm` above.
+        MatchPattern::TupleValue { .. } => (String::new(), vec![], vec![]),
         MatchPattern::Struct {
             variant, fields, ..
         } => {
@@ -582,6 +855,7 @@ fn lower_stmt(
         }
         Stmt::For(ForStmt {
             name,
+            pattern,
             iter,
             body,
             span,
@@ -605,6 +879,30 @@ fn lower_stmt(
             let mut reads_reactive = false;
             let scope = tracking_scope(ctx);
             let iter = lower_expr(iter, symbols, scope, diagnostics, &mut reads_reactive)?;
+            // `for (k, v) in …` starts each pass with `let (k, v) = <element>`.
+            let destructured;
+            let body = match pattern {
+                Some(pattern) => {
+                    let mut stmts = vec![Stmt::Let(LetStmt {
+                        pub_: false,
+                        mutable: false,
+                        pattern: pattern.clone(),
+                        ty: None,
+                        value: Expr::Ident {
+                            name: name.name.clone(),
+                            span: name.span,
+                        },
+                        span: name.span,
+                    })];
+                    stmts.extend(body.stmts.iter().cloned());
+                    destructured = Block {
+                        stmts,
+                        span: body.span,
+                    };
+                    &destructured
+                }
+                None => body,
+            };
             let body = lower_block(body, symbols, ScopeKind::Tracking, diagnostics)?;
             symbols.pop();
             Some(vec![HirStmt::For(HirFor {

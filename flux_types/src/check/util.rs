@@ -92,6 +92,12 @@ pub(crate) fn refine_unknown(a: &Type, b: &Type) -> Type {
         (Type::Empty, other) => other.clone(),
         (Type::Array(x), Type::Array(y)) => Type::Array(Box::new(refine_unknown(x, y))),
         (Type::Option(x), Type::Option(y)) => Type::Option(Box::new(refine_unknown(x, y))),
+        (Type::Tuple(xs), Type::Tuple(ys)) if xs.len() == ys.len() => Type::Tuple(
+            xs.iter()
+                .zip(ys)
+                .map(|(x, y)| refine_unknown(x, y))
+                .collect(),
+        ),
         (Type::Map { key: ak, value: av }, Type::Map { key: bk, value: bv }) => Type::Map {
             key: Box::new(refine_unknown(ak, bk)),
             value: Box::new(refine_unknown(av, bv)),
@@ -135,6 +141,7 @@ pub(crate) fn mentions_empty(ty: &Type) -> bool {
         Type::Array(e) | Type::Option(e) | Type::Cell(e) | Type::Read(e) => mentions_empty(e),
         Type::Result { ok, err } => mentions_empty(ok) || mentions_empty(err),
         Type::Map { key, value } => mentions_empty(key) || mentions_empty(value),
+        Type::Tuple(elems) => elems.iter().any(mentions_empty),
         _ => false,
     }
 }
@@ -190,6 +197,9 @@ pub(crate) fn types_compatible(expected: &Type, found: &Type) -> bool {
         (Type::Array(e), Type::Array(f)) => types_compatible(e, f),
         (Type::Map { key: ek, value: ev }, Type::Map { key: fk, value: fv }) => {
             types_compatible(ek, fk) && types_compatible(ev, fv)
+        }
+        (Type::Tuple(es), Type::Tuple(fs)) => {
+            es.len() == fs.len() && es.iter().zip(fs).all(|(e, f)| types_compatible(e, f))
         }
         (
             Type::Result {

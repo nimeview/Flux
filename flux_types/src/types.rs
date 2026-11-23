@@ -33,6 +33,8 @@ pub enum Type {
         key: Box<Type>,
         value: Box<Type>,
     },
+    /// `(A, B, …)`: two or more values of these types.
+    Tuple(Vec<Type>),
     Result {
         ok: Box<Type>,
         err: Box<Type>,
@@ -111,6 +113,10 @@ impl Type {
             Type::Array(inner) => format!("[{}]", inner.display()),
             Type::Option(inner) => format!("Option<{}>", inner.display()),
             Type::Map { key, value } => format!("Map<{}, {}>", key.display(), value.display()),
+            Type::Tuple(elems) => {
+                let elems: Vec<String> = elems.iter().map(Type::display).collect();
+                format!("({})", elems.join(", "))
+            }
             Type::Result { ok, err } => {
                 format!("Result<{}, {}>", ok.display(), err.display())
             }

@@ -30,6 +30,7 @@ fn equatable(ty: &Type, depth: u32) -> bool {
             value: err,
         } => equatable(&ok, d) && equatable(&err, d),
         Type::Struct { fields, .. } => fields.iter().all(|(_, t)| equatable(t, d)),
+        Type::Tuple(elems) => elems.iter().all(|t| equatable(t, d)),
         Type::Enum { variants, .. } => variants
             .iter()
             .all(|(_, payload)| payload.as_ref().is_none_or(|t| equatable(t, d))),

@@ -320,6 +320,7 @@ pub(super) fn check_return_types(
                     .unwrap_or(Type::Error);
                 let elem_ty = match unwrap_value_type(&iter_ty) {
                     Type::Array(inner) => *inner,
+                    Type::Map { key, value } => Type::Tuple(vec![*key, *value]),
                     _ => Type::Error,
                 };
                 loop_scope.insert(loop_stmt.name, elem_ty);
@@ -597,9 +598,11 @@ pub(super) fn check_stmt(
             let iter_ty = unwrap_value_type(&iter_ty);
             let elem = match iter_ty {
                 Type::Array(inner) => *inner,
+                // A map gives its entries as `(key, value)`, in key order.
+                Type::Map { key, value } => Type::Tuple(vec![*key, *value]),
                 other if !other.is_error() => {
                     diagnostics.push(FluxError::TypeMismatch {
-                        expected: "Array (use range(n) for numeric sequences)".into(),
+                        expected: "an array or a map (use range(n) for numeric sequences)".into(),
                         found: other.display(),
                         span: span_to_miette(iter.span()),
                         source_id: iter.span().source,

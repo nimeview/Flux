@@ -36,6 +36,19 @@ fn write_value(out: &mut String, value: &Value) {
             }
             out.push(']');
         }
+        // A tuple: a struct of this name with fields "0", "1", ….
+        Value::UserStruct(s) if s.type_name == TUPLE_TYPE => deep_recursion(|| {
+            out.push('(');
+            for i in 0..s.fields.len() {
+                if i > 0 {
+                    out.push_str(", ");
+                }
+                if let Some(value) = s.fields.get(&i.to_string()) {
+                    write_value(out, value);
+                }
+            }
+            out.push(')');
+        }),
         Value::UserStruct(s) => deep_recursion(|| {
             let mut names: Vec<&String> = s.fields.keys().collect();
             names.sort();
@@ -98,3 +111,6 @@ fn float_text(f: f64) -> String {
         text
     }
 }
+
+/// The type name a tuple value carries (the compiler's `flux_hir::TUPLE`).
+pub const TUPLE_TYPE: &str = "\0tuple";

@@ -162,6 +162,16 @@ impl Value {
         Self::UserStruct(std::sync::Arc::new(StructValue { type_name, fields }))
     }
 
+    /// A tuple of `values`: a struct with fields "0", "1", ….
+    pub fn tuple(values: Vec<Value>) -> Self {
+        let fields = values
+            .into_iter()
+            .enumerate()
+            .map(|(i, v)| (i.to_string(), v))
+            .collect();
+        Self::user_struct(display::TUPLE_TYPE.to_string(), fields)
+    }
+
     pub fn user_enum(type_name: String, variant: String, payload: Option<Value>) -> Self {
         Self::UserEnum(std::sync::Arc::new(EnumValue {
             type_name,

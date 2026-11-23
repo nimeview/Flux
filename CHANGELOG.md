@@ -15,6 +15,7 @@ Notable changes to Flux. The versioning policy is in [`RELEASE.md`](RELEASE.md).
 
 ### Added
 
+- Tuples: `(1, "a")` of type `(Int, String)`, `t.0`, `let (a, b) = t`, tuple patterns in `match` with exhaustiveness checking (`(true, _)`, `(Some(x), 0)`), and `for (k, v) in m`, which walks a map's entries in key order.
 - Assigning part of a value: a field `p.x = 3`, and paths such as `todos[i].done = true` and `grid[i][j] = v`. Each index is evaluated once.
 - Compound assignment `+=`, `-=`, `*=`, `/=`, and `%=` on any place.
 - `p with { x: 3 }`: a copy of a struct with some fields changed.

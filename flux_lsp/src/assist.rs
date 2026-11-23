@@ -218,6 +218,34 @@ fn item_start(src: &str, offset: usize) -> usize {
 
 /// The local names visible at `offset`, innermost last, with the range of the item
 /// they were found in.
+/// The names in the tuple pattern opening at `toks[open]`, at `depth`;
+/// returns the index of its closing parenthesis.
+fn tuple_names(
+    toks: &[Tok<'_>],
+    open: usize,
+    depth: usize,
+    names: &mut Vec<(String, usize)>,
+) -> usize {
+    let mut nested = 0usize;
+    let mut at = open;
+    while at < toks.len() {
+        match toks[at].text {
+            "(" => nested += 1,
+            ")" => {
+                nested -= 1;
+                if nested == 0 {
+                    return at;
+                }
+            }
+            "_" => {}
+            _ if toks[at].kind == TokKind::Ident => names.push((toks[at].text.to_string(), depth)),
+            _ => {}
+        }
+        at += 1;
+    }
+    at
+}
+
 pub fn names_in_scope(src: &str, offset: usize) -> (Vec<String>, std::ops::Range<usize>) {
     let offset = offset.min(src.len());
     let start = item_start(src, offset);
@@ -243,7 +271,10 @@ pub fn names_in_scope(src: &str, offset: usize) -> (Vec<String>, std::ops::Range
                 if is(at, "mut") {
                     at += 1;
                 }
-                if let Some(name) = ident(at) {
+                if is(at, "(") {
+                    // `let (a, (b, c)) = t`
+                    i = tuple_names(&toks, at, depth, &mut names);
+                } else if let Some(name) = ident(at) {
                     if is(at + 1, "{") {
                         // `let Point { x, y } = p`
                         at += 2;
@@ -260,7 +291,10 @@ pub fn names_in_scope(src: &str, offset: usize) -> (Vec<String>, std::ops::Range
                 }
             }
             "for" => {
-                if let Some(name) = ident(i + 1) {
+                if is(i + 1, "(") {
+                    // `for (k, v) in m`
+                    i = tuple_names(&toks, i + 1, depth + 1, &mut names);
+                } else if let Some(name) = ident(i + 1) {
                     names.push((name.text.to_string(), depth + 1));
                 }
             }
@@ -558,6 +592,10 @@ mod tests {
         assert_eq!(names, ["n", "x", "y", "a", "b"]);
         let names = scope("on Move(dx, dy) {\n    @\n}\n");
         assert_eq!(names, ["dx", "dy"]);
+        let names = scope(
+            "fn f() {\n    let (a, (b, _)) = t\n    for (k, v) in m {\n        @\n    }\n}\n",
+        );
+        assert_eq!(names, ["a", "b", "k", "v"]);
         let names = scope("watch total(old) {\n    @\n}\n");
         assert_eq!(names, ["old"]);
         let names = scope("on Move(dx, dy) {\n}\n\nfn f() {\n    @\n}\n");

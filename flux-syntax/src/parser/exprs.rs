@@ -103,6 +103,19 @@ pub(super) fn parse_expr(source_id: SourceId, pair: pest::iterators::Pair<'_, Ru
             let body = Box::new(parse_expr(source_id, body.expect("closure body")));
             Expr::Closure { params, body, span }
         }
+        Rule::paren_expr => {
+            let span = span_of(source_id, &pair);
+            let mut inner = pair.into_inner();
+            let first = parse_expr(source_id, inner.next().expect("parenthesized expr"));
+            match inner.next() {
+                None => first,
+                Some(tail) => {
+                    let mut elems = vec![first];
+                    elems.extend(tail.into_inner().map(|p| parse_expr(source_id, p)));
+                    Expr::Tuple { elems, span }
+                }
+            }
+        }
         Rule::array_lit => {
             let span = span_of(source_id, &pair);
             let elems = pair
@@ -220,6 +233,13 @@ fn parse_match_pattern(source_id: SourceId, pair: pest::iterators::Pair<'_, Rule
             let ident = parse_ident(source_id, pair.into_inner().next().expect("simple pat"));
             MatchPattern::Simple(ident)
         }
+        Rule::tuple_value_pat => MatchPattern::TupleValue {
+            elems: pair
+                .into_inner()
+                .map(|p| parse_match_pattern(source_id, p))
+                .collect(),
+            span,
+        },
         Rule::tuple_pat => {
             let mut inner = pair.into_inner();
             let variant = parse_ident(source_id, inner.next().expect("tuple variant"));
@@ -528,8 +548,8 @@ fn parse_postfix_expr(source_id: SourceId, pair: pest::iterators::Pair<'_, Rule>
             let field_span = span_of(source_id, &suffix);
             let field = suffix
                 .into_inner()
-                .find(|p| p.as_rule() == Rule::ident)
-                .map(|p| parse_ident(source_id, p).name)
+                .find(|p| matches!(p.as_rule(), Rule::ident | Rule::tuple_index))
+                .map(|p| p.as_str().to_string())
                 .unwrap_or_default();
             let span = merge_span(expr.span(), field_span);
             expr = Expr::Field {

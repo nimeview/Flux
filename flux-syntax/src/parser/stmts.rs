@@ -160,7 +160,10 @@ pub(super) fn parse_stmt(
                 let step = p.into_inner().next().expect("place step");
                 let part = step.clone().into_inner().next().expect("place step part");
                 path.push(match step.as_rule() {
-                    Rule::assign_field => PlaceStep::Field(parse_ident(source_id, part)),
+                    Rule::assign_field => PlaceStep::Field(Ident {
+                        name: part.as_str().to_string(),
+                        span: span_of(source_id, &part),
+                    }),
                     _ => PlaceStep::Index(parse_expr(source_id, part)),
                 });
             }
@@ -209,11 +212,26 @@ pub(super) fn parse_stmt(
         }
         Rule::for_stmt => {
             let mut inner = pair.into_inner().filter(|p| p.as_rule() != Rule::kw_in);
-            let name = parse_ident(source_id, inner.next().expect("for name"));
+            let head = inner.next().expect("for name");
+            let (name, pattern) = if head.as_rule() == Rule::tuple_binding {
+                let head_span = span_of(source_id, &head);
+                // The element itself goes in a name no source can spell.
+                let hidden = Ident {
+                    name: "\0item".to_string(),
+                    span: head_span,
+                };
+                (
+                    hidden,
+                    Some(super::decls::parse_let_pattern(source_id, head)),
+                )
+            } else {
+                (parse_ident(source_id, head), None)
+            };
             let iter = parse_expr(source_id, inner.next().expect("for iter"));
             let body = parse_block(source_id, inner.next().expect("for body"));
             Some(Stmt::For(ForStmt {
                 name,
+                pattern,
                 iter,
                 body,
                 span,

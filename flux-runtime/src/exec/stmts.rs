@@ -314,6 +314,11 @@ impl Executor {
                     RuntimeValue::Array(items) => {
                         std::sync::Arc::try_unwrap(items).unwrap_or_else(|shared| (*shared).clone())
                     }
+                    // A map gives `(key, value)` tuples in key order.
+                    RuntimeValue::Map(entries) => entries
+                        .values()
+                        .map(|(key, value)| RuntimeValue::tuple(vec![key.clone(), value.clone()]))
+                        .collect(),
                     _ => vec![],
                 };
                 'for_loop: for item in items {

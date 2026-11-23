@@ -23,6 +23,13 @@ pub(super) fn parse_type_name(
             name: pair.as_str().to_string(),
             span,
         },
+        Rule::tuple_type => TypeName::Tuple {
+            elems: pair
+                .into_inner()
+                .map(|p| parse_type_name(source_id, p))
+                .collect(),
+            span,
+        },
         Rule::array_type => {
             let inner = parse_type_name(source_id, pair.into_inner().next().expect("array inner"));
             TypeName::Array {

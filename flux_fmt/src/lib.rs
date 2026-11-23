@@ -561,11 +561,11 @@ fn format_stmt(stmt: &Stmt, out: &mut String, level: usize) {
         }
         Stmt::For(f) => {
             indent(out, level);
-            out.push_str(&format!(
-                "for {} in {} {{\n",
-                f.name.name,
-                expr_fmt(&f.iter)
-            ));
+            let head = match &f.pattern {
+                Some(pattern) => let_pattern_fmt(pattern),
+                None => f.name.name.clone(),
+            };
+            out.push_str(&format!("for {head} in {} {{\n", expr_fmt(&f.iter)));
             format_block(&f.body, out, level + 1);
             indent(out, level);
             out.push_str("}\n");
@@ -671,6 +671,14 @@ fn match_block_fmt(scrutinee: &flux_syntax::Expr, arms: &[flux_syntax::MatchArm]
 fn type_name_fmt(ty: &flux_syntax::TypeName) -> String {
     match ty {
         flux_syntax::TypeName::Simple { name, .. } => name.clone(),
+        flux_syntax::TypeName::Tuple { elems, .. } => format!(
+            "({})",
+            elems
+                .iter()
+                .map(type_name_fmt)
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
         flux_syntax::TypeName::Generic { name, args, .. } => {
             format!(
                 "{}[{}]",
@@ -777,6 +785,15 @@ fn expr_fmt(expr: &flux_syntax::Expr) -> String {
         }
         flux_syntax::Expr::Field { base, field, .. } => {
             format!("{}.{}", postfix_base_fmt(base), field)
+        }
+        flux_syntax::Expr::Tuple { elems, .. } => {
+            let items = elems.iter().map(expr_fmt).collect::<Vec<_>>().join(", ");
+            // `(x,)` stays as written, so that the error about it stays too.
+            if elems.len() == 1 {
+                format!("({items},)")
+            } else {
+                format!("({items})")
+            }
         }
         flux_syntax::Expr::With { base, fields, .. } => {
             let fs = fields
@@ -933,6 +950,14 @@ fn postfix_base_fmt(expr: &flux_syntax::Expr) -> String {
 fn let_pattern_fmt(pattern: &flux_syntax::LetPattern) -> String {
     match pattern {
         flux_syntax::LetPattern::Ident(ident) => ident.name.clone(),
+        flux_syntax::LetPattern::Tuple { elems, .. } => format!(
+            "({})",
+            elems
+                .iter()
+                .map(let_pattern_fmt)
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
         flux_syntax::LetPattern::Struct { name, fields, .. } => {
             let fs = fields
                 .iter()
@@ -970,6 +995,14 @@ fn literal_pattern_fmt(value: &flux_syntax::Expr) -> String {
 fn match_pattern_fmt(pattern: &flux_syntax::MatchPattern) -> String {
     match pattern {
         flux_syntax::MatchPattern::Simple(v) => v.name.clone(),
+        flux_syntax::MatchPattern::TupleValue { elems, .. } => format!(
+            "({})",
+            elems
+                .iter()
+                .map(match_pattern_fmt)
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
         flux_syntax::MatchPattern::Literal(value) => literal_pattern_fmt(value),
         flux_syntax::MatchPattern::Tuple {
             variant,

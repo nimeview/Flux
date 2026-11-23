@@ -179,7 +179,9 @@ impl TypeCheckContext {
             .filter_map(|(id, symbol)| {
                 (symbol.kind == SymbolKind::Builtin
                     && (flux_std::is_builtin_fn(&symbol.name)
-                        || symbol.name == flux_hir::WITH_FIELDS))
+                        || symbol.name == flux_hir::WITH_FIELDS
+                        || symbol.name == flux_hir::TUPLE
+                        || symbol.name == flux_hir::TUPLE_CHECK))
                     .then_some(*id)
             })
             .collect();
@@ -290,6 +292,7 @@ pub(crate) fn erase_type_variables(ty: Type) -> Type {
             ok: Box::new(erase_type_variables(*ok)),
             err: Box::new(erase_type_variables(*err)),
         },
+        Type::Tuple(elems) => Type::Tuple(elems.into_iter().map(erase_type_variables).collect()),
         Type::Map { key, value } => Type::Map {
             key: Box::new(erase_type_variables(*key)),
             value: Box::new(erase_type_variables(*value)),

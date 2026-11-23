@@ -303,7 +303,11 @@ pub struct WhileStmt {
 
 #[derive(Debug, Clone)]
 pub struct ForStmt {
+    /// The loop variable; for `for (k, v) in …` a hidden name the values
+    /// are taken from.
     pub name: Ident,
+    /// `for (k, v) in …`: the names for each element's values.
+    pub pattern: Option<LetPattern>,
     pub iter: Expr,
     pub body: Block,
     pub span: Span,
@@ -378,6 +382,11 @@ pub enum Expr {
         fields: Vec<FieldInit>,
         span: Span,
     },
+    /// `(a, b)`: a tuple of two or more values (one is reported later).
+    Tuple {
+        elems: Vec<Expr>,
+        span: Span,
+    },
     /// `base with { x: 3 }`: a copy of the struct `base` with these fields
     /// changed. `base` is evaluated once, then the fields in order.
     With {
@@ -433,6 +442,11 @@ pub enum MatchPattern {
     Struct {
         variant: Ident,
         fields: Vec<Ident>,
+        span: Span,
+    },
+    /// `(0, y)`: a tuple whose values match these patterns.
+    TupleValue {
+        elems: Vec<MatchPattern>,
         span: Span,
     },
 }
@@ -511,6 +525,11 @@ pub enum TypeName {
         err: Box<TypeName>,
         span: Span,
     },
+    /// `(A, B)`: a tuple type.
+    Tuple {
+        elems: Vec<TypeName>,
+        span: Span,
+    },
     /// `fn(A, B) -> C`; without `->` it returns `Unit`.
     Function {
         params: Vec<TypeName>,
@@ -527,6 +546,11 @@ pub enum LetPattern {
         fields: Vec<Ident>,
         span: Span,
     },
+    /// `(a, b)`: one pattern per value of a tuple; `_` binds nothing.
+    Tuple {
+        elems: Vec<LetPattern>,
+        span: Span,
+    },
 }
 
 impl LetPattern {
@@ -534,7 +558,7 @@ impl LetPattern {
     pub fn primary_name(&self) -> Option<&str> {
         match self {
             Self::Ident(ident) => Some(&ident.name),
-            Self::Struct { .. } => None,
+            Self::Struct { .. } | Self::Tuple { .. } => None,
         }
     }
 
@@ -543,13 +567,18 @@ impl LetPattern {
         match self {
             Self::Ident(ident) => vec![ident.name.clone()],
             Self::Struct { fields, .. } => fields.iter().map(|f| f.name.clone()).collect(),
+            Self::Tuple { elems, .. } => elems
+                .iter()
+                .flat_map(|e| e.binding_names())
+                .filter(|n| n != "_")
+                .collect(),
         }
     }
 
     pub fn span(&self) -> Span {
         match self {
             Self::Ident(ident) => ident.span,
-            Self::Struct { span, .. } => *span,
+            Self::Struct { span, .. } | Self::Tuple { span, .. } => *span,
         }
     }
 }
@@ -572,6 +601,7 @@ impl Expr {
             | Self::Array { span, .. }
             | Self::StructLit { span, .. }
             | Self::With { span, .. }
+            | Self::Tuple { span, .. }
             | Self::Match { span, .. }
             | Self::Cast { span, .. }
             | Self::Try { span, .. }

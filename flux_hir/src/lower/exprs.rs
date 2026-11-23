@@ -219,6 +219,30 @@ pub(super) fn lower_expr(
                 .collect();
             Some(HirExpr::Array { elems, span: *span })
         }
+        // `(a, b)` is a call of the hidden builtin [`TUPLE`].
+        Expr::Tuple { elems, span } => {
+            if elems.len() < 2 {
+                diagnostics.push(FluxError::Parse {
+                    message: "a tuple has two or more values; write `(x)` to group one value"
+                        .to_string(),
+                    span: span_to_miette(*span),
+                    source_id: span.source,
+                });
+                return None;
+            }
+            let args = elems
+                .iter()
+                .map(|e| lower_expr(e, symbols, scope, diagnostics, reads_reactive))
+                .collect::<Option<Vec<_>>>()?;
+            Some(HirExpr::Call {
+                callee: Box::new(HirExpr::Ident {
+                    symbol: symbols.hidden_builtin(TUPLE, *span),
+                    span: *span,
+                }),
+                args,
+                span: *span,
+            })
+        }
         // `base with { x: v }` is a call of the hidden builtin
         // [`WITH_FIELDS`] with the base, then each field's name and value.
         Expr::With { base, fields, span } => {
@@ -475,6 +499,14 @@ pub(super) fn lower_param_type(ty: &TypeName, type_params: &[String]) -> HirType
                 span: *span,
             }
         }
+        TypeName::Tuple { elems, span } => HirType::Generic {
+            name: TUPLE.to_string(),
+            args: elems
+                .iter()
+                .map(|e| lower_param_type(e, type_params))
+                .collect(),
+            span: *span,
+        },
         TypeName::Function { params, ret, span } => HirType::Function {
             params: params
                 .iter()

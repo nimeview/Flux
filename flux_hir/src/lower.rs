@@ -194,6 +194,9 @@ impl AssignmentCollector {
                 Stmt::For(f) => {
                     let mut inner = locals.child();
                     inner.insert(f.name.name.clone());
+                    if let Some(pattern) = &f.pattern {
+                        inner.extend(pattern.binding_names());
+                    }
                     self.expr(&f.iter, &inner);
                     self.block(&f.body, &inner);
                 }
@@ -241,6 +244,11 @@ impl AssignmentCollector {
             }
             MatchPattern::Struct { fields, .. } => {
                 locals.extend(fields.iter().map(|id| id.name.clone()));
+            }
+            MatchPattern::TupleValue { elems, .. } => {
+                for elem in elems {
+                    self.pattern_locals(elem, locals);
+                }
             }
             MatchPattern::Literal(_) => {}
         }
@@ -304,6 +312,11 @@ impl AssignmentCollector {
             Expr::StructLit { fields, .. } => {
                 for field in fields {
                     self.expr(&field.value, locals);
+                }
+            }
+            Expr::Tuple { elems, .. } => {
+                for elem in elems {
+                    self.expr(elem, locals);
                 }
             }
             Expr::With { base, fields, .. } => {

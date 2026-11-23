@@ -522,6 +522,17 @@ pub(super) fn parse_let_pattern(
             pair.into_inner().next().expect("let pattern inner"),
         ),
         Rule::ident => LetPattern::Ident(parse_ident(source_id, pair)),
+        Rule::binding_elem => parse_let_pattern(
+            source_id,
+            pair.into_inner().next().expect("binding element"),
+        ),
+        Rule::tuple_binding => LetPattern::Tuple {
+            elems: pair
+                .into_inner()
+                .map(|p| parse_let_pattern(source_id, p))
+                .collect(),
+            span,
+        },
         Rule::struct_pat => {
             let mut inner = pair.into_inner();
             let name = parse_ident(source_id, inner.next().expect("struct pat name"));
