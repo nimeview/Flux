@@ -183,15 +183,18 @@
     "declaration": {
       "patterns": [
         {
-          "match": "\\b(pub)?\\s*\\b(fn|rfn)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "match": "\\b(pub)?\\s*\\b(?:(track|act)\\s+)?(fn|rfn)\\s+([A-Za-z_][A-Za-z0-9_]*)",
           "captures": {
             "1": {
               "name": "storage.modifier.flux"
             },
             "2": {
-              "name": "storage.type.function.flux"
+              "name": "storage.modifier.kind.flux"
             },
             "3": {
+              "name": "storage.type.function.flux"
+            },
+            "4": {
               "name": "entity.name.function.flux"
             }
           }
@@ -265,13 +268,16 @@
           }
         },
         {
-          "match": "\\b(watch)\\b(?:\\s+([a-z_][A-Za-z0-9_]*))?",
+          "match": "\\b(watch)\\b(?:\\s+([a-z_][A-Za-z0-9_]*)(?:\\s*\\(\\s*([A-Za-z_][A-Za-z0-9_]*)\\s*\\))?)?",
           "captures": {
             "1": {
               "name": "keyword.control.reactive.flux"
             },
             "2": {
               "name": "variable.other.reactive.flux"
+            },
+            "3": {
+              "name": "variable.parameter.flux"
             }
           }
         }

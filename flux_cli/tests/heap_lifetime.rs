@@ -29,7 +29,7 @@ fn sum(xs: [Int]) -> Int {
   for x in xs { acc = acc + x }
   acc
 }
-on Tick { n ->
+on Tick(n) {
   total = sum([n, n + 1, n + 2]) + area(Circle(n))
   trail = trail + \"x\"
 }

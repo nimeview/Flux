@@ -64,7 +64,7 @@ fn stmts_numeric_accepts_if_but_not_emit_or_loop_exits() {
     assert!(stmts_are_jit_numeric(&[if_stmt], &HashSet::new()));
     let emit = IrStmt::Emit {
         event: "E".into(),
-        arg: None,
+        args: Vec::new(),
     };
     assert!(!stmts_are_jit_numeric(&[emit], &HashSet::new()));
     assert!(!stmts_are_jit_numeric(&[IrStmt::Break], &HashSet::new()));

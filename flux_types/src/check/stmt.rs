@@ -493,33 +493,26 @@ pub(super) fn check_stmt(
             }
         }
         HirStmt::Emit(HirEmit { event, args, span }) => match module.get(event) {
-            Some(Type::Event(payload)) => {
-                if args.len() > 1 {
+            Some(Type::Event(values)) => {
+                if args.len() != values.len() {
                     diagnostics.push(FluxError::TypeMismatch {
-                        expected: "single payload argument".into(),
-                        found: format!("{} arguments", args.len()),
+                        expected: crate::check::count(values.len(), "value"),
+                        found: crate::check::count(args.len(), "value"),
                         span: span_to_miette(*span),
                         source_id: span.source,
                     });
                 }
-                if let Some(arg) = args.first() {
+                for (arg, want) in args.iter().zip(values) {
                     let got = infer_expr(ctx, arg, scope, names, source, diagnostics)
                         .unwrap_or(Type::Error);
-                    if !payload.is_error() && !got.is_error() && !types_compatible(payload, &got) {
+                    if !want.is_error() && !got.is_error() && !types_compatible(want, &got) {
                         diagnostics.push(FluxError::TypeMismatch {
-                            expected: payload.display(),
+                            expected: want.display(),
                             found: got.display(),
                             span: span_to_miette(arg.span()),
                             source_id: arg.span().source,
                         });
                     }
-                } else if !matches!(**payload, Type::Unit) {
-                    diagnostics.push(FluxError::TypeMismatch {
-                        expected: payload.display(),
-                        found: "Unit".into(),
-                        span: span_to_miette(*span),
-                        source_id: span.source,
-                    });
                 }
             }
             Some(_) | None => {
@@ -626,9 +619,7 @@ pub(super) fn check_stmt(
         }
         HirStmt::On(o) => {
             let mut local = Scope::new(module);
-            if let (Some(param), Some(Type::Event(payload))) = (o.param, module.get(&o.event)) {
-                local.insert(param, *payload.clone());
-            }
+            crate::check::bind_handler_values(o, module.get(&o.event), &mut local, diagnostics);
             check_block(
                 ctx,
                 &o.body,

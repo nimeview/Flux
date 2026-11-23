@@ -1094,3 +1094,86 @@ fn quick_fix_applies_the_replacement_a_warning_carries() {
 
     shutdown(&client, handle);
 }
+
+#[test]
+fn quick_fix_for_a_write_outside_act_fn_edits_the_fn_keyword() {
+    let (client, handle) = start_server();
+    let text = "let mut n = 0\npub fn bump() {\n    n = 1\n}\n";
+    did_open(&client, text);
+    let diags = recv_diagnostics(&client);
+    let warning = diags
+        .diagnostics
+        .iter()
+        .find(|d| d.code == Some(lsp_types::NumberOrString::String("E027".to_string())))
+        .expect("an E027 warning")
+        .clone();
+    // The warning points at the write; its fix edits the `fn` keyword.
+    assert_eq!(warning.range.start.line, 2);
+    let warning = serde_json::to_value(&warning).unwrap();
+    let actions = ask(
+        &client,
+        2,
+        "textDocument/codeAction",
+        serde_json::json!({
+            "textDocument": { "uri": test_uri() },
+            "range": warning["range"],
+            "context": { "diagnostics": [warning] },
+        }),
+    );
+    let action = &actions[0];
+    assert_eq!(action["title"], "Make `bump` an `act fn`");
+    let edit = &action["edit"]["changes"][test_uri().as_str()][0];
+    assert_eq!(edit["newText"], "act fn");
+    assert_eq!(edit["range"]["start"]["line"], 1);
+    assert_eq!(edit["range"]["start"]["character"], 4);
+    assert_eq!(edit["range"]["end"]["character"], 6);
+
+    shutdown(&client, handle);
+}
+
+/// The edits of renaming the name at `line`/`character`, as `(line, start, end)`.
+fn rename_ranges(text: &str, line: u32, character: u32) -> Vec<(u64, u64, u64)> {
+    let (client, handle) = start_server();
+    did_open(&client, text);
+    let _ = recv_diagnostics(&client);
+    let result = ask(
+        &client,
+        2,
+        "textDocument/rename",
+        serde_json::json!({
+            "textDocument": { "uri": test_uri() },
+            "position": { "line": line, "character": character },
+            "newName": "renamed",
+        }),
+    );
+    shutdown(&client, handle);
+    let mut out: Vec<(u64, u64, u64)> = result["changes"][test_uri().as_str()]
+        .as_array()
+        .expect("edits")
+        .iter()
+        .map(|e| {
+            let r = &e["range"];
+            (
+                r["start"]["line"].as_u64().unwrap(),
+                r["start"]["character"].as_u64().unwrap(),
+                r["end"]["character"].as_u64().unwrap(),
+            )
+        })
+        .collect();
+    out.sort();
+    out
+}
+
+#[test]
+fn rename_of_watch_prev_and_handler_values_edits_only_the_names() {
+    let text = "let mut n = 0\nwatch n(old) {\n    let copy = old\n}\nfn main() {\n}\n";
+    assert_eq!(rename_ranges(text, 2, 16), [(1, 8, 11), (2, 15, 18)]);
+    let text = "event Move(dx: Int, dy: Int)\nlet mut x = 0\non Move(dx, dy) {\n    x = x + dx\n}\nfn main() {\n}\n";
+    assert_eq!(rename_ranges(text, 3, 13), [(2, 8, 10), (3, 12, 14)]);
+    // A watch's target and a handler's event: only the name in the head.
+    let text =
+        "event Tick\nlet mut n = 0\non Tick {\n    n = n + 1\n}\nwatch n {\n}\nfn main() {\n}\n";
+    let edits = rename_ranges(text, 1, 8);
+    assert!(edits.contains(&(5, 6, 7)), "{edits:?}");
+    assert!(edits.iter().all(|(_, s, e)| e - s == 1), "{edits:?}");
+}

@@ -1,4 +1,5 @@
 mod codegen;
+mod graph_readers;
 mod lower;
 mod resolve;
 
@@ -7,6 +8,7 @@ use std::collections::{BTreeMap, HashMap};
 use serde::{Deserialize, Serialize};
 
 pub use codegen::{Codegen, IrCodegen};
+pub use graph_readers::graph_readers;
 pub use lower::lower_to_ir;
 pub use resolve::resolve_locals;
 
@@ -245,9 +247,10 @@ pub enum IrStmt {
         slot: u32,
         expr: Vec<Inst>,
     },
+    /// One code sequence per value the event carries.
     Emit {
         event: String,
-        arg: Option<Vec<Inst>>,
+        args: Vec<Vec<Inst>>,
     },
     Expr {
         code: Vec<Inst>,
@@ -279,6 +282,9 @@ pub enum IrStmt {
 pub struct CompiledFunction {
     pub name: String,
     pub reactive: bool,
+    /// An `act fn`: a call is one change to reactive state.
+    #[serde(default)]
+    pub act: bool,
     pub params: Vec<String>,
     pub body: StmtBlock,
 }
@@ -286,6 +292,9 @@ pub struct CompiledFunction {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CompiledWatch {
     pub target: Option<String>,
+    /// `watch total(prev)`: the name of `prev`, the body's first local slot.
+    #[serde(default)]
+    pub prev: Option<String>,
     pub deps: Vec<String>,
     pub body: StmtBlock,
 }
@@ -293,7 +302,9 @@ pub struct CompiledWatch {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CompiledOnHandler {
     pub event: String,
-    pub param: Option<String>,
+    /// The names of the event's values; locals `0..n` of the body. Empty when
+    /// the handler names none.
+    pub params: Vec<String>,
     pub body: StmtBlock,
 }
 

@@ -1,6 +1,6 @@
 //! Block, statement, match-arm and `if` lowering.
 
-use flux_diagnostics::{span_to_miette, DiagnosticBag, FluxError, Span};
+use flux_diagnostics::{span_to_miette, DiagnosticBag, FluxError, FluxWarning, Span};
 use flux_syntax::{
     AssignStmt, Block, ElseBranch, EmitStmt, Expr, ForStmt, Ident, IfStmt, LetPattern, LetStmt,
     MatchArm, MatchPattern, ReturnStmt, Stmt, TypeName, UnaryOp, WhileStmt,
@@ -8,7 +8,7 @@ use flux_syntax::{
 
 use crate::context::ScopeKind;
 use crate::nodes::*;
-use crate::symbol::{SymbolId, SymbolKind, SymbolTable};
+use crate::symbol::{SymbolId, SymbolKind, SymbolTable, WriterKind};
 
 use super::exprs::{lower_expr, resolve_name};
 
@@ -466,6 +466,7 @@ fn lower_stmt(
                 });
                 return None;
             }
+            check_writer(sym, &name.name, name.span, symbols, diagnostics);
             let mut reads_reactive = false;
             let scope = tracking_scope(ctx);
             let mut value = lower_expr(value, symbols, scope, diagnostics, &mut reads_reactive)?;
@@ -640,4 +641,55 @@ fn tracking_scope(ctx: crate::CompileContext) -> ScopeKind {
         crate::CompileContext::PureFn => ScopeKind::Function { reactive: false },
         crate::CompileContext::Tracking => ScopeKind::Tracking,
     }
+}
+
+/// E027/E028: a write to a source outside an `on` handler, an `act fn`, or
+/// module initialization. Reported once per source and writer.
+fn check_writer(
+    sym: SymbolId,
+    name: &str,
+    span: Span,
+    symbols: &mut SymbolTable,
+    diagnostics: &mut DiagnosticBag,
+) {
+    if symbols.get(sym).map(|s| s.kind) != Some(SymbolKind::Source) {
+        return;
+    }
+    let Some(writer) = symbols.writers.last_mut() else {
+        return;
+    };
+    if matches!(writer.kind, WriterKind::Act | WriterKind::Handler) || !writer.warned.insert(sym) {
+        return;
+    }
+    let warning = match writer.kind {
+        WriterKind::Watch => FluxWarning::WatchWrites {
+            name: name.to_string(),
+            span: span_to_miette(span),
+            source_id: span.source,
+        },
+        kind => {
+            let help = match kind {
+                WriterKind::Plain => format!(
+                    "write `act fn {}` so that callers see one change; from 0.3 this is an error",
+                    writer.name
+                ),
+                WriterKind::Track => "a `track fn` is recomputed whenever what it reads changes; \
+                     change state in an `act fn` or an `on` handler"
+                    .to_string(),
+                _ => "change state in an `act fn` or an `on` handler".to_string(),
+            };
+            FluxWarning::WriteOutsideAct {
+                function: writer.name.clone(),
+                name: name.to_string(),
+                help,
+                span: span_to_miette(span),
+                source_id: span.source,
+                fix_span: (kind == WriterKind::Plain)
+                    .then_some(writer.keyword)
+                    .flatten()
+                    .map(span_to_miette),
+            }
+        }
+    };
+    diagnostics.push_warning(warning);
 }

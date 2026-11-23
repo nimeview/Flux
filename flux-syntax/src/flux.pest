@@ -63,13 +63,24 @@ impl_decl = { "impl" ~ ident ~ "for" ~ type_name ~ impl_body }
 impl_body = { "{" ~ impl_method* ~ "}" }
 impl_method = { "fn" ~ ident ~ fn_sig ~ block }
 
-fn_decl = { pub_modifier? ~ "fn" ~ ident ~ type_params? ~ fn_sig ~ block }
-rfn_decl = { pub_modifier? ~ "rfn" ~ ident ~ type_params? ~ fn_sig ~ block }
+// `track fn` reads reactive values and tracks them; `act fn` changes state.
+fn_decl = { pub_modifier? ~ fn_kind? ~ kw_fn ~ ident ~ type_params? ~ fn_sig ~ block }
+fn_kind = { kw_track | kw_act }
+kw_fn = @{ "fn" ~ kw_end }
+kw_track = @{ "track" ~ kw_end }
+kw_act = @{ "act" ~ kw_end }
+// The older spelling of `track fn`.
+rfn_decl = { pub_modifier? ~ kw_rfn ~ ident ~ type_params? ~ fn_sig ~ block }
+kw_rfn = @{ "rfn" ~ kw_end }
 fn_sig = { "(" ~ param_list? ~ ")" ~ return_type? }
 return_type = { "->" ~ type_name }
 
-watch_stmt = { "watch" ~ ident? ~ block }
-on_stmt = { "on" ~ ident ~ handler }
+// `watch total(prev) { }`: `prev` is the value the watch saw last time.
+watch_stmt = { "watch" ~ (ident ~ watch_prev?)? ~ block }
+watch_prev = { "(" ~ ident ~ ")" }
+// `on Move(x, y) { }`; `on E { n -> }` is the older form for one value.
+on_stmt = { "on" ~ ident ~ on_params? ~ handler }
+on_params = { "(" ~ ident_list? ~ ")" }
 
 handler = { "{" ~ handler_body ~ "}" }
 handler_body = { handler_param ~ block_stmts | block_stmts }

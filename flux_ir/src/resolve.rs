@@ -27,10 +27,10 @@ pub fn resolve_locals(program: &mut CompiledProgram) {
         resolve_stmts(&f.params, &mut f.body, &sources);
     }
     for h in &mut program.on_handlers {
-        resolve_stmts(h.param.as_slice(), &mut h.body, &sources);
+        resolve_stmts(&h.params, &mut h.body, &sources);
     }
     for w in &mut program.watches {
-        resolve_stmts(&[], &mut w.body, &sources);
+        resolve_stmts(w.prev.as_slice(), &mut w.body, &sources);
     }
     resolve_stmts(&[], &mut program.init_stmts, &sources);
     for node in &mut program.nodes {
@@ -85,8 +85,8 @@ impl<'a> Slots<'a> {
                     self.collect_code(expr);
                     self.bind(name);
                 }
-                IrStmt::Emit { arg, .. } => {
-                    if let Some(arg) = arg {
+                IrStmt::Emit { args, .. } => {
+                    for arg in args {
                         self.collect_code(arg);
                     }
                 }
@@ -158,8 +158,8 @@ impl<'a> Slots<'a> {
                     self.rewrite_code(expr);
                     *slot = self.slot(name);
                 }
-                IrStmt::Emit { arg, .. } => {
-                    if let Some(arg) = arg {
+                IrStmt::Emit { args, .. } => {
+                    for arg in args {
                         self.rewrite_code(arg);
                     }
                 }

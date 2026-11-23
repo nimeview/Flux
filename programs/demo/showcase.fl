@@ -46,7 +46,7 @@ let ab = abs_val(0 - 5)
 let best = max2(sq, ab)
 // ─── 6. Реактивные функции (rfn) ─────────────────────────
 let base = 10
-rfn add_base(x: Int) -> Int {
+track fn add_base(x: Int) -> Int {
     x + base
 }
 

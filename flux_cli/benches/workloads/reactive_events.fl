@@ -13,6 +13,6 @@ let d4 = d3 - base
 
 let d5 = d4 % 1000
 
-on Tick { n ->
+on Tick(n) {
     base = base + n
 }

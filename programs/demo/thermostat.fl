@@ -3,7 +3,7 @@ let mut temperature = 20
 let humidity = 40
 let threshold = 25
 
-rfn heat_index() -> Int {
+track fn heat_index() -> Int {
     temperature + humidity / 10
 }
 

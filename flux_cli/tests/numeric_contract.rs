@@ -353,7 +353,7 @@ fn jit_matches_vm_on_numeric_contract() {
 #[test]
 fn handler_error_aborts_remaining_statements() {
     let _guard = jit_test_lock();
-    let src = "event Tick(n: Int)\nlet mut a = 1\nlet mut b = 0\non Tick { n ->\n    b = 10 / n\n    a = 100\n}\n";
+    let src = "event Tick(n: Int)\nlet mut a = 1\nlet mut b = 0\non Tick(n) {\n    b = 10 / n\n    a = 100\n}\n";
     for mode in [ExecutionMode::Vm, ExecutionMode::Jit] {
         flux_jit::reset_host_for_tests();
         let mut ex = compile_with_mode(source_from("handler.fl", src), mode)
@@ -398,7 +398,7 @@ fn handler_error_aborts_remaining_statements() {
 #[test]
 fn error_in_if_condition_runs_no_branch() {
     let _guard = jit_test_lock();
-    let src = "event Tick(n: Int)\nevent Other\nlet mut a = 0\nlet mut b = 0\nlet mut c = 0\non Tick { n ->\n    if 10 / n > 0 {\n        a = 1\n    } else {\n        b = 2\n        emit Other\n    }\n}\non Other {\n    c = 3\n}\n";
+    let src = "event Tick(n: Int)\nevent Other\nlet mut a = 0\nlet mut b = 0\nlet mut c = 0\non Tick(n) {\n    if 10 / n > 0 {\n        a = 1\n    } else {\n        b = 2\n        emit Other\n    }\n}\non Other {\n    c = 3\n}\n";
     for mode in [ExecutionMode::Vm, ExecutionMode::Jit] {
         flux_jit::reset_host_for_tests();
         let mut ex = compile_with_mode(source_from("if_trap.fl", src), mode)

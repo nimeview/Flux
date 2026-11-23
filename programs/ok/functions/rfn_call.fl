@@ -1,4 +1,4 @@
-rfn scale(x: Int) -> Int {
+track fn scale(x: Int) -> Int {
     x * 2
 }
 

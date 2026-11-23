@@ -220,6 +220,17 @@ pub(super) fn parse_fn(
 ) -> FnDecl {
     let mut inner = pair.into_inner().peekable();
     let pub_ = take_pub(&mut inner);
+    let kind = match inner.peek().map(|p| p.as_rule()) {
+        Some(Rule::fn_kind) => {
+            let kind = inner.next().expect("fn kind");
+            match kind.into_inner().next().map(|k| k.as_rule()) {
+                Some(Rule::kw_track) => FnKind::Track,
+                _ => FnKind::Act,
+            }
+        }
+        _ => FnKind::Plain,
+    };
+    let keyword = span_of(source_id, &inner.next().expect("fn keyword"));
     let name = parse_ident(source_id, inner.next().expect("fn name"));
     let mut type_params = Vec::new();
     let mut sig = None;
@@ -241,6 +252,8 @@ pub(super) fn parse_fn(
     let (params, ret) = parse_fn_sig(source_id, sig.expect("fn sig"));
     FnDecl {
         pub_,
+        kind,
+        keyword,
         name,
         type_params,
         params,
@@ -257,6 +270,7 @@ pub(super) fn parse_rfn(
 ) -> RFnDecl {
     let mut inner = pair.into_inner().peekable();
     let pub_ = take_pub(&mut inner);
+    let keyword = span_of(source_id, &inner.next().expect("rfn keyword"));
     let name = parse_ident(source_id, inner.next().expect("rfn name"));
     let mut type_params = Vec::new();
     let mut sig = None;
@@ -278,6 +292,7 @@ pub(super) fn parse_rfn(
     let (params, ret) = parse_fn_sig(source_id, sig.expect("rfn sig"));
     RFnDecl {
         pub_,
+        keyword,
         name,
         type_params,
         params,
@@ -354,6 +369,12 @@ pub(super) fn parse_impl(
             let mname = mname.expect("impl method name");
             let (params, ret) = parse_fn_sig(source_id, sig.expect("impl method sig"));
             FnDecl {
+                kind: FnKind::Plain,
+                // Every method starts with `fn`.
+                keyword: Span {
+                    end: mspan.start + 2,
+                    ..mspan
+                },
                 pub_: false,
                 name: mname,
                 type_params: vec![],

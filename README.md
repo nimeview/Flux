@@ -11,7 +11,7 @@ let mut balance = 0
 
 let doubled = balance * 2
 
-on Deposit { amount ->
+on Deposit(amount) {
     balance = balance + amount
 }
 

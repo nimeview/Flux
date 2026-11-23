@@ -19,7 +19,7 @@ let doubled = balance * 2
 
 derived over = balance > limit
 
-on Add { amount ->
+on Add(amount) {
     balance = balance + amount
 }
 
@@ -79,11 +79,70 @@ fn main() {
 
 ## Events and handlers
 
-`event` declares an event, which can carry one value. `emit` sends it, and every `on` block for it runs right there, in declaration order, before the next statement.
+`event` declares an event, which can carry values. `emit` sends it, and every `on` block for it runs right there, in declaration order, before the next statement. A handler names the values in parentheses, as the event declares them:
+
+```flux
+import io { println }
+
+event Move(dx: Int, dy: Int)
+
+let mut x = 0
+
+let mut y = 0
+
+on Move(dx, dy) {
+    x = x + dx
+    y = y + dy
+}
+
+fn main() {
+    emit Move(2, 3)
+    emit Move(-1, 1)
+    println("at {snap(x)}, {snap(y)}")
+}
+```
+
+```output
+at 1, 4
+```
+
+A handler that does not need the values may leave the parentheses out. The older form for one value, `on Tick { n -> }`, still works with warning E026, and `flux migrate` rewrites it.
 
 ## Watches
 
-`watch x { ... }` runs once when the program starts, and again each time `x` changes. Without a name, `watch { ... }` runs when anything its body reads changes.
+`watch x { ... }` runs once when the program starts, and again each time `x` changes. Without a name, `watch { ... }` runs when anything its body names changes.
+
+A watch remembers what it saw. It runs only when the value differs from the one it saw last time, so a value that changes and changes back within one event wakes nothing. To see the old value, name it in parentheses; on the first run it is the current value:
+
+```flux
+import io { println }
+
+event Set(n: Int)
+
+let mut level = 0
+
+on Set(n) {
+    level = n
+}
+
+watch level(prev) {
+    println("{prev} -> {level}")
+}
+
+fn main() {
+    emit Set(3)
+    emit Set(3)
+    emit Set(1)
+}
+```
+
+```output
+0 -> 0
+0 -> 3
+3 -> 1
+```
+
+The second `Set(3)` changed nothing, so the watch did not run.
 
 ## When things update
 
@@ -123,9 +182,9 @@ done
 
 The watch saw `doubled` once, at 4; the intermediate 2 was read in the handler but never reached a watch. A derived value nobody reads is not computed at all until the body ends, so a value that would fail for a moment, such as `10 / a` while `a` is briefly 0, does no harm.
 
-When a body ends, derived values recompute, then the watches they affect run. A watch's own writes settle the same way, within the same event. Each watch runs at most once per settling, so a cycle of watches always ends.
+The changes form one **batch**. An `emit`, or a call to an `act fn`, opens a batch when none is open; everything it starts joins it: all the handlers of the event, a nested `emit` and its handlers, and the `act fn`s they call. When the batch ends, derived values recompute, then the watches they affect run. A watch's own writes, and the events it emits, settle in the same batch. Each watch runs at most once per batch, so a cycle of watches always ends.
 
-A nested `emit` runs its handlers right away, and they also read current values. Their writes reach watches when each of those handlers ends, while the writes of the body that emitted wait for that body.
+If something fails in the middle of a batch, the writes made before the failure stay, and nothing else runs.
 
 ## Functions and reactive values
 
@@ -146,7 +205,7 @@ fn main() {
 You have three options, depending on what you want:
 
 - **Pass it as a parameter**, or make it a `const` if it never changes.
-- **Use `rfn`**, a reactive function. Whatever calls it depends on what it reads.
+- **Use `track fn`**, a tracked function. Whatever calls it depends on what it reads.
 - **Use `snap(x)`**, which reads the current value once, deliberately, inside an ordinary function.
 
 ```flux
@@ -156,7 +215,7 @@ event Up
 
 let mut factor = 2
 
-rfn scale(x: Int) -> Int {
+track fn scale(x: Int) -> Int {
     x * factor
 }
 
@@ -186,7 +245,7 @@ total=9
 factor=3
 ```
 
-A function may write to a source. The change propagates at once, because a function is not a batched body:
+Sources change in three places: an `on` handler, an `act fn`, and the module's own initialization. An `act fn` is a function that changes state; unlike an event, it can take several values and return a result:
 
 ```flux
 import io { println }
@@ -197,7 +256,7 @@ watch x {
     println("x={x}")
 }
 
-fn set_it() {
+act fn set_it() {
     x = 1
     println("after")
 }
@@ -209,9 +268,11 @@ fn main() {
 
 ```output
 x=0
-x=1
 after
+x=1
 ```
+
+The call to `set_it` is one batch, so the watch runs once it returns. Writing a source anywhere else still works but warns. A `fn`, `track fn`, or method that writes one is E027, an error from 0.3; the editor's quick fix and `flux migrate` turn such a `fn` into an `act fn`. A `watch` that writes one is E028: compute the value with `let` instead, or `emit` an event whose `on` handler changes it.
 
 ## Dependencies follow the branch taken
 

@@ -111,15 +111,15 @@ impl Executor {
                     flow: FlowControl::None,
                 }
             }
-            IrStmt::Emit { event, arg } => {
-                let payload = arg
-                    .as_ref()
-                    .map(|c| self.eval_expr(c, locals))
-                    .unwrap_or(RuntimeValue::Unit);
-                if let Some(stop) = self.interrupted() {
-                    return stop;
+            IrStmt::Emit { event, args } => {
+                let mut values = Vec::with_capacity(args.len());
+                for code in args {
+                    values.push(self.eval_expr(code, locals));
+                    if let Some(stop) = self.interrupted() {
+                        return stop;
+                    }
                 }
-                self.emit(event, payload);
+                self.emit_values(event, values);
                 StmtResult {
                     value: RuntimeValue::Unit,
                     flow: FlowControl::None,

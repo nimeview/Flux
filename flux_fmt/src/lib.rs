@@ -316,7 +316,7 @@ fn format_item(item: &Item, out: &mut String, level: usize) {
                     &m.body,
                     out,
                     level + 1,
-                    false,
+                    Some(flux_syntax::FnKind::Plain),
                 );
             }
             indent(out, level);
@@ -331,7 +331,7 @@ fn format_item(item: &Item, out: &mut String, level: usize) {
             &f.body,
             out,
             level,
-            false,
+            Some(f.kind),
         ),
         Item::RFn(f) => format_fn_like(
             f.pub_,
@@ -342,7 +342,7 @@ fn format_item(item: &Item, out: &mut String, level: usize) {
             &f.body,
             out,
             level,
-            true,
+            None,
         ),
         Item::Event(e) => {
             indent(out, level);
@@ -391,11 +391,7 @@ fn format_item(item: &Item, out: &mut String, level: usize) {
         }
         Item::Watch(w) => {
             indent(out, level);
-            let target = w
-                .target
-                .as_ref()
-                .map(|t| format!(" {}", t.name))
-                .unwrap_or_default();
+            let target = watch_head(w);
             out.push_str(&format!("watch{target} {{\n"));
             format_block(&w.body, out, level + 1);
             indent(out, level);
@@ -403,13 +399,7 @@ fn format_item(item: &Item, out: &mut String, level: usize) {
         }
         Item::On(o) => {
             indent(out, level);
-            // Handler syntax is `on E { stmts }` or `on E { p -> stmts }`.
-            let param = o
-                .param
-                .as_ref()
-                .map(|p| format!(" {} ->", p.name))
-                .unwrap_or_default();
-            out.push_str(&format!("on {} {{{param}\n", o.event.name));
+            out.push_str(&format!("on {}\n", on_head(o)));
             format_block(&o.body, out, level + 1);
             indent(out, level);
             out.push_str("}\n");
@@ -428,11 +418,17 @@ fn format_fn_like(
     body: &flux_syntax::Block,
     out: &mut String,
     level: usize,
-    reactive: bool,
+    kind: Option<flux_syntax::FnKind>,
 ) {
     indent(out, level);
     let prefix = pub_prefix(pub_);
-    let kw = if reactive { "rfn" } else { "fn" };
+    let kw = match kind {
+        Some(flux_syntax::FnKind::Track) => "track fn",
+        Some(flux_syntax::FnKind::Act) => "act fn",
+        Some(flux_syntax::FnKind::Plain) => "fn",
+        // `rfn` stays as written; `flux migrate` rewrites it.
+        None => "rfn",
+    };
     let tparams = if type_params.is_empty() {
         String::new()
     } else {
@@ -561,11 +557,7 @@ fn format_stmt(stmt: &Stmt, out: &mut String, level: usize) {
         }
         Stmt::Watch(w) => {
             indent(out, level);
-            let target = w
-                .target
-                .as_ref()
-                .map(|t| format!(" {}", t.name))
-                .unwrap_or_default();
+            let target = watch_head(w);
             out.push_str(&format!("watch{target} {{\n"));
             format_block(&w.body, out, level + 1);
             indent(out, level);
@@ -573,13 +565,7 @@ fn format_stmt(stmt: &Stmt, out: &mut String, level: usize) {
         }
         Stmt::On(o) => {
             indent(out, level);
-            // Handler syntax is `on E { stmts }` or `on E { p -> stmts }`.
-            let param = o
-                .param
-                .as_ref()
-                .map(|p| format!(" {} ->", p.name))
-                .unwrap_or_default();
-            out.push_str(&format!("on {} {{{param}\n", o.event.name));
+            out.push_str(&format!("on {}\n", on_head(o)));
             format_block(&o.body, out, level + 1);
             indent(out, level);
             out.push_str("}\n");
@@ -991,4 +977,27 @@ fn match_pattern_fmt(pattern: &flux_syntax::MatchPattern) -> String {
             format!("{} {{ {fs} }}", variant.name)
         }
     }
+}
+
+/// ` total` or ` total(prev)` after `watch`; empty without a target.
+fn watch_head(w: &flux_syntax::WatchStmt) -> String {
+    match (&w.target, &w.prev) {
+        (Some(t), Some(p)) => format!(" {}({})", t.name, p.name),
+        (Some(t), None) => format!(" {}", t.name),
+        _ => String::new(),
+    }
+}
+
+/// What follows `on` up to the end of the line: `E {`, `Move(x, y) {`, or
+/// the older `E { n ->`, which keeps its spelling so that formatting never
+/// changes what a file means (`flux migrate` rewrites it).
+fn on_head(o: &flux_syntax::OnStmt) -> String {
+    if let Some((name, _)) = &o.arrow {
+        return format!("{} {{ {} ->", o.event.name, name.name);
+    }
+    if o.params.is_empty() {
+        return format!("{} {{", o.event.name);
+    }
+    let names: Vec<&str> = o.params.iter().map(|p| p.name.as_str()).collect();
+    format!("{}({}) {{", o.event.name, names.join(", "))
 }

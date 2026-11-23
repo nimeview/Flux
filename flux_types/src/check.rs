@@ -138,12 +138,12 @@ fn typecheck_with_context(
     for item in &program.items {
         match item {
             HirItem::Event(ev) => {
-                let payload = ev
-                    .payload
-                    .as_ref()
-                    .and_then(|f| resolve_hir_type(ctx, &f.ty, diagnostics))
-                    .unwrap_or(Type::Unit);
-                types.insert(ev.name, Type::Event(Box::new(payload)));
+                let values = ev
+                    .fields
+                    .iter()
+                    .map(|f| resolve_hir_type(ctx, &f.ty, diagnostics).unwrap_or(Type::Error))
+                    .collect();
+                types.insert(ev.name, Type::Event(values));
             }
             HirItem::Fn(f) if !f.type_params.is_empty() => {
                 *ctx.generic_parameters.borrow_mut() = f.type_params.iter().cloned().collect();
@@ -470,11 +470,19 @@ fn typecheck_with_context(
                         }
                     }
                 }
+                // `prev` has the type of the value the watch follows.
+                let mut local = Scope::new(&types);
+                if let (Some(prev), Some(target)) = (w.prev, w.target) {
+                    if let Some(ty) = types.get(&target) {
+                        let value = ty.unwrap_reactive().unwrap_or(ty).clone();
+                        local.insert(prev, value);
+                    }
+                }
                 let mut immutable_locals = HashSet::new();
                 check_block(
                     ctx,
                     &w.body,
-                    &Scope::new(&types),
+                    &local,
                     &types,
                     &program.names,
                     true,
@@ -508,9 +516,7 @@ fn typecheck_with_context(
                     }
                 }
                 let mut local = Scope::new(&types);
-                if let (Some(param), Some(Type::Event(payload))) = (o.param, types.get(&o.event)) {
-                    local.insert(param, *payload.clone());
-                }
+                bind_handler_values(o, types.get(&o.event), &mut local, diagnostics);
                 let mut immutable_locals = HashSet::new();
                 check_block(
                     ctx,
@@ -714,4 +720,37 @@ pub(crate) fn infer_generic_callback(
     )?;
     apply_closure_types(program, &ctx, diagnostics);
     Some(ty)
+}
+
+/// Gives each name of an `on` handler the type of the event value at its
+/// position. A handler names all of the event's values, or none.
+pub(crate) fn bind_handler_values(
+    handler: &flux_hir::HirOn,
+    event: Option<&Type>,
+    local: &mut Scope<'_>,
+    diagnostics: &mut DiagnosticBag,
+) {
+    let Some(Type::Event(values)) = event else {
+        return;
+    };
+    if !handler.params.is_empty() && handler.params.len() != values.len() {
+        diagnostics.push(FluxError::TypeMismatch {
+            expected: count(values.len(), "value"),
+            found: count(handler.params.len(), "name"),
+            span: span_to_miette(handler.span),
+            source_id: handler.span.source,
+        });
+    }
+    for (&param, ty) in handler.params.iter().zip(values) {
+        local.insert(param, ty.clone());
+    }
+}
+
+/// `1 value`, `2 values`.
+pub(crate) fn count(n: usize, what: &str) -> String {
+    if n == 1 {
+        format!("1 {what}")
+    } else {
+        format!("{n} {what}s")
+    }
 }

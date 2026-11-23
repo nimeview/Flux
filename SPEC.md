@@ -1,6 +1,6 @@
 # Flux Language Specification
 
-Flux is a statically typed language with **built-in reactivity**: module-level bindings form a dataflow graph, and `watch` / `on` / `rfn` integrate declarative updates with imperative code.
+Flux is a statically typed language with **built-in reactivity**: module-level bindings form a dataflow graph, and `watch` / `on` / `track fn` integrate declarative updates with imperative code.
 
 ## 1. Lexical structure
 
@@ -53,7 +53,7 @@ The VM is the reference; the JIT must produce the same value or error, or fall b
 - Mixed `Int`/`Float` arithmetic and comparison promote the integer to `Float64`. Operators on two integers keep the integer type, so `Int / Int` is `Int`: division by zero is a runtime error rather than a value of another type.
 - `<`, `<=`, `>`, `>=` also order two strings, by Unicode code point: `"a" < "b"`, and `"Z" < "a"`. A string and a number cannot be compared.
 - Casts are checked: an integer out of the target range, a negative value cast to an unsigned type, or a `NaN`/infinite/out-of-range float cast to an integer is the runtime error `numeric cast out of range`. Float → integer casts truncate toward zero.
-- A runtime error stops the current evaluation and is reported as `runtime error: <message> in <context>`, where the context names the binding, `watch`, or `on` handler, followed by what was running, innermost first: `  at <name> (<path>:<line>:<column>)`. The location is the failing statement in that frame, or the declaration of a derived binding; a statement directly in a `match` arm reports the `match`, and a module-level `if` has no location. A trace longer than 12 frames shows its 10 innermost and 2 outermost. Both engines report the same text: an error in compiled code replays on the VM, and the rest of the run stays there. Statements after the failing one do not run, and when recomputing derived values fails, the event's later handlers do not start. If the error happens during module initialization, `flux run` exits non-zero. Out-of-range integer *literals* are rejected at parse time.
+- A runtime error stops the current evaluation and is reported as `runtime error: <message> in <context>`, where the context names the binding, `watch`, or `on` handler, followed by what was running, innermost first: `  at <name> (<path>:<line>:<column>)`. The location is the failing statement in that frame, or the declaration of a derived binding; a statement directly in a `match` arm reports the `match`, and a module-level `if` has no location. A trace longer than 12 frames shows its 10 innermost and 2 outermost. Both engines report the same text: an error in compiled code replays on the VM, and the rest of the run stays there. Statements after the failing one do not run, and when settling a batch fails, no watch runs. If the error happens during module initialization, `flux run` exits non-zero. Out-of-range integer *literals* are rejected at parse time.
 - **Display.** A finite Float always prints with a decimal point or exponent (`5.0`, `2.5`), so the type is visible in output; `inf`, `-inf`, and `NaN` print as themselves. Integers print without one.
 - `range` never overflows near the `Int64` limits. A range longer than 10,000,000 elements is the runtime error `allocation limit exceeded`, not an out-of-memory abort.
 
@@ -77,7 +77,8 @@ impl Display for Int { fn to_string(self: Int) -> String { "x" } }
 
 event Click
 fn add(a: Int, b: Int) -> Int { a + b }
-rfn scaled(x: Int) { x * factor }
+track fn scaled(x: Int) -> Int { x * factor }
+act fn reset() { counter = 0 }
 
 const VERSION = 1              // compile-time frozen
 let mut counter = 0            // source — reassignable in on/watch
@@ -100,7 +101,7 @@ on Click { counter = counter + 1 }
 
 There is no top-level assignment (`x = 0`). Reassignment uses `name = expr` only inside `on`/`watch` for `let mut` sources, or `let mut` locals inside functions.
 
-Inside `fn` / `rfn`:
+Inside a function (`fn`, `track fn`, `act fn`):
 
 - `let x = 1` — immutable local
 - `let mut x = 1` — mutable local
@@ -151,18 +152,23 @@ An `impl` must match its trait (**E020**): the trait must be declared, and the i
 | Construct | Context | Reactive reads |
 |-----------|---------|----------------|
 | `fn` | Ordinary function | Forbidden (use `snap`) |
-| `rfn` | Reactive function | Tracked |
+| `track fn` (older spelling `rfn`, warning E026) | Tracked function | Tracked |
+| `act fn` | Action: reads current values, may change sources | Read, not tracked |
 | `watch` / `on` | Side-effect blocks | Tracked |
 | Module derived | `let y = f(x)` or `derived y = f(x)` | Tracked |
 | Closure (captures a source or derived) | Any | Tracked |
 
-`watch` and `on` are only valid at module level; using them inside a `fn` or `rfn` body is a compile error (**E011**).
+`watch` and `on` are only valid at module level; using them inside a function body is a compile error (**E011**).
 
-**Writes and settling.** Assignments in an `on` or `watch` body take effect on the source at once. A derived value that depends on a changed source is marked stale, and reading it recomputes it first, so a body always reads current values; a stale value nobody reads is not computed until the flush, and its errors appear only then. Watches are notified as a batch when the body ends: derived values that are still stale recompute, then the watches that depend on what changed run, and what they write settles the same way, within the same event. Each watch runs at most once per settling, so a cycle of watches ends: a change that reaches a watch that has already run does not run it again. A derived value counts as changed only when its new value differs from the old one by `==`, so `0.0` and `-0.0` are no change. Assigning a source its current value still counts as a change for watches that depend on it directly. A nested `emit` settles only what its handlers wrote; the writes of the body that emitted, and the changes its reads found, wait for that body to end.
+**Who changes sources.** A source changes in an `on` handler, in an `act fn`, or while the module initializes. Other writes still work but warn: a `fn`, `track fn`, or `impl` method that assigns a source is **E027**, which becomes an error in 0.3 (the fix turns a `fn` into an `act fn`); a `watch` that assigns a source is **E028** (compute the value with `let`, or `emit` an event whose `on` handler changes it). Each function, handler, or watch reports a source once. A closure counts as the code it is written in.
 
-**Events.** `event Name` or `event Name(value: T)` declares an event that carries at most one value; declaring more than one is an error (put several values in a struct).
+**Writes and settling.** An assignment takes effect on the source at once. A derived value that depends on a changed source is marked stale, and reading it recomputes it first, so code always reads current values; a stale value nobody reads is not computed until the batch ends, and its errors appear only then. Changes are grouped in **batches**. An `emit` or a call to an `act fn` opens one when none is open; everything it runs joins it, including every handler of the event, nested `emit`s and their handlers, and the `act fn`s they call. When the batch ends, the derived values that are still stale recompute, then the watches that depend on what changed run; what they write, and the events they emit, settle in the same batch. Each watch runs at most once per batch, so a cycle of watches ends: a change that reaches a watch that has already run does not run it again. A derived value counts as changed only when its new value differs from the old one by `==`, so `0.0` and `-0.0` are no change. A watch runs only when what it follows differs from what it last saw (below). A write outside any batch (in a plain `fn` called from `main`, E027) settles at once. If a batch fails, the writes made before the failure stay and nothing else runs.
 
-**`emit`.** Handlers run at the `emit`, in declaration order, before the next statement. Their writes settle when each handler ends. The writes of the body that emitted stay pending until that body ends. Nested `emit`s count toward the call depth limit, so an unbounded chain is the runtime error `call depth limit exceeded`.
+**Watches.** `watch x { }` follows `x`; `watch { }` follows every reactive value its body names, on any branch. A watch runs once when the program starts and remembers the values it follows. After that it runs only when one of them differs by `==` from what it remembers, compared right before it runs, since an earlier watch may have changed it back: a value that goes `0 -> 1 -> 0` within a batch wakes nothing, and assigning a source its current value is no change. `watch x(prev) { }` binds `prev` to the value of `x` the watch saw last time, of the same type as `x`; on the first run it is the current value. Only a watch with a target takes `prev`. Watches that can wake each other in a cycle, or a watch that can wake itself, warn (**E029**), once per cycle: a watch wakes another when it changes a source the other follows, through its own assignments, the functions, methods, closures, and function values it calls, and the handlers of the events it emits. A watch follows what it names and what the derived values and tracked functions among those read; what an `act fn` reads is not followed.
+
+**Events.** `event Name` or `event Name(a: A, b: B, ...)` declares an event that carries values, in order; two values with the same name are **E004**. `emit Name(x, y)` gives exactly one value per declared value, of its type. `on Name(a, b) { }` names them for the handler's body, one name per value; `on Name { }` names none. The older `on Name { v -> }` names the one value of an event that has one; it warns (**E026**), and the quick fix and `flux migrate` rewrite it to `on Name(v) { }`. Naming values in both forms at once is an error.
+
+**`emit`.** Handlers run at the `emit`, in declaration order, before the next statement. Their writes settle when the batch ends: at the end of the outermost `emit` or `act fn` call. Nested `emit`s count toward the call depth limit, so an unbounded chain is the runtime error `call depth limit exceeded`.
 
 ### Type aliases
 
@@ -366,6 +372,9 @@ These limits keep extreme programs a language error rather than a native stack o
 | E014 | Importing a name a module does not have |
 | E015 | Warning: unused binding |
 | E026 | Warning: an older form that still works; it names its replacement, which the editor's quick fix and `flux migrate` apply |
+| E027 | Warning: a `fn`, `track fn`, or method changes a source (§ Reactive semantics); an error from 0.3. For a `fn`, the quick fix and `flux migrate` write `act fn` |
+| E028 | Warning: a `watch` changes a source |
+| E029 | Warning: watches that wake each other, or one that wakes itself, in a cycle |
 | E016 | `let` without `mut` cannot be reassigned (use `let mut`) |
 | E017 | Side effect (`print`, I/O) in derived expression |
 | E018 | Runtime error (overflow, division by zero, failed assertion, …) |
@@ -390,7 +399,7 @@ A UTF-8 byte-order mark at the start of a file is ignored, like whitespace.
 | `flux lock [--check]` | Create or update `flux.lock` for path dependencies; `--check` only reports whether it is up to date (exit 1 if not) |
 | `--locked` (on `run`, `check`, `test`) | Require `flux.lock` to match the dependency tree; never write it (§9) |
 | `flux fmt file.fl [--write] [--check]` | Format source (`--check` fails if reformat needed) |
-| `flux migrate [--write] path` | Experimental: rewrite older forms. It applies the replacement of every E026 warning (repeatedly, as fixes can uncover others) and the old `let` / `let mut` binding rewrite |
+| `flux migrate [--write] path` | Experimental: rewrite older forms. It applies every fix the compiler offers, repeatedly, as fixes can uncover others: the replacement of each E026 warning and `act fn` for each E027 warning and the old `let` / `let mut` binding rewrite |
 | `flux init [path] [--lib]` | Create a project: an app (`main.fl`) or, with `--lib`, a library (`lib.fl` + `lib_test.fl`). Refuses a directory that already has `flux.toml` and never overwrites a source file |
 | `flux lsp file.fl` | JSON diagnostics (one-shot; prefer `lsp-server`) |
 | `flux lsp-server` | Stdio LSP: diagnostics, hover, completion, go-to-def, format, document symbols, rename |

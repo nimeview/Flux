@@ -28,7 +28,7 @@ derived total = subtotal - subtotal * discount / 100
 
 derived expensive = len(filter(items, |i| i.price > 100))
 
-on Add { item ->
+on Add(item) {
     items = push(items, item)
 }
 
@@ -37,7 +37,7 @@ on Clear {
     discount = 0
 }
 
-on Discount { pct ->
+on Discount(pct) {
     discount = if pct > 50 { 50 } else { pct }
 }
 

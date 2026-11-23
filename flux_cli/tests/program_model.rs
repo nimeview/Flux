@@ -171,7 +171,7 @@ fn a_write_in_a_watch_updates_derived_values_and_their_watches_in_the_same_event
         let d = b * 10\n\
         watch a {\n    b = a\n}\n\
         watch d {\n    println(\"b={b} d={d}\")\n}\n\
-        on T { n ->\n    a = n\n}\n\
+        on T(n) {\n    a = n\n}\n\
         fn main() {\n    emit T(1)\n    println(\"-\")\n    emit T(2)\n    println(\"-\")\n    emit T(3)\n}\n";
     assert_stdout_on_both(src, "b=0 d=0\nb=1 d=10\n-\nb=2 d=20\n-\nb=3 d=30\n");
 }
@@ -187,7 +187,7 @@ fn a_watch_writes_as_a_batch_and_later_watches_see_the_result() {
         let d = b * 10\n\
         watch a {\n    b = a\n    b = b + 1\n    println(\"in d={d}\")\n}\n\
         watch b {\n    println(\"after b={b} d={d}\")\n}\n\
-        on T { n ->\n    a = n\n}\n\
+        on T(n) {\n    a = n\n}\n\
         fn main() {\n    emit T(5)\n}\n";
     assert_stdout_on_both(src, "in d=10\nafter b=1 d=10\nin d=60\nafter b=6 d=60\n");
 }
@@ -200,7 +200,7 @@ fn a_watch_runs_at_most_once_per_event_so_cycles_end() {
         let mut b = 0\n\
         watch a {\n    b = a + 1\n    println(\"wa {a} {b}\")\n}\n\
         watch b {\n    a = b + 1\n    println(\"wb {a} {b}\")\n}\n\
-        on T { n ->\n    a = n\n}\n\
+        on T(n) {\n    a = n\n}\n\
         fn main() {\n    emit T(10)\n    println(\"end\")\n}\n";
     let vm = run(src, "--vm", &[]);
     let jit = run(src, "--jit", &[]);
@@ -220,8 +220,8 @@ fn an_emit_from_a_watch_runs_its_handler_and_settles() {
         let d = c * 2\n\
         watch a {\n    emit U(a)\n}\n\
         watch d {\n    println(\"d={d}\")\n}\n\
-        on T { n ->\n    a = n\n}\n\
-        on U { n ->\n    c = n\n}\n\
+        on T(n) {\n    a = n\n}\n\
+        on U(n) {\n    c = n\n}\n\
         fn main() {\n    emit T(4)\n    println(\"end\")\n}\n";
     assert_stdout_on_both(src, "d=0\nd=8\nend\n");
 }
@@ -235,8 +235,8 @@ fn a_nested_emit_keeps_the_outer_bodys_writes_pending() {
         let mut y = 0\n\
         let d = x * 2\n\
         watch d {\n    println(\"d={d}\")\n}\n\
-        on T { n ->\n    x = 1\n    emit U(0)\n    println(\"in {d}\")\n}\n\
-        on U { n ->\n    y = 1\n}\n\
+        on T(n) {\n    x = 1\n    emit U(0)\n    println(\"in {d}\")\n}\n\
+        on U(n) {\n    y = 1\n}\n\
         fn main() {\n    emit T(0)\n}\n";
     // The outer body reads `d` current, but its watch waits for that body to end.
     assert_stdout_on_both(src, "d=0\nin 2\nd=2\n");
@@ -245,23 +245,24 @@ fn a_nested_emit_keeps_the_outer_bodys_writes_pending() {
 #[test]
 fn writes_keep_statement_order_across_a_nested_emit() {
     // A compiled handler used to run the nested handler first and apply its
-    // own write afterwards, leaving 1 here where the VM leaves 9.
+    // own write afterwards, leaving 1 here where the VM leaves 9. The nested
+    // emit joins the outer batch, so the watch runs once, at the end.
     let src = "import io { println }\n\
         event T(n: Int)\n\
         event U(n: Int)\n\
         let mut x = 0\n\
         watch x {\n    println(\"x={x}\")\n}\n\
-        on T { n ->\n    x = 1\n    emit U(0)\n}\n\
-        on U { n ->\n    x = 9\n}\n\
+        on T(n) {\n    x = 1\n    emit U(0)\n}\n\
+        on U(n) {\n    x = 9\n}\n\
         fn main() {\n    emit T(0)\n}\n";
-    assert_stdout_on_both(src, "x=0\nx=9\nx=9\n");
+    assert_stdout_on_both(src, "x=0\nx=9\n");
 }
 
 const EMIT_CHAIN: &str = "import io { println }\n\
     event T(n: Int)\n\
     let mut c = 0\n\
     watch c {\n}\n\
-    on T { n ->\n    c = c + 1\n    if n > 0 {\n        emit T(n - 1)\n    }\n}\n";
+    on T(n) {\n    c = c + 1\n    if n > 0 {\n        emit T(n - 1)\n    }\n}\n";
 
 #[test]
 fn a_long_finite_emit_chain_runs_on_both_engines() {
@@ -420,7 +421,7 @@ fn closures_capture_in_handlers_watches_and_generics() {
         event T(n: Int)\n\
         let mut a = 1\n\
         watch a {\n    let k = a * 2\n    println(\"{map([1], |x| x + k)}\")\n}\n\
-        on T { n ->\n    a = n\n    println(\"{map([1], |x| x + n)}\")\n}\n\
+        on T(n) {\n    a = n\n    println(\"{map([1], |x| x + n)}\")\n}\n\
         fn twice[V](v: V) -> [V] {\n    map([1, 2], |i| v)\n}\n\
         fn main() {\n    emit T(5)\n    println(\"{twice(7)} {twice(\"s\")}\")\n}\n";
     assert_stdout_on_both(src, "[3]\n[6]\n[11]\n[7, 7] [\"s\", \"s\"]\n");
@@ -571,7 +572,7 @@ fn derived_values_follow_what_a_function_value_reads() {
         let z = ap(r)\n\
         watch y {\n    println(\"y={y}\")\n}\n\
         watch z {\n    println(\"z={z}\")\n}\n\
-        on E { n ->\n    s = n\n}\n\
+        on E(n) {\n    s = n\n}\n\
         fn main() {\n    emit E(5)\n}\n";
     assert_stdout_on_both(src, "y=2\nz=10\ny=6\nz=50\n");
 }
@@ -613,7 +614,7 @@ fn a_function_inside_an_enum_keeps_its_reactive_dependencies() {
         let f = Op(r)\n\
         derived y = match f {\n    Op(g) => g(1)\n}\n\
         watch y {\n    println(\"{y}\")\n}\n\
-        on Tick { n ->\n    s = n\n}\n\
+        on Tick(n) {\n    s = n\n}\n\
         fn main() {\n    emit Tick(5)\n}\n";
     assert_stdout_on_both(src, "2\n6\n");
 }

@@ -1081,9 +1081,8 @@ pub(super) fn infer_closure(
 pub(crate) fn usable_context(ty: &Type) -> bool {
     match ty {
         Type::Error | Type::Empty | Type::Var(_) => false,
-        Type::Array(t) | Type::Option(t) | Type::Cell(t) | Type::Read(t) | Type::Event(t) => {
-            usable_context(t)
-        }
+        Type::Array(t) | Type::Option(t) | Type::Cell(t) | Type::Read(t) => usable_context(t),
+        Type::Event(values) => values.iter().all(usable_context),
         Type::Map { key, value } => usable_context(key) && usable_context(value),
         Type::Result { ok, err } => usable_context(ok) && usable_context(err),
         Type::Func { params, ret } => params.iter().all(usable_context) && usable_context(ret),

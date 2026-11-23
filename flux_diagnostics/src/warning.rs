@@ -28,11 +28,50 @@ pub enum FluxWarning {
         span: miette::SourceSpan,
         source_id: SourceId,
     },
+    /// A function other than an `act fn` changes a source. An error from 0.3.
+    #[error("`{function}` changes `{name}`, but only `on` handlers and `act fn` change state")]
+    #[diagnostic(code(flux::E027), help("{help}"))]
+    WriteOutsideAct {
+        function: String,
+        name: String,
+        help: String,
+        #[label("changes state")]
+        span: miette::SourceSpan,
+        source_id: SourceId,
+        /// The `fn` keyword, which the fix turns into `act fn`.
+        fix_span: Option<miette::SourceSpan>,
+    },
+    /// Watches that wake each other in a cycle.
+    #[error("{message}")]
+    #[diagnostic(
+        code(flux::E029),
+        help("each watch runs at most once per batch, so the last change in the cycle does not wake the watch it reaches; compute the value with `let`, or change it in an `on` handler")
+    )]
+    WatchCycle {
+        message: String,
+        #[label("this watch")]
+        span: miette::SourceSpan,
+        source_id: SourceId,
+    },
+    /// A watch changes a source.
+    #[error("this watch changes `{name}`")]
+    #[diagnostic(
+        code(flux::E028),
+        help("a watch reacts to changes; compute `{name}` with `let`, or `emit` an event whose `on` handler changes it")
+    )]
+    WatchWrites {
+        name: String,
+        #[label("changes state")]
+        span: miette::SourceSpan,
+        source_id: SourceId,
+    },
 }
 
 /// A replacement of the text at `span`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Fix {
+    /// What the fix does, for an editor's menu.
+    pub title: String,
     pub span: Span,
     pub replacement: String,
 }
@@ -40,9 +79,11 @@ pub struct Fix {
 impl FluxWarning {
     pub fn source_id(&self) -> SourceId {
         match self {
-            Self::UnusedBinding { source_id, .. } | Self::Deprecated { source_id, .. } => {
-                *source_id
-            }
+            Self::UnusedBinding { source_id, .. }
+            | Self::Deprecated { source_id, .. }
+            | Self::WriteOutsideAct { source_id, .. }
+            | Self::WatchWrites { source_id, .. }
+            | Self::WatchCycle { source_id, .. } => *source_id,
         }
     }
 
@@ -50,13 +91,20 @@ impl FluxWarning {
         match self {
             Self::UnusedBinding { .. } => "E015",
             Self::Deprecated { .. } => "E026",
+            Self::WriteOutsideAct { .. } => "E027",
+            Self::WatchWrites { .. } => "E028",
+            Self::WatchCycle { .. } => "E029",
         }
     }
 
     pub fn label_span(&self) -> Span {
         let source_id = self.source_id();
         let miette_span = match self {
-            Self::UnusedBinding { span, .. } | Self::Deprecated { span, .. } => *span,
+            Self::UnusedBinding { span, .. }
+            | Self::Deprecated { span, .. }
+            | Self::WriteOutsideAct { span, .. }
+            | Self::WatchWrites { span, .. }
+            | Self::WatchCycle { span, .. } => *span,
         };
         span_from_miette(source_id, miette_span)
     }
@@ -65,10 +113,23 @@ impl FluxWarning {
     pub fn fix(&self) -> Option<Fix> {
         match self {
             Self::Deprecated { replacement, .. } => Some(Fix {
+                title: format!("Replace with `{replacement}`"),
                 span: self.label_span(),
                 replacement: replacement.clone(),
             }),
-            Self::UnusedBinding { .. } => None,
+            Self::WriteOutsideAct {
+                function,
+                fix_span: Some(fix_span),
+                ..
+            } => Some(Fix {
+                title: format!("Make `{function}` an `act fn`"),
+                span: span_from_miette(self.source_id(), *fix_span),
+                replacement: "act fn".to_string(),
+            }),
+            Self::UnusedBinding { .. }
+            | Self::WriteOutsideAct { .. }
+            | Self::WatchWrites { .. }
+            | Self::WatchCycle { .. } => None,
         }
     }
 }

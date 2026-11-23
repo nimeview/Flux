@@ -130,12 +130,16 @@ pub fn validate_program(program: &CompiledProgram) -> Result<(), String> {
     )?;
 
     for watch in &program.watches {
-        validate_stmts(&watch.body, Allowed::new(&global_allowed), "watch body")?;
+        let mut allowed = Allowed::new(&global_allowed);
+        if let Some(prev) = &watch.prev {
+            allowed.insert(prev.clone());
+        }
+        validate_stmts(&watch.body, allowed, "watch body")?;
     }
 
     for handler in &program.on_handlers {
         let mut allowed = Allowed::new(&global_allowed);
-        if let Some(param) = &handler.param {
+        for param in &handler.params {
             allowed.insert(param.clone());
         }
         validate_stmts(&handler.body, allowed, "on handler")?;
@@ -169,10 +173,11 @@ fn validate_stmt(stmt: &IrStmt, allowed: &mut Allowed<'_>, context: &str) -> Res
             allowed.insert(name.clone());
         }
         IrStmt::Expr { code } => validate_code(code, allowed.clone(), context)?,
-        IrStmt::Emit {
-            arg: Some(expr), ..
-        } => validate_code(expr, allowed.clone(), context)?,
-        IrStmt::Emit { .. } => {}
+        IrStmt::Emit { args, .. } => {
+            for expr in args {
+                validate_code(expr, allowed.clone(), context)?;
+            }
+        }
         IrStmt::Return {
             expr: Some(expr), ..
         } => validate_code(expr, allowed.clone(), context)?,

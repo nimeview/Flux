@@ -124,6 +124,9 @@ pub struct EventDecl {
 #[derive(Debug, Clone)]
 pub struct FnDecl {
     pub pub_: bool,
+    pub kind: FnKind,
+    /// The `fn` keyword.
+    pub keyword: Span,
     pub name: Ident,
     pub type_params: Vec<String>,
     pub params: Vec<Param>,
@@ -132,9 +135,23 @@ pub struct FnDecl {
     pub span: Span,
 }
 
+/// What a function may do with reactive values.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum FnKind {
+    /// `fn`: does not read them.
+    #[default]
+    Plain,
+    /// `track fn`: reads them, and callers depend on what it reads.
+    Track,
+    /// `act fn`: reads and changes them; a call is one change.
+    Act,
+}
+
 #[derive(Debug, Clone)]
 pub struct RFnDecl {
     pub pub_: bool,
+    /// The `rfn` keyword, which `track fn` replaces.
+    pub keyword: Span,
     pub name: Ident,
     pub type_params: Vec<String>,
     pub params: Vec<Param>,
@@ -155,6 +172,8 @@ pub struct DerivedStmt {
 #[derive(Debug, Clone)]
 pub struct WatchStmt {
     pub target: Option<Ident>,
+    /// `watch total(prev)`: names the value the watch saw last time.
+    pub prev: Option<Ident>,
     pub body: Block,
     pub span: Span,
 }
@@ -162,9 +181,22 @@ pub struct WatchStmt {
 #[derive(Debug, Clone)]
 pub struct OnStmt {
     pub event: Ident,
-    pub param: Option<Ident>,
+    /// `on Move(x, y)`: one name per value the event carries.
+    pub params: Vec<Ident>,
+    /// The older `on E { n -> }`: the name, and the span from the end of the
+    /// event's name to the end of `->`, which the fix rewrites to `(n) {`.
+    pub arrow: Option<(Ident, Span)>,
     pub body: Block,
     pub span: Span,
+}
+
+impl OnStmt {
+    /// The names the handler gives the event's values, in either form.
+    pub fn names(&self) -> impl Iterator<Item = &Ident> {
+        self.params
+            .iter()
+            .chain(self.arrow.as_ref().map(|(name, _)| name))
+    }
 }
 
 #[derive(Debug, Clone)]

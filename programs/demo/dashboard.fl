@@ -11,7 +11,7 @@ fn frozen_bonus() -> Int {
     snap(temperature) + 100
 }
 
-rfn comfort_score() -> Int {
+track fn comfort_score() -> Int {
     temperature - humidity / 2
 }
 

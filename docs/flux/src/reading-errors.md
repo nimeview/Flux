@@ -22,7 +22,7 @@ flux::E002
 |---|---|---|
 | `println("x")` with no import | E001, undefined name | `import io { println }` |
 | `len(xs)` with no import | E001, undefined name | `import collections { len }` |
-| `let limit = 10` at the top, read in `fn` | E002 | `const limit = 10`, a parameter, `rfn`, or `snap` |
+| `let limit = 10` at the top, read in `fn` | E002 | `const limit = 10`, a parameter, `track fn`, or `snap` |
 | `let c = 0` at the top, assigned in `on` | E016 | `let mut c = 0` |
 | `let d = x * 2`, then `d = 1` | E003 | `d` is derived; assign `x` instead |
 | `let x = 1` in `fn`, then `x = 2` | E009 | `let mut x = 1` |
@@ -68,3 +68,6 @@ flux::E002
 | E024 | a type alias that refers to itself |
 | E025 | a type with no possible values |
 | E026 | warning: an older form; the warning says what to write instead, and `flux migrate` can rewrite it |
+| E027 | warning: a `fn`, `track fn`, or method changes a source; write `act fn` (an error from 0.3) |
+| E028 | warning: a `watch` changes a source; compute the value with `let`, or `emit` an event |
+| E029 | warning: watches wake each other, or one wakes itself, in a cycle; the last change in the cycle is lost |

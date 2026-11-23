@@ -269,8 +269,14 @@ fn declare_item_renamed(
         Item::Event(EventDecl { name, .. }) => {
             symbols.declare(mangled, SymbolKind::Event, name.span).err()
         }
-        Item::Fn(FnDecl { name, .. }) => symbols
-            .declare(mangled, SymbolKind::Function { reactive: false }, name.span)
+        Item::Fn(FnDecl { name, kind, .. }) => symbols
+            .declare(
+                mangled,
+                SymbolKind::Function {
+                    reactive: *kind == flux_syntax::FnKind::Track,
+                },
+                name.span,
+            )
             .err(),
         Item::RFn(RFnDecl { name, .. }) => symbols
             .declare(mangled, SymbolKind::Function { reactive: true }, name.span)

@@ -857,11 +857,12 @@ fn collect_block_local_declarations(
                 collect_expr_local_declarations(&loop_stmt.iter, out);
                 collect_block_local_declarations(&loop_stmt.body, out);
             }
-            HirStmt::Watch(watch) => collect_block_local_declarations(&watch.body, out),
+            HirStmt::Watch(watch) => {
+                out.extend(watch.prev);
+                collect_block_local_declarations(&watch.body, out);
+            }
             HirStmt::On(handler) => {
-                if let Some(param) = handler.param {
-                    out.insert(param);
-                }
+                out.extend(handler.params.iter().copied());
                 collect_block_local_declarations(&handler.body, out);
             }
             HirStmt::Break(_) | HirStmt::Continue(_) => {}
@@ -1008,9 +1009,14 @@ fn remap_block_symbols(block: &mut flux_hir::HirBlock, remap: &Remap<'_>) {
                 remap_expr_symbols(&mut loop_stmt.iter, remap);
                 remap_block_symbols(&mut loop_stmt.body, remap);
             }
-            HirStmt::Watch(watch) => remap_block_symbols(&mut watch.body, remap),
+            HirStmt::Watch(watch) => {
+                if let Some(prev) = &mut watch.prev {
+                    remap_id(prev, remap);
+                }
+                remap_block_symbols(&mut watch.body, remap);
+            }
             HirStmt::On(handler) => {
-                if let Some(param) = &mut handler.param {
+                for param in &mut handler.params {
                     remap_id(param, remap);
                 }
                 remap_block_symbols(&mut handler.body, remap);
@@ -1408,6 +1414,7 @@ fn substitute_hir_type(ty: &HirType, subst: &HashMap<&str, HirType>) -> HirType 
 
 fn instantiate_fn(template: &HirFn, name: SymbolId, subst: &HashMap<&str, HirType>) -> HirFn {
     HirFn {
+        act: template.act,
         is_closure: template.is_closure,
         name,
         type_params: vec![],

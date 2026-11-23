@@ -50,11 +50,14 @@ fn collect_uses_item(item: &HirItem, used: &mut HashSet<SymbolId>) {
             if let Some(t) = w.target {
                 used.insert(t);
             }
+            if let Some(p) = w.prev {
+                used.insert(p);
+            }
             collect_uses_block(&w.body, used);
         }
         HirItem::On(o) => {
             used.insert(o.event);
-            if let Some(p) = o.param {
+            for &p in &o.params {
                 used.insert(p);
             }
             collect_uses_block(&o.body, used);
@@ -110,11 +113,14 @@ fn collect_uses_stmt(stmt: &HirStmt, used: &mut HashSet<SymbolId>) {
             if let Some(t) = w.target {
                 used.insert(t);
             }
+            if let Some(p) = w.prev {
+                used.insert(p);
+            }
             collect_uses_block(&w.body, used);
         }
         HirStmt::On(o) => {
             used.insert(o.event);
-            if let Some(p) = o.param {
+            for &p in &o.params {
                 used.insert(p);
             }
             collect_uses_block(&o.body, used);

@@ -258,10 +258,31 @@ fn a_module_gets_the_names_and_its_own_win_only_there() {
 }
 
 #[test]
-fn an_event_with_several_values_is_an_error_not_a_silent_drop() {
+fn an_event_checks_the_number_and_types_of_its_values() {
+    let head = "event Move(x: Int, y: Int)\n";
     rejects(
-        "event Move(x: Int, y: Int)\nfn main() { }\n",
-        "declares more than one value",
+        &format!("{head}fn main() {{\n    emit Move(1)\n}}\n"),
+        "expected `2 values`, found `1 value`",
+    );
+    rejects(
+        &format!("{head}fn main() {{\n    emit Move(1, \"a\")\n}}\n"),
+        "type mismatch",
+    );
+    rejects(
+        &format!("{head}on Move(a) {{\n}}\nfn main() {{\n}}\n"),
+        "expected `2 values`, found `1 name`",
+    );
+    rejects(
+        &format!("{head}let mut s = \"\"\non Move(a, b) {{\n    s = a\n}}\nfn main() {{\n}}\n"),
+        "type mismatch",
+    );
+    rejects(
+        "event Move(x: Int, x: Int)\nfn main() {\n}\n",
+        "duplicate definition of `x`",
+    );
+    rejects(
+        "event T(n: Int)\non T(a) { b ->\n}\nfn main() {\n}\n",
+        "name the event's values once",
     );
 }
 

@@ -407,12 +407,52 @@ derived all = a + b + c + d + e + f\n";
 }
 
 #[test]
+fn jit_runs_a_handler_with_several_values_and_a_watch_prev_natively() {
+    let _guard = jit_test_lock();
+    reset_jit();
+    let src = "event Move(dx: Int, dy: Int)\nlet mut x = 0\nlet mut y = 0\nlet mut moves = 0\non Move(dx, dy) {\n    x = x + dx\n    y = y + dy * 2\n}\nwatch x(old) {\n    moves = moves + x - old\n}\nderived t = x * 100 + y\n";
+    for mode in [ExecutionMode::Vm, ExecutionMode::Jit] {
+        let mut compiled = compile_with_mode(source_from("<move>", src), mode)
+            .unwrap_or_else(|e| panic!("{mode:?} compile failed: {:?}", e.diagnostics.errors));
+        compiled.executor.emit_values(
+            "Move",
+            vec![RuntimeValue::int_i64(1), RuntimeValue::int_i64(2)],
+        );
+        compiled.executor.emit_values(
+            "Move",
+            vec![RuntimeValue::int_i64(3), RuntimeValue::int_i64(4)],
+        );
+        assert_eq!(
+            compiled.executor.get_value("t"),
+            Some(RuntimeValue::int_i64(412)),
+            "{mode:?}"
+        );
+        assert_eq!(
+            compiled.executor.get_value("moves"),
+            Some(RuntimeValue::int_i64(4)),
+            "{mode:?}"
+        );
+        if mode == ExecutionMode::Jit {
+            let stats = compiled.executor.jit_stats().expect("jit stats");
+            assert!(
+                !stats
+                    .fallback_nodes
+                    .iter()
+                    .any(|n| n.starts_with("__on") || n.starts_with("__watch")),
+                "handler and watch should be compiled, fallbacks: {:?}",
+                stats.fallback_nodes
+            );
+        }
+    }
+}
+
+#[test]
 fn jit_parity_call_does_not_clobber_handler_param() {
     // Calls pass arguments through shared slots; the handler's own parameter
     // must survive a call made before it is read.
     let _guard = jit_test_lock();
     reset_jit();
-    let src = "fn sq(v: Int) -> Int { v * v }\nevent Add(x: Int)\nlet mut total = 0\non Add { x ->\n    total = sq(3) + x\n}\nderived t = total\n";
+    let src = "fn sq(v: Int) -> Int { v * v }\nevent Add(x: Int)\nlet mut total = 0\non Add(x) {\n    total = sq(3) + x\n}\nderived t = total\n";
     for mode in [ExecutionMode::Vm, ExecutionMode::Jit] {
         let mut compiled = compile_with_mode(source_from("<param>", src), mode)
             .unwrap_or_else(|e| panic!("{mode:?} compile failed: {:?}", e.diagnostics.errors));
@@ -481,7 +521,7 @@ fn passp(p: P) -> P { p }\n\
 fn pick(c: Int, a: Option[Int], b: Option[Int]) -> Option[Int] { if c > 0 { a } else { b } }\n\
 fn count(xs: [Option[Int]]) -> Int { len(xs) }\n\
 fn keep(b: Box) -> Box { b }\n\
-event Put(p: P)\nlet mut last = P { x: 0 }\non Put { p ->\n    last = p\n}\n\
+event Put(p: P)\nlet mut last = P { x: 0 }\non Put(p) {\n    last = p\n}\n\
 let mut maybe = Some(5)\nderived same = maybe\n\
 let r1 = pass(Some(3))\nlet r2 = passr(Err(\"bad\"))\nlet r3 = passp(P { x: 7 })\nlet r4 = pick(1, Some(1), None)\nlet r5 = count([Some(1), None])\nlet r6 = keep(Full(P { x: 2 }))\n";
     let source = source_from("<untagged>", src);
@@ -508,7 +548,7 @@ fn jit_parity_events_emitted_from_a_function_are_handled() {
     // queue: `emit` from a JIT-compiled function was silently lost.
     let _guard = jit_test_lock();
     reset_jit();
-    let src = "event Tick(n: Int)\nlet mut base = 0\non Tick { n ->\n    base = base + n\n}\nfn pump() -> Int {\n    let mut i = 0\n    while i < 3 {\n        emit Tick(i + 1)\n        i = i + 1\n    }\n    0\n}\n";
+    let src = "event Tick(n: Int)\nlet mut base = 0\non Tick(n) {\n    base = base + n\n}\nfn pump() -> Int {\n    let mut i = 0\n    while i < 3 {\n        emit Tick(i + 1)\n        i = i + 1\n    }\n    0\n}\n";
     for mode in [ExecutionMode::Vm, ExecutionMode::Jit] {
         let mut compiled = compile_with_mode(source_from("<emit-fn>", src), mode)
             .unwrap_or_else(|e| panic!("{mode:?}: {:?}", e.diagnostics.errors));
@@ -525,7 +565,7 @@ fn jit_parity_events_emitted_from_a_function_are_handled() {
 fn jit_parity_handler_assignments_inside_control_flow_apply() {
     let _guard = jit_test_lock();
     reset_jit();
-    let src = "event Tick(n: Int)\nlet mut base = 0\nlet mut big = 0\nlet mut odd = 0\non Tick { n ->\n    base = base + n\n    if n > 1 {\n        big = big + 1\n    } else {\n        odd = odd + 10\n    }\n    let mut i = 0\n    while i < n {\n        odd = odd + 1\n        i = i + 1\n    }\n}\n";
+    let src = "event Tick(n: Int)\nlet mut base = 0\nlet mut big = 0\nlet mut odd = 0\non Tick(n) {\n    base = base + n\n    if n > 1 {\n        big = big + 1\n    } else {\n        odd = odd + 10\n    }\n    let mut i = 0\n    while i < n {\n        odd = odd + 1\n        i = i + 1\n    }\n}\n";
     for mode in [ExecutionMode::Vm, ExecutionMode::Jit] {
         let mut compiled = compile_with_mode(source_from("<handler-if>", src), mode)
             .unwrap_or_else(|e| panic!("{mode:?}: {:?}", e.diagnostics.errors));
@@ -549,7 +589,7 @@ fn jit_parity_handler_assignment_inside_if_applies() {
     // the VM, with the reason in the stats.
     let _guard = jit_test_lock();
     reset_jit();
-    let src = "event Tick(n: Int)\nlet mut big = 0\non Tick { n ->\n    if n > 1 {\n        big = big + 1\n    }\n}\n";
+    let src = "event Tick(n: Int)\nlet mut big = 0\non Tick(n) {\n    if n > 1 {\n        big = big + 1\n    }\n}\n";
     for mode in [ExecutionMode::Vm, ExecutionMode::Jit] {
         let mut compiled = compile_with_mode(source_from("<handler-if>", src), mode)
             .unwrap_or_else(|e| panic!("{mode:?}: {:?}", e.diagnostics.errors));

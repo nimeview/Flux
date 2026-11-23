@@ -125,7 +125,7 @@ fn event_type_is_event_unit() {
         .map(|(id, _)| *id)
         .unwrap();
     let ty = typed.types.get(&id).unwrap();
-    assert!(matches!(ty, Type::Event(inner) if **inner == Type::Unit));
+    assert!(matches!(ty, Type::Event(values) if values.is_empty()));
 }
 
 #[test]

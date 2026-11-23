@@ -71,6 +71,13 @@ pub fn rename_spans(
     let Some(name) = hir.names.get(&symbol_id) else {
         return dedupe_spans(out);
     };
+    // Some uses are recorded with their statement's span (`watch total { }`,
+    // `on Tick { }`): rewrite only the name in it.
+    for span in &mut out {
+        if span.end - span.start != name.len() {
+            *span = narrow_name_span(*span, name, sources);
+        }
+    }
 
     if let Some(sym) = hir.symbols.get(&symbol_id) {
         out.push(narrow_name_span(sym.span, name, sources));
@@ -99,9 +106,6 @@ fn collect_refs_item(item: &HirItem, map: &mut HashMap<SymbolId, Vec<Span>>) {
         }
         HirItem::On(o) => {
             push_ref(map, o.event, o.span);
-            if let Some(p) = o.param {
-                push_ref(map, p, o.span);
-            }
             collect_refs_block(&o.body, map);
         }
         HirItem::InitIf(i) => collect_refs_if(i, map),
@@ -163,9 +167,6 @@ fn collect_refs_stmt(stmt: &HirStmt, map: &mut HashMap<SymbolId, Vec<Span>>) {
         }
         HirStmt::On(o) => {
             push_ref(map, o.event, o.span);
-            if let Some(p) = o.param {
-                push_ref(map, p, o.span);
-            }
             collect_refs_block(&o.body, map);
         }
         HirStmt::Break(_) | HirStmt::Continue(_) => {}

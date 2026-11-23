@@ -45,7 +45,7 @@ fn params_and_lets_get_slots_and_globals_stay_by_name() {
 #[test]
 fn assignment_to_a_source_has_no_slot() {
     let ir = lower(
-        "event Tick(n: Int)\nlet mut total = 0\non Tick { n ->\n    let mut step = n\n    step = step + 1\n    total = total + step\n}\n",
+        "event Tick(n: Int)\nlet mut total = 0\non Tick(n) {\n    let mut step = n\n    step = step + 1\n    total = total + step\n}\n",
     );
     let body = &ir.on_handlers[0].body;
     let slots: Vec<_> = body

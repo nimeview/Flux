@@ -118,7 +118,11 @@ pub(crate) fn max_call_argc_in_stmts(stmts: &[IrStmt]) -> u32 {
         max = max.max(match stmt {
             IrStmt::Expr { code } => max_call_argc_in_code(code),
             IrStmt::Let { expr, .. } | IrStmt::Assign { expr, .. } => max_call_argc_in_code(expr),
-            IrStmt::Emit { arg, .. } => arg.as_ref().map(|c| max_call_argc_in_code(c)).unwrap_or(0),
+            IrStmt::Emit { args, .. } => args
+                .iter()
+                .map(|c| max_call_argc_in_code(c))
+                .max()
+                .unwrap_or(0),
             IrStmt::If {
                 cond,
                 then_body,

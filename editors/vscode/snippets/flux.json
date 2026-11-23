@@ -20,15 +20,6 @@
       "}"
     ]
   },
-  "Reactive function": {
-    "prefix": "rfn",
-    "description": "Reactive function: callers depend on what it reads",
-    "body": [
-      "rfn ${1:name}(${2:arg}: ${3:Int}) -> ${4:Int} {",
-      "\t$0",
-      "}"
-    ]
-  },
   "Generic function": {
     "prefix": "fng",
     "description": "Generic function",
@@ -133,9 +124,9 @@
   },
   "Handler with value": {
     "prefix": "onv",
-    "description": "Event handler that takes the event's value",
+    "description": "Event handler that names the event's values",
     "body": [
-      "on ${1:Event} { ${2:value} ->",
+      "on ${1:Event}(${2:value}) {",
       "\t$0",
       "}"
     ]
@@ -264,6 +255,24 @@
     "description": "Print a line",
     "body": [
       "println(\"${1:{value\\}}\")"
+    ]
+  },
+  "Tracked function": {
+    "prefix": "track",
+    "description": "Tracked function: callers depend on what it reads",
+    "body": [
+      "track fn ${1:name}(${2:arg}: ${3:Int}) -> ${4:Int} {",
+      "\t$0",
+      "}"
+    ]
+  },
+  "Action": {
+    "prefix": "act",
+    "description": "Action: changes state; a call is one change",
+    "body": [
+      "act fn ${1:name}(${2:arg}: ${3:Int}) {",
+      "\t$0",
+      "}"
     ]
   }
 }

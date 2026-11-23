@@ -22,7 +22,8 @@ pub enum Type {
     Bool,
     String,
     Unit,
-    Event(Box<Type>),
+    /// The types of the values an event carries, in order.
+    Event(Vec<Type>),
     Cell(Box<Type>),
     Read(Box<Type>),
     Array(Box<Type>),
@@ -101,7 +102,10 @@ impl Type {
             Type::Bool => "Bool".into(),
             Type::String => "String".into(),
             Type::Unit => "Unit".into(),
-            Type::Event(inner) => format!("Event<{}>", inner.display()),
+            Type::Event(values) => {
+                let values: Vec<String> = values.iter().map(Type::display).collect();
+                format!("Event<{}>", values.join(", "))
+            }
             Type::Cell(inner) => format!("Cell<{}>", inner.display()),
             Type::Read(inner) => format!("Read<{}>", inner.display()),
             Type::Array(inner) => format!("[{}]", inner.display()),

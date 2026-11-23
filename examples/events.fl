@@ -10,7 +10,7 @@ on AppStarted {
     query = "ready"
 }
 
-on SearchQuery { q ->
+on SearchQuery(q) {
     query = q
     count = count + 1
 }

@@ -103,7 +103,9 @@ pub enum FluxError {
     #[error("control flow `{construct}` is not allowed in a derived expression")]
     #[diagnostic(
         code(flux::E008),
-        help("use `watch`, `on`, or `rfn` for statements with side effects or loops")
+        help(
+            "use `watch`, `on`, `track fn`, or `act fn` for statements with side effects or loops"
+        )
     )]
     InvalidControlFlowInDerived {
         construct: String,

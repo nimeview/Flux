@@ -288,6 +288,17 @@ pub fn names_in_scope(src: &str, offset: usize) -> (Vec<String>, std::ops::Range
                 }
                 i = at;
             }
+            // `on Move(x, y) {` and `watch total(prev) {`: names for the body.
+            "on" | "watch" if ident(i + 1).is_some() && is(i + 2, "(") => {
+                let mut at = i + 3;
+                while at < toks.len() && !is(at, ")") {
+                    if let Some(name) = ident(at) {
+                        names.push((name.text.to_string(), depth + 1));
+                    }
+                    at += 1;
+                }
+                i = at;
+            }
             // `on Event { value ->`
             "->" if i >= 2 && is(i - 2, "{") && toks[i - 1].kind == TokKind::Ident => {
                 names.push((toks[i - 1].text.to_string(), depth));
@@ -545,6 +556,12 @@ mod tests {
     fn scope_sees_every_binding_form() {
         let names = scope("on T { n ->\n    let P { x, y } = p\n    map(xs, |a, b: Int| @)\n}\n");
         assert_eq!(names, ["n", "x", "y", "a", "b"]);
+        let names = scope("on Move(dx, dy) {\n    @\n}\n");
+        assert_eq!(names, ["dx", "dy"]);
+        let names = scope("watch total(old) {\n    @\n}\n");
+        assert_eq!(names, ["old"]);
+        let names = scope("on Move(dx, dy) {\n}\n\nfn f() {\n    @\n}\n");
+        assert!(names.is_empty(), "{names:?}");
         let names = scope("fn f(o: Option[Int]) -> Int {\n    match o {\n        Some(v) if v > 0 => @,\n    }\n}\n");
         assert_eq!(names, ["o", "v"]);
     }

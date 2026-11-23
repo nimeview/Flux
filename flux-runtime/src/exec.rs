@@ -104,6 +104,9 @@ struct ReactiveState {
     watch_keys: Vec<String>,
     /// Runnable watches in graph order, with the nodes that trigger each.
     watch_triggers: Vec<(usize, Vec<NodeId>)>,
+    /// Per watch: the values of its triggers when it last ran, or `None`
+    /// before its first run. A watch runs only when one of them differs.
+    watch_memory: Vec<Option<Vec<RuntimeValue>>>,
     /// Reused while finding what a write dirtied.
     /// Per graph node: a source it reads has changed since it was computed. Set
     /// at the write, cleared when the value is recomputed, by a read or a flush.
@@ -125,6 +128,8 @@ pub struct Executor {
     node_index: HashMap<String, usize>,
     /// Each node's code, shared so a recomputation does not copy it.
     node_code: Vec<std::sync::Arc<[flux_ir::Inst]>>,
+    /// Functions that may read reactive values (see `flux_ir::graph_readers`).
+    graph_readers: HashSet<String>,
     in_watch: bool,
     /// When true, `set_source` records mutations and skips propagation until flush.
     defer_propagation: bool,
@@ -295,6 +300,9 @@ impl Executor {
             .map(|i| format!("__watch_{i}"))
             .collect();
         let node_count = graph.nodes.len();
+        let program_watch_count = program.watches.len();
+        let graph_readers =
+            flux_ir::graph_readers(&program, |name| graph.name_to_id.contains_key(name));
 
         let backend = ActiveBackend::from_mode(mode, &program);
 
@@ -304,6 +312,7 @@ impl Executor {
             functions,
             node_index,
             node_code,
+            graph_readers,
             in_watch: false,
             defer_propagation: false,
             reactive: Box::new(ReactiveState {
@@ -319,6 +328,7 @@ impl Executor {
                 watch_bodies,
                 watch_keys,
                 watch_triggers,
+                watch_memory: vec![None; program_watch_count],
                 stale: vec![false; node_count],
                 stale_count: 0,
                 reached: vec![false; node_count],
@@ -470,8 +480,14 @@ impl Executor {
         }
     }
 
-    /// Emit an event by name (for tests and host integration).
+    /// Emit an event that carries at most one value, by name (for tests and
+    /// host integration); `RuntimeValue::Unit` for an event without one.
     pub fn emit(&mut self, event: &str, payload: RuntimeValue) {
+        self.emit_values(event, vec![payload]);
+    }
+
+    /// Emit an event with its values in order.
+    pub fn emit_values(&mut self, event: &str, values: Vec<RuntimeValue>) {
         if self.trap.is_some() {
             return;
         }
@@ -482,33 +498,25 @@ impl Executor {
         }
         self.call_depth += 1;
         stacker::maybe_grow(64 * 1024, 2 * 1024 * 1024, || {
-            self.run_event_handlers(event, payload)
+            self.run_event_handlers(event, &values)
         });
         self.call_depth -= 1;
     }
 
-    fn run_event_handlers(&mut self, event: &str, payload: RuntimeValue) {
+    fn run_event_handlers(&mut self, event: &str, values: &[RuntimeValue]) {
         let Some(handlers) = self.reactive.event_handlers.get(event).cloned() else {
             return;
         };
-
-        // The body that emitted is unfinished: its writes stay pending.
-        // (Taken only when present: an event must not drop the set's capacity.)
-        let outer_writes = (!self.reactive.mutated_sources.is_empty())
-            .then(|| std::mem::take(&mut self.reactive.mutated_sources));
-        // So are the changes its reads found: they wait for its watches.
-        let outer_changes = (!self.reactive.changed_nodes.is_empty())
-            .then(|| std::mem::take(&mut self.reactive.changed_nodes));
-        let was_deferred = self.defer_propagation;
-        self.defer_propagation = true;
+        let opened = self.begin_batch();
         for &idx in handlers.iter() {
             let body = self.reactive.handler_bodies[idx].clone();
             let mut locals = self.locals_pool.pop().unwrap_or_default();
-            if self.program.on_handlers[idx].param.is_some() {
-                // A handler's parameter is slot 0.
-                locals.set(0, payload.clone());
+            // A handler's values are slots `0..n`.
+            let named = self.program.on_handlers[idx].params.len().min(values.len());
+            for (slot, value) in values[..named].iter().enumerate() {
+                locals.set(slot as u32, value.clone());
             }
-            if !self.try_run_jit_on(idx, &body, &mut locals, payload.clone()) {
+            if !self.try_run_jit_on(idx, &body, &mut locals, &values[..named]) {
                 self.run_stmts(&body, &mut locals);
                 if self.trap.is_some() {
                     self.push_trace_frame(format!("on {event}"), None);
@@ -522,17 +530,32 @@ impl Executor {
                 self.set_trap_context(&format!("`on {event}`"), None);
                 break;
             }
+        }
+        self.end_batch(opened);
+    }
+
+    /// Opens a batch unless one is open: an `emit` or an `act fn` call outside
+    /// any handler, watch, `act fn`, or initialization. Writes in a batch apply
+    /// at once but settle together when it ends. Returns whether this call
+    /// opened it.
+    pub(super) fn begin_batch(&mut self) -> bool {
+        if self.defer_propagation || self.in_watch {
+            return false;
+        }
+        self.defer_propagation = true;
+        true
+    }
+
+    /// Ends the batch that `begin_batch` opened: recomputes what its writes
+    /// made stale, then runs the watches. After a failure, the writes made
+    /// before it stay and nothing else runs.
+    pub(super) fn end_batch(&mut self, opened: bool) {
+        if !opened {
+            return;
+        }
+        self.defer_propagation = false;
+        if self.trap.is_none() {
             self.flush_propagation();
-            if self.trap.is_some() {
-                break;
-            }
-        }
-        self.defer_propagation = was_deferred;
-        if let Some(outer_writes) = outer_writes {
-            self.reactive.mutated_sources.extend(outer_writes);
-        }
-        if let Some(outer_changes) = outer_changes {
-            self.reactive.changed_nodes.extend(outer_changes);
         }
     }
 
@@ -787,18 +810,16 @@ impl Executor {
         idx: usize,
         body: &[flux_ir::IrStmt],
         locals: &mut Locals,
-        param: RuntimeValue,
+        values: &[RuntimeValue],
     ) -> bool {
-        if self.vm_only {
+        // Compiled code reads a copy of the values: a stale one would be old.
+        if self.vm_only || self.reactive_stale() {
             return false;
         }
         // Handler slots hold tagged handles until `apply_jit_assignments` reads them.
         let _heap = flux_value::heap_scope();
-        let handler = &self.program.on_handlers[idx];
-        let param_ref = handler.param.as_ref().map(|_| &param);
         let key = &self.reactive.handler_keys[idx];
-        let Some((result, slots)) = self.backend.try_run_handler(key, &self.graph, param_ref)
-        else {
+        let Some((result, slots)) = self.backend.try_run_handler(key, &self.graph, values) else {
             return false;
         };
         if result.is_err() {
@@ -809,13 +830,21 @@ impl Executor {
         true
     }
 
-    fn try_run_jit_watch(&mut self, idx: usize, body: &[flux_ir::IrStmt]) -> bool {
-        if self.vm_only {
+    fn try_run_jit_watch(
+        &mut self,
+        idx: usize,
+        body: &[flux_ir::IrStmt],
+        prev: Option<RuntimeValue>,
+    ) -> bool {
+        if self.vm_only || self.reactive_stale() {
             return false;
         }
         let _heap = flux_value::heap_scope();
         let key = &self.reactive.watch_keys[idx];
-        let Some((result, slots)) = self.backend.try_run_handler(key, &self.graph, None) else {
+        let Some((result, slots)) = self
+            .backend
+            .try_run_handler(key, &self.graph, prev.as_slice())
+        else {
             return false;
         };
         if result.is_err() {
@@ -863,6 +892,39 @@ impl Executor {
     ) {
     }
 
+    /// Whether the watch at `at` in `watch_triggers` should run: on its first
+    /// run, or when a trigger's value differs by `==` from the one it saw
+    /// last. If so, remembers the current values and returns the old value
+    /// of the first trigger (its target), or the current one on a first run.
+    fn watch_seen_change(&mut self, at: usize) -> Option<RuntimeValue> {
+        let (idx, triggers) = {
+            let (idx, triggers) = &self.reactive.watch_triggers[at];
+            (*idx, triggers.clone())
+        };
+        let mut current = Vec::with_capacity(triggers.len());
+        for &id in &triggers {
+            self.refresh(id);
+            current.push(self.graph.get(id).clone());
+        }
+        let memory = &mut self.reactive.watch_memory[idx];
+        let prev = match memory {
+            Some(seen) => {
+                let same = seen.len() == current.len()
+                    && seen
+                        .iter()
+                        .zip(&current)
+                        .all(|(a, b)| flux_value::values_equal(a, b));
+                if same {
+                    return None;
+                }
+                seen.first().cloned()
+            }
+            None => current.first().cloned(),
+        };
+        *memory = Some(current);
+        Some(prev.unwrap_or(RuntimeValue::Unit))
+    }
+
     /// Runs the watches affected by `changed_nodes`, then those affected by
     /// what they wrote, until nothing is left to run. Each watch runs at most
     /// once per call, so a cycle of watches ends.
@@ -893,14 +955,15 @@ impl Executor {
                 .reactive
                 .watch_triggers
                 .iter()
-                .filter(|(idx, triggers)| {
+                .enumerate()
+                .filter(|(_, (idx, triggers))| {
                     !ran.contains(idx)
                         && (run_all
                             || triggers
                                 .iter()
                                 .any(|dep| self.reactive.changed_marks[dep.0 as usize]))
                 })
-                .map(|(idx, _)| *idx)
+                .map(|(at, _)| at)
                 .collect();
             for id in self.reactive.changed_spare.drain(..) {
                 self.reactive.changed_marks[id.0 as usize] = false;
@@ -909,11 +972,23 @@ impl Executor {
             if watch_indices.is_empty() {
                 break;
             }
-            for idx in watch_indices {
+            for at in watch_indices {
+                let idx = self.reactive.watch_triggers[at].0;
+                // Compared right before running: an earlier watch may have
+                // changed a value back.
+                let Some(prev) = self.watch_seen_change(at) else {
+                    continue;
+                };
                 ran.insert(idx);
                 let body = self.reactive.watch_bodies[idx].clone();
-                if !self.try_run_jit_watch(idx, &body) {
-                    self.run_stmts(&body, &mut Locals::default());
+                let prev = self.program.watches[idx].prev.as_ref().map(|_| prev);
+                if !self.try_run_jit_watch(idx, &body, prev.clone()) {
+                    let mut locals = Locals::default();
+                    if let Some(prev) = prev {
+                        // `prev` is slot 0.
+                        locals.set(0, prev);
+                    }
+                    self.run_stmts(&body, &mut locals);
                     if self.trap.is_some() {
                         self.push_trace_frame("watch".to_string(), None);
                     }

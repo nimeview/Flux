@@ -85,7 +85,8 @@ pub struct HirImpl {
 #[derive(Debug, Clone)]
 pub struct HirEvent {
     pub name: SymbolId,
-    pub payload: Option<EventField>,
+    /// The values the event carries, in order.
+    pub fields: Vec<EventField>,
     pub span: Span,
 }
 
@@ -119,12 +120,16 @@ pub struct HirFn {
     pub ret: Option<HirType>,
     pub body: HirBlock,
     pub reactive: bool,
+    /// An `act fn`: it may change sources, and a call is one change.
+    pub act: bool,
     pub span: Span,
 }
 
 #[derive(Debug, Clone)]
 pub struct HirWatch {
     pub target: Option<SymbolId>,
+    /// `watch total(prev)`: the value the watch saw last time.
+    pub prev: Option<SymbolId>,
     pub body: HirBlock,
     pub span: Span,
 }
@@ -132,7 +137,8 @@ pub struct HirWatch {
 #[derive(Debug, Clone)]
 pub struct HirOn {
     pub event: SymbolId,
-    pub param: Option<SymbolId>,
+    /// One name per value the event carries.
+    pub params: Vec<SymbolId>,
     pub body: HirBlock,
     pub span: Span,
 }

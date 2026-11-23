@@ -1,4 +1,4 @@
 error: runtime error: integer division by zero in `shown`
-  at shown (<dir>/main.fl:28:1)
-  at apply (<dir>/main.fl:82:9)
-  at main (<dir>/main.fl:92:9)
+  at shown (<dir>/main.fl:30:1)
+  at apply (<dir>/main.fl:88:9)
+  at main (<dir>/main.fl:98:9)

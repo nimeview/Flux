@@ -226,7 +226,8 @@ impl ReactiveGen {
                 self.int_expr(d, derived),
                 self.int_expr(d, derived)
             ),
-            5 => format!("xs[{}]", self.int_expr(d, derived)),
+            // Mostly in range; a negative index still fails.
+            5 => format!("xs[{} % 2]", self.int_expr(d, derived)),
             6 => format!("twice({})", self.int_expr(d, derived)),
             7 => "read_a()".to_string(),
             8 => "str_len(read_b())".to_string(),
@@ -235,7 +236,9 @@ impl ReactiveGen {
     }
 
     fn handler_stmt(&mut self, depth: u32) -> String {
-        match self.pick(9) {
+        match self.pick(12) {
+            9 => format!("b = bump({})", self.int_expr(1, 0)),
+            10 if depth > 0 => format!("emit M({}, {})", self.int_expr(1, 0), self.int_expr(1, 0)),
             0..=2 => format!("a = {}", self.int_expr(2, 0)),
             3 => format!("b = {}", self.int_expr(1, 0)),
             4 => format!("xs = [{}, {}]", self.int_expr(1, 0), self.int_expr(1, 0)),
@@ -262,14 +265,16 @@ impl ReactiveGen {
              enum E {\n    Low(Int),\n    High\n}\n\
              event T(n: Int)\n\
              event U(n: Int)\n\
+             event M(x: Int, y: Int)\n\
              let mut a = 1\n\
              let mut b = 2\n\
              let mut xs = [1, 2]\n\
              let mut s = \"s\"\n\
              let mut e = Low(1)\n\
              fn twice(n: Int) -> Int {\n    n * 2\n}\n\
-             rfn read_a() -> Int {\n    a + 1\n}\n\
-             rfn read_b() -> String {\n    \"{b}\"\n}\n",
+             track fn read_a() -> Int {\n    a + 1\n}\n\
+             track fn read_b() -> String {\n    \"{b}\"\n}\n\
+             act fn bump(k: Int) -> Int {\n    a = a + k\n    a + b\n}\n",
         );
         let derived = 1 + self.pick(4) as u32;
         for i in 0..derived {
@@ -277,7 +282,7 @@ impl ReactiveGen {
             src.push_str(&format!("let d{i} = {expr}\n"));
         }
         // Handlers without output can run natively; those with it cannot.
-        for event in ["T", "U"] {
+        for event in ["T", "U", "M"] {
             let count = 1 + self.pick(2);
             for _ in 0..count {
                 let stmts: Vec<String> = (0..1 + self.pick(3))
@@ -292,8 +297,13 @@ impl ReactiveGen {
                 } else {
                     String::new()
                 };
+                // `M` carries two values; its handlers name them and derive `n`.
+                let (head, intro) = match event {
+                    "M" => ("M(x, y)", "    let n = x - y\n"),
+                    _ => (if event == "T" { "T(n)" } else { "U(n)" }, ""),
+                };
                 src.push_str(&format!(
-                    "on {event} {{ n ->\n{log}    {}\n}}\n",
+                    "on {head} {{\n{intro}{log}    {}\n}}\n",
                     stmts.join("\n    ")
                 ));
             }
@@ -308,15 +318,25 @@ impl ReactiveGen {
                 0 => format!("b = {}\n    ", self.int_expr(1, 0)),
                 _ => String::new(),
             };
+            // Half the watches also see the value they saw last time.
+            let (prev, shown) = if self.pick(2) == 0 {
+                ("(old)", "{old} -> ")
+            } else {
+                ("", "")
+            };
             src.push_str(&format!(
-                "watch {target} {{\n    {write}println(\"w{i} {{{target}}} a={{a}} b={{b}} s={{s}} xs={{xs}}\")\n}}\n"
+                "watch {target}{prev} {{\n    {write}println(\"w{i} {shown}{{{target}}} a={{a}} b={{b}} s={{s}} xs={{xs}}\")\n}}\n"
             ));
         }
         src.push_str("fn main() {\n");
         for _ in 0..1 + self.pick(5) {
             let value = self.pick(8) as i64 - 2;
-            let event = if self.pick(3) == 0 { "U" } else { "T" };
-            src.push_str(&format!("    emit {event}({value})\n"));
+            match self.pick(5) {
+                0 => src.push_str(&format!("    emit U({value})\n")),
+                1 => src.push_str(&format!("    emit M({value}, {})\n", self.pick(4))),
+                2 => src.push_str(&format!("    println(\"bump {{bump({value})}}\")\n")),
+                _ => src.push_str(&format!("    emit T({value})\n")),
+            }
         }
         src.push_str("    println(\"end\")\n}\n");
         src
@@ -376,9 +396,10 @@ fn derived_if_tracks_reads_through_an_rfn() {
     }
 }
 
-/// A failed recomputation ends the event: later handlers do not start.
+/// The handlers of one event form a batch that settles when the last one
+/// ends; a recomputation that fails then ends the program, and no watch runs.
 #[test]
-fn failed_settling_stops_later_handlers() {
+fn failed_settling_ends_the_batch_without_watches() {
     let _guard = jit_test_lock();
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(
@@ -394,7 +415,9 @@ fn failed_settling_stops_later_handlers() {
     )
     .unwrap();
     let vm = run_reactive(dir.path(), "--vm");
-    assert!(!vm.contains("second handler ran"), "{vm}");
+    assert!(vm.contains("d=10\nsecond handler ran\n"), "{vm}");
+    assert!(vm.contains("integer division by zero in `d`"), "{vm}");
+    assert!(!vm.contains("d=0"), "{vm}");
     assert_eq!(vm, run_reactive(dir.path(), "--jit"));
 }
 
@@ -411,7 +434,7 @@ fn runtime_error_reports_the_same_trace_on_both_engines() {
          let mut w = 0\n\
          fn div(a: Int, b: Int) -> Int {\n    let c = a + 1\n    c / b\n}\n\
          fn outer(b: Int) -> Int {\n    if b == 0 {\n        div(1, b)\n    } else {\n        0\n    }\n}\n\
-         on T { n ->\n    w = n\n    w = outer(n)\n}\n\
+         on T(n) {\n    w = n\n    w = outer(n)\n}\n\
          watch w { println(\"w={w}\") }\n\
          fn main() {\n    emit T(0)\n}\n",
     )
@@ -441,8 +464,8 @@ fn untaken_branch_write_does_not_settle_a_derived_if() {
          let d = if c { a } else { b }\n\
          event T(n: Int)\n\
          event U(n: Int)\n\
-         on T { n ->\n    a = 2\n    emit U(n)\n    println(\"after U\")\n}\n\
-         on U { n ->\n    b = n\n}\n\
+         on T(n) {\n    a = 2\n    emit U(n)\n    println(\"after U\")\n}\n\
+         on U(n) {\n    b = n\n}\n\
          watch d { println(\"d={d}\") }\n\
          fn main() {\n    emit T(5)\n}\n",
     )
@@ -468,12 +491,24 @@ fn jit_matches_vm_on_generated_reactive_programs() {
         std::fs::write(&path, &src).unwrap();
         let vm = run_reactive(dir.path(), "--vm");
         // A program the generator got wrong; warnings are fine.
+        let warnings = [
+            "flux::E015",
+            "flux::E018",
+            "flux::E026",
+            "flux::E027",
+            "flux::E028",
+            "flux::E029",
+        ];
         if vm
             .lines()
-            .any(|l| l.starts_with("flux::E") && l != "flux::E015" && l != "flux::E018")
+            .any(|l| l.starts_with("flux::E") && !warnings.contains(&l))
         {
             invalid += 1;
             continue;
+        }
+        // `FLUX_DIFF_DUMP=1` shows every program that failed on the VM.
+        if std::env::var_os("FLUX_DIFF_DUMP").is_some() && !vm.starts_with("Some(0)") {
+            eprintln!("=== seed {seed}\n{src}\n--- VM\n{vm}");
         }
         let jit = run_reactive(dir.path(), "--jit");
         match vm.starts_with("Some(0)") {
@@ -490,9 +525,13 @@ fn jit_matches_vm_on_generated_reactive_programs() {
             .stdin(std::process::Stdio::null())
             .output()
             .expect("spawn flux");
-        let stats = String::from_utf8_lossy(&stats.stdout).into_owned();
-        native_handlers += u32::from(stats.contains("JIT stats") && !stats.contains("__on_"));
+        let stats = String::from_utf8_lossy(&stats.stderr).into_owned();
+        // Programs where at least one handler ran natively.
+        let handlers = src.matches("\non ").count();
+        let fell_back = stats.matches("__on_").count();
+        native_handlers += u32::from(stats.contains("JIT stats") && fell_back < handlers);
     }
+    eprintln!("finished {finished}, failed {failed}, invalid {invalid}, native {native_handlers}");
     let shown = failures.len().min(3);
     assert!(
         failures.is_empty(),
@@ -502,7 +541,10 @@ fn jit_matches_vm_on_generated_reactive_programs() {
         failures[..shown].join("\n=====\n")
     );
     assert!(
-        finished > seeds / 10 && failed > seeds / 20 && invalid < seeds / 2,
+        finished > seeds / 10
+            && failed > seeds / 20
+            && invalid < seeds / 2
+            && u64::from(native_handlers) > seeds / 4,
         "finished {finished}, failed {failed}, invalid {invalid}, native {native_handlers}"
     );
 }

@@ -365,13 +365,13 @@ impl JitEngine {
                 program
                     .watches
                     .iter()
-                    .map(|w| max_call_argc_in_stmts(&w.body)),
+                    .map(|w| max_call_argc_in_stmts(&w.body).max(u32::from(w.prev.is_some()))),
             )
             .chain(
                 program
                     .on_handlers
                     .iter()
-                    .map(|h| max_call_argc_in_stmts(&h.body).max(u32::from(h.param.is_some()))),
+                    .map(|h| max_call_argc_in_stmts(&h.body).max(h.params.len() as u32)),
             )
             .max()
             .unwrap_or(0);
@@ -390,6 +390,13 @@ impl JitEngine {
             // the next statement. So a function that emits runs on the VM.
             if stmts_emit(&func.body) {
                 engine.note_fallback(&func.name, "emits_events");
+                callable.remove(&func.name);
+                continue;
+            }
+            // A native call runs on a copy of the slots, so a write to a
+            // source would be lost. Its callers are left out with it.
+            if stmts_assign_node(&func.body, &engine.layout.name_to_idx) {
+                engine.note_fallback(&func.name, "fn_writes_sources");
                 callable.remove(&func.name);
                 continue;
             }
@@ -465,19 +472,17 @@ impl JitEngine {
         }
 
         // A body that writes a source and reads a derived value must see the
-        // value recomputed, which only the VM does; so does a tracked call.
+        // value recomputed, which only the VM does; so does a call of any
+        // function that may read the graph (tracked, `act fn`, or `snap`).
         let derived_names: HashSet<&str> = program
             .nodes
             .iter()
             .filter(|n| n.kind == NodeKind::Derived)
             .map(|n| n.name.as_str())
             .collect();
-        let tracked_fns: HashSet<&str> = program
-            .functions
-            .iter()
-            .filter(|f| f.reactive)
-            .map(|f| f.name.as_str())
-            .collect();
+        let node_names: HashSet<&str> = program.nodes.iter().map(|n| n.name.as_str()).collect();
+        let readers = flux_ir::graph_readers(program, |name| node_names.contains(name));
+        let tracked_fns: HashSet<&str> = readers.iter().map(String::as_str).collect();
         let reads_after_write = |body: &[IrStmt]| {
             let mut targets = HashSet::new();
             top_level_targets(body, &mut targets);
@@ -515,12 +520,18 @@ impl JitEngine {
                 continue;
             }
             let label = format!("stmt___watch_{i}");
+            // `prev` arrives like a handler's parameter.
+            let params: Vec<String> = watch.prev.iter().cloned().collect();
+            if !params.is_empty() {
+                engine.handler_param_slots.insert(key.clone(), host_slots);
+                call_scratch_pairs = call_scratch_pairs.max(1);
+            }
             if let Some((expr, _)) = engine.compile_fn_stmts(
                 &label,
                 &watch.body,
                 &engine.layout.name_to_idx.clone(),
                 host_slots,
-                &[],
+                &params,
                 None,
                 &jit_fn_ids,
                 &host_funcs,
@@ -551,12 +562,12 @@ impl JitEngine {
                 continue;
             }
             let label = format!("stmt___on_{i}");
-            // The parameter arrives in the first scratch slot and is copied
-            // into a local on entry, so calls may reuse the slot.
-            let params: Vec<String> = handler.param.iter().cloned().collect();
+            // The values arrive in the first scratch slots and are copied
+            // into locals on entry, so calls may reuse the slots.
+            let params = handler.params.clone();
             if !params.is_empty() {
                 engine.handler_param_slots.insert(key.clone(), host_slots);
-                call_scratch_pairs = call_scratch_pairs.max(1);
+                call_scratch_pairs = call_scratch_pairs.max(params.len() as u32);
             }
             if let Some((expr, _)) = engine.compile_fn_stmts(
                 &label,
@@ -642,11 +653,13 @@ impl JitEngine {
         self.run_compiled(self.stmts.get(key)?, slots)
     }
 
-    pub fn build_stmt_slots(&self, key: &str, base: &[u64], param: Option<TaggedVal>) -> Vec<u64> {
+    /// `base` with a handler's values (or a watch's `prev`) in its
+    /// parameter pairs.
+    pub fn build_stmt_slots(&self, key: &str, base: &[u64], params: &[TaggedVal]) -> Vec<u64> {
         let mut slots = base.to_vec();
-        if let Some(tv) = param {
-            if let Some(&pair_idx) = self.handler_param_slots.get(key) {
-                let off = pair_idx as usize * 2;
+        if let Some(&pair_idx) = self.handler_param_slots.get(key) {
+            for (i, tv) in params.iter().enumerate() {
+                let off = (pair_idx as usize + i) * 2;
                 if slots.len() <= off + 1 {
                     slots.resize(off + 2, 0);
                 }
@@ -881,7 +894,12 @@ fn loads_in_stmts(stmts: &[IrStmt], set: &mut HashSet<String>) {
         match stmt {
             IrStmt::Assign { expr, .. } | IrStmt::Let { expr, .. } => loads_in_code(expr, set),
             IrStmt::Expr { code } => loads_in_code(code, set),
-            IrStmt::Emit { arg, .. } | IrStmt::Return { expr: arg } => {
+            IrStmt::Emit { args, .. } => {
+                for code in args {
+                    loads_in_code(code, set);
+                }
+            }
+            IrStmt::Return { expr: arg } => {
                 if let Some(code) = arg {
                     loads_in_code(code, set);
                 }
@@ -970,6 +988,46 @@ fn nested_node_assignment(stmts: &[IrStmt], nodes: &HashMap<String, u32>, nested
     })
 }
 
+/// Whether `stmts` assign a reactive node anywhere, including inside block
+/// expressions.
+fn stmts_assign_node(stmts: &[IrStmt], nodes: &HashMap<String, u32>) -> bool {
+    fn code_assigns(code: &[Inst], nodes: &HashMap<String, u32>) -> bool {
+        code.iter().any(|inst| match inst {
+            Inst::LazyIf {
+                then_branch,
+                else_branch,
+            } => code_assigns(then_branch, nodes) || code_assigns(else_branch, nodes),
+            Inst::ShortAnd(inner) | Inst::ShortOr(inner) => code_assigns(inner, nodes),
+            Inst::Block(block) => stmts_assign_node(block, nodes),
+            _ => false,
+        })
+    }
+    stmts.iter().any(|stmt| match stmt {
+        IrStmt::Assign { target, expr, .. } => {
+            nodes.contains_key(target) || code_assigns(expr, nodes)
+        }
+        IrStmt::Let { expr, .. } | IrStmt::Expr { code: expr } => code_assigns(expr, nodes),
+        IrStmt::Emit { args, .. } => args.iter().any(|code| code_assigns(code, nodes)),
+        IrStmt::Return { expr: arg } => arg.as_ref().is_some_and(|code| code_assigns(code, nodes)),
+        IrStmt::If {
+            cond,
+            then_body,
+            else_body,
+        } => {
+            code_assigns(cond, nodes)
+                || stmts_assign_node(then_body, nodes)
+                || else_body
+                    .as_ref()
+                    .is_some_and(|b| stmts_assign_node(b, nodes))
+        }
+        IrStmt::While { cond, body } => code_assigns(cond, nodes) || stmts_assign_node(body, nodes),
+        IrStmt::For { iter, body, .. } => {
+            code_assigns(iter, nodes) || stmts_assign_node(body, nodes)
+        }
+        IrStmt::Break | IrStmt::Continue => false,
+    })
+}
+
 /// Names assigned at the top level of `stmts` (the ones read back after a
 /// compiled handler runs).
 fn top_level_targets(stmts: &[IrStmt], set: &mut HashSet<String>) {
@@ -998,9 +1056,8 @@ fn stmts_call_any(stmts: &[IrStmt], names: &HashSet<&str>) -> bool {
         IrStmt::Assign { expr, .. } | IrStmt::Let { expr, .. } | IrStmt::Expr { code: expr } => {
             code_calls(expr, names)
         }
-        IrStmt::Emit { arg, .. } | IrStmt::Return { expr: arg } => {
-            arg.as_ref().is_some_and(|code| code_calls(code, names))
-        }
+        IrStmt::Emit { args, .. } => args.iter().any(|code| code_calls(code, names)),
+        IrStmt::Return { expr: arg } => arg.as_ref().is_some_and(|code| code_calls(code, names)),
         IrStmt::If {
             cond,
             then_body,

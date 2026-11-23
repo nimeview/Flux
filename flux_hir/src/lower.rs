@@ -77,7 +77,7 @@ fn collect_reassigned_sources(program: &Program) -> HashSet<String> {
         match item {
             Item::Watch(w) => collector.block(&w.body, &locals),
             Item::On(o) => {
-                let locals = o.param.iter().map(|p| p.name.clone()).collect();
+                let locals = o.names().map(|p| p.name.clone()).collect();
                 collector.block(&o.body, &locals);
             }
             Item::Fn(FnDecl { body, params, .. }) | Item::RFn(RFnDecl { body, params, .. }) => {
@@ -198,7 +198,7 @@ impl AssignmentCollector {
                 Stmt::Watch(w) => self.block(&w.body, locals),
                 Stmt::On(o) => {
                     let mut inner = locals.child();
-                    inner.extend(o.param.iter().map(|p| p.name.clone()));
+                    inner.extend(o.names().map(|p| p.name.clone()));
                     self.block(&o.body, &inner);
                 }
                 Stmt::Break(_) | Stmt::Continue(_) => {}
@@ -479,6 +479,7 @@ fn lower_program_inner(
             symbols: symbols.export_symbols(),
         };
         check_unused_bindings(&hir, diagnostics);
+        crate::cycles::check_watch_cycles(&hir, diagnostics);
         Some(hir)
     }
 }
@@ -634,10 +635,12 @@ pub(super) fn declare_item(item: &Item, symbols: &mut SymbolTable) -> Option<Sym
         Item::Event(EventDecl { name, .. }) => symbols
             .declare(&name.name, SymbolKind::Event, name.span)
             .err(),
-        Item::Fn(FnDecl { name, .. }) => symbols
+        Item::Fn(FnDecl { name, kind, .. }) => symbols
             .declare(
                 &name.name,
-                SymbolKind::Function { reactive: false },
+                SymbolKind::Function {
+                    reactive: *kind == flux_syntax::FnKind::Track,
+                },
                 name.span,
             )
             .err(),
@@ -843,6 +846,7 @@ mod assignment_discovery_tests {
             format!("for x in [{write}] {{ {write} }}"),
             format!("let f = |x| {write}"),
             format!("on ev {{ x -> {write} }}"),
+            format!("on ev(x) {{ {write} }}"),
         ] {
             assert!(
                 assigned(&format!("fn f() {{ {body} }}\n")).is_empty(),

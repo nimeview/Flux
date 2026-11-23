@@ -17,6 +17,8 @@ event Scale(n: Int)
 
 event Log(n: Int)
 
+event Switched
+
 let mut temp = 20
 
 let mut target = 21
@@ -31,25 +33,29 @@ let heating = temp < target
 
 let gap = if heating { target - temp } else { 0 }
 
-on Temp { n ->
+on Temp(n) {
     temp = n
 }
 
-on Target { n ->
+on Target(n) {
     target = n
     emit Log(n)
 }
 
-on Scale { n ->
+on Scale(n) {
     scale = n
 }
 
-on Log { n ->
+on Log(n) {
     println("log: target is now {n}")
 }
 
-watch heating {
+on Switched {
     changes = changes + 1
+}
+
+watch heating {
+    emit Switched()
     if heating {
         println("heater on, {gap} to go")
     } else {

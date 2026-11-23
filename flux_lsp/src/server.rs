@@ -47,8 +47,8 @@ use crate::documents::DocumentStore;
 use crate::position::offset_to_position;
 
 const KEYWORDS: &[&str] = &[
-    "fn", "rfn", "watch", "on", "event", "emit", "let", "mut", "derived", "const", "if", "else",
-    "while", "for", "in", "return", "break", "continue", "trait", "impl", "struct", "enum",
+    "fn", "track", "act", "watch", "on", "event", "emit", "let", "mut", "derived", "const", "if",
+    "else", "while", "for", "in", "return", "break", "continue", "trait", "impl", "struct", "enum",
     "import", "match", "true", "false", "snap",
 ];
 
@@ -364,9 +364,16 @@ pub fn document_diagnostics(store: &mut DocumentStore, uri: &Url) -> Vec<Publish
             code: Some(NumberOrString::String(d.code)),
             source: Some("flux".to_string()),
             message: d.message,
-            data: d
-                .replacement
-                .map(|replacement| serde_json::json!({ "replacement": replacement })),
+            data: d.fix.map(|fix| {
+                serde_json::json!({
+                    "title": fix.title,
+                    "replacement": fix.replacement,
+                    "range": Range::new(
+                        Position::new((fix.start_line - 1) as u32, (fix.start_column - 1) as u32),
+                        Position::new((fix.end_line - 1) as u32, (fix.end_column - 1) as u32),
+                    ),
+                })
+            }),
             ..Default::default()
         });
     }
@@ -809,22 +816,30 @@ fn compute_code_actions(
     let mut seen = HashSet::new();
     let mut out = Vec::new();
     for diagnostic in &params.context.diagnostics {
-        // A warning about an older form carries its replacement.
-        if let Some(replacement) = diagnostic
-            .data
-            .as_ref()
-            .and_then(|data| data.get("replacement"))
-            .and_then(|value| value.as_str())
-        {
+        // A warning with a fix carries its edit; the range defaults to the
+        // diagnostic's own.
+        if let Some(data) = diagnostic.data.as_ref() {
+            let Some(replacement) = data.get("replacement").and_then(|v| v.as_str()) else {
+                continue;
+            };
+            let range = data
+                .get("range")
+                .and_then(|r| serde_json::from_value::<Range>(r.clone()).ok())
+                .unwrap_or(diagnostic.range);
+            let title = data
+                .get("title")
+                .and_then(|t| t.as_str())
+                .map(str::to_string)
+                .unwrap_or_else(|| format!("Replace with `{replacement}`"));
             out.push(CodeActionOrCommand::CodeAction(CodeAction {
-                title: format!("Replace with `{replacement}`"),
+                title,
                 kind: Some(CodeActionKind::QUICKFIX),
                 diagnostics: Some(vec![diagnostic.clone()]),
                 edit: Some(WorkspaceEdit {
                     changes: Some(HashMap::from([(
                         uri.clone(),
                         vec![TextEdit {
-                            range: diagnostic.range,
+                            range,
                             new_text: replacement.to_string(),
                         }],
                     )])),

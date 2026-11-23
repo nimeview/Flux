@@ -582,9 +582,12 @@ impl Executor {
         self.call_depth += 1;
         // An interpreted call takes a few KB of native stack; grow it on the
         // heap when it runs low, so the depth limit holds on any thread.
+        // An `act fn` called outside a batch is one.
+        let opened = func.act && self.begin_batch();
         let result = stacker::maybe_grow(64 * 1024, 2 * 1024 * 1024, || {
             self.run_user_fn(name, &func, args)
         });
+        self.end_batch(opened);
         self.call_depth -= 1;
         result
     }
@@ -603,8 +606,8 @@ impl Executor {
     ) -> RuntimeValue {
         // Compiled code does not report what it reads, and a derived value being
         // tracked depends on the reads of what it calls.
-        // While some value is stale, a tracked function could read its old slot.
-        let reads_graph = func.reactive && self.reactive_stale();
+        // While some value is stale, compiled code could read its old slot.
+        let reads_graph = self.reactive_stale() && self.graph_readers.contains(name);
         if !self.vm_only && !self.is_tracking() && !reads_graph {
             match self
                 .backend

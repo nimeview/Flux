@@ -16,7 +16,7 @@ let mut ticks = 0
 
 let doubled = ticks * 2
 
-on Tick { n ->
+on Tick(n) {
     ticks = ticks + n
 }
 

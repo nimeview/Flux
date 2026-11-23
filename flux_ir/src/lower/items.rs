@@ -17,6 +17,7 @@ pub(super) fn lower_fn(f: &HirFn, name: &str, program: &HirProgram) -> CompiledF
     CompiledFunction {
         name: name.to_string(),
         reactive: f.reactive,
+        act: f.act,
         params: f
             .params
             .iter()
@@ -39,6 +40,7 @@ pub(super) fn lower_watch(
     let deps = collect_block_reads(&w.body, program, reactive_fns);
     CompiledWatch {
         target: w.target.and_then(|t| program.names.get(&t).cloned()),
+        prev: w.prev.and_then(|p| runtime_symbol_name(program, &p)),
         deps,
         body: lower_block(&w.body, program),
     }
@@ -51,7 +53,11 @@ pub(super) fn lower_on(o: &HirOn, program: &HirProgram) -> CompiledOnHandler {
             .get(&o.event)
             .cloned()
             .unwrap_or_else(|| "?".into()),
-        param: o.param.and_then(|p| runtime_symbol_name(program, &p)),
+        params: o
+            .params
+            .iter()
+            .filter_map(|p| runtime_symbol_name(program, p))
+            .collect(),
         body: lower_block(&o.body, program),
     }
 }
@@ -104,7 +110,7 @@ fn lower_stmt(stmt: &HirStmt, program: &HirProgram) -> Option<IrStmt> {
         }
         HirStmt::Emit(e) => Some(IrStmt::Emit {
             event: program.names.get(&e.event)?.clone(),
-            arg: e.args.first().map(|a| lower_expr(a, program)),
+            args: e.args.iter().map(|a| lower_expr(a, program)).collect(),
         }),
         HirStmt::Expr(e) => Some(IrStmt::Expr {
             code: lower_expr(e, program),

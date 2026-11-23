@@ -103,9 +103,9 @@ impl JitBackend {
         &self,
         key: &str,
         graph: &ReactiveGraph,
-        param: Option<&RuntimeValue>,
+        params: &[RuntimeValue],
     ) -> Option<HandlerResult> {
-        if !param.is_none_or(flux_value::is_tag_representable) {
+        if !params.iter().all(flux_value::is_tag_representable) {
             return None;
         }
         // The returned slots hold tagged handles: the caller keeps a
@@ -114,8 +114,8 @@ impl JitBackend {
         if !fill_slots(&self.engine, graph, key, &mut slots) {
             return None;
         }
-        let param_tv = param.map(flux_value::value_to_tagged);
-        slots = self.engine.build_stmt_slots(key, &slots, param_tv);
+        let params: Vec<_> = params.iter().map(flux_value::value_to_tagged).collect();
+        slots = self.engine.build_stmt_slots(key, &slots, &params);
         let result = self.engine.run_stmts_with(key, &slots).map(from_tagged)?;
         Some((result, slots))
     }
@@ -265,15 +265,15 @@ impl ActiveBackend {
         &mut self,
         key: &str,
         graph: &ReactiveGraph,
-        param: Option<&RuntimeValue>,
+        params: &[RuntimeValue],
     ) -> Option<HandlerResult> {
         #[cfg(feature = "jit")]
         {
             if let Self::Jit(b) = self {
-                return b.try_run_handler(key, graph, param);
+                return b.try_run_handler(key, graph, params);
             }
         }
-        let _ = (key, graph, param);
+        let _ = (key, graph, params);
         None
     }
 

@@ -16,16 +16,22 @@ pub(super) fn parse_watch(
 ) -> WatchStmt {
     let inner = pair.into_inner();
     let mut target = None;
+    let mut prev = None;
     let mut body = None;
     for child in inner {
         match child.as_rule() {
             Rule::ident => target = Some(parse_ident(source_id, child)),
+            Rule::watch_prev => {
+                let name = child.into_inner().next().expect("prev name");
+                prev = Some(parse_ident(source_id, name));
+            }
             Rule::block => body = Some(parse_block(source_id, child)),
             _ => {}
         }
     }
     WatchStmt {
         target,
+        prev,
         body: body.expect("watch body"),
         span,
     }
@@ -36,22 +42,43 @@ pub(super) fn parse_on(
     pair: pest::iterators::Pair<'_, Rule>,
     span: Span,
 ) -> OnStmt {
-    let mut inner = pair.into_inner();
+    let mut inner = pair.into_inner().peekable();
     let event = parse_ident(source_id, inner.next().expect("on event"));
+    let mut params = Vec::new();
+    if inner.peek().map(|p| p.as_rule()) == Some(Rule::on_params) {
+        let list = inner.next().expect("on params");
+        params = list
+            .into_inner()
+            .flat_map(|l| l.into_inner())
+            .filter(|p| p.as_rule() == Rule::ident)
+            .map(|p| parse_ident(source_id, p))
+            .collect();
+    }
     let handler = inner.next().expect("on handler");
     let (param, body) = parse_handler(source_id, handler);
+    let arrow = param.map(|(name, end)| {
+        let span = Span {
+            source: source_id,
+            start: event.span.end,
+            end,
+        };
+        (name, span)
+    });
     OnStmt {
         event,
-        param,
+        params,
+        arrow,
         body,
         span,
     }
 }
 
+/// The handler's body, and its older `n ->` parameter with the offset where
+/// `->` ends.
 fn parse_handler(
     source_id: SourceId,
     pair: pest::iterators::Pair<'_, Rule>,
-) -> (Option<Ident>, Block) {
+) -> (Option<(Ident, usize)>, Block) {
     let inner = pair.into_inner().next().expect("handler inner");
     match inner.as_rule() {
         Rule::handler_body => {
@@ -59,7 +86,9 @@ fn parse_handler(
             let first = parts.next().expect("handler body part");
             match first.as_rule() {
                 Rule::handler_param => {
+                    let end = first.as_span().end();
                     let param = parse_ident(source_id, first.into_inner().next().unwrap());
+                    let param = (param, end);
                     let stmts = parts.next().expect("handler stmts");
                     let stmts_span = span_of(source_id, &stmts);
                     (Some(param), stmts_to_block(source_id, stmts, stmts_span))

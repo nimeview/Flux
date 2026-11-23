@@ -35,8 +35,20 @@ pub struct RangedDiagnostic {
     pub level: DiagnosticLevel,
     /// File the range is in; `None` means the analyzed document itself.
     pub path: Option<String>,
-    /// Text that replaces the range, for a warning about an older form.
-    pub replacement: Option<String>,
+    /// The edit that resolves the warning, if it has one.
+    pub fix: Option<RangedFix>,
+}
+
+/// A text edit offered as a quick fix. Lines and columns are as in
+/// [`RangedDiagnostic`]; the range may differ from the diagnostic's.
+#[derive(Debug, Clone)]
+pub struct RangedFix {
+    pub title: String,
+    pub start_line: usize,
+    pub start_column: usize,
+    pub end_line: usize,
+    pub end_column: usize,
+    pub replacement: String,
 }
 
 /// Definition site for a symbol, keyed by file path and source span.
@@ -440,8 +452,11 @@ pub fn describe_type(ty: &Type) -> String {
     match ty {
         Type::Cell(inner) => format!("source {}", inner.display()),
         Type::Read(inner) => format!("derived {}", inner.display()),
-        Type::Event(inner) if matches!(inner.as_ref(), Type::Unit) => "event".to_string(),
-        Type::Event(inner) => format!("event({})", inner.display()),
+        Type::Event(values) if values.is_empty() => "event".to_string(),
+        Type::Event(values) => {
+            let values: Vec<String> = values.iter().map(Type::display).collect();
+            format!("event({})", values.join(", "))
+        }
         Type::Func { params, ret } => {
             let ps = params
                 .iter()
@@ -517,7 +532,7 @@ fn to_ranged(
             code,
             level,
             path,
-            replacement: None,
+            fix: None,
         }
     };
     let mut out = Vec::with_capacity(bag.errors.len() + bag.warnings.len());
@@ -536,7 +551,22 @@ fn to_ranged(
             w.code().to_string(),
             DiagnosticLevel::Warning,
         );
-        diagnostic.replacement = w.fix().map(|fix| fix.replacement);
+        // The fix is in the same file as the warning.
+        diagnostic.fix = w.fix().map(|fix| {
+            let index = match source_indexes.get(&fix.span.source) {
+                Some((index, _)) if fix.span.source != SourceId(0) => index,
+                _ => &root_index,
+            };
+            let (sl, sc, el, ec) = index.range(fix.span.start, fix.span.end);
+            RangedFix {
+                title: fix.title,
+                start_line: sl as usize + 1,
+                start_column: sc as usize + 1,
+                end_line: el as usize + 1,
+                end_column: ec as usize + 1,
+                replacement: fix.replacement,
+            }
+        });
         out.push(diagnostic);
     }
     out

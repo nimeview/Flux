@@ -84,6 +84,48 @@ pub struct SymbolTable {
     pub module_aliases: HashMap<String, ()>,
     /// Qualified import lookup: `(alias, export_name)` → symbol.
     pub qualified_symbols: HashMap<(String, String), SymbolId>,
+    /// The function, handler, or watch being lowered, innermost last; empty at
+    /// module level. Decides whether a write to a source warns.
+    pub writers: Vec<Writer>,
+}
+
+/// Code that may change sources, and whether it is allowed to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WriterKind {
+    /// `fn`: warns (E027) and offers `act fn`.
+    Plain,
+    /// `track fn` or `rfn`: warns (E027).
+    Track,
+    /// A method of an `impl`: warns (E027); methods cannot be `act fn` yet.
+    Method,
+    /// `act fn`: changes state.
+    Act,
+    /// An `on` handler: changes state.
+    Handler,
+    /// `watch`: warns (E028).
+    Watch,
+}
+
+#[derive(Debug)]
+pub struct Writer {
+    pub kind: WriterKind,
+    /// The name the user wrote, for messages.
+    pub name: String,
+    /// The `fn` keyword, where the fix writes `act fn`.
+    pub keyword: Option<Span>,
+    /// Sources already reported for this writer: one warning per source.
+    pub warned: std::collections::HashSet<SymbolId>,
+}
+
+impl Writer {
+    pub fn new(kind: WriterKind, name: &str, keyword: Option<Span>) -> Self {
+        Self {
+            kind,
+            name: name.to_string(),
+            keyword,
+            warned: std::collections::HashSet::new(),
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -116,6 +158,7 @@ impl SymbolTable {
             trait_impl_index: HashMap::new(),
             module_aliases: HashMap::new(),
             qualified_symbols: HashMap::new(),
+            writers: Vec::new(),
         }
     }
 

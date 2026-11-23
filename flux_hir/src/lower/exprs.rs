@@ -77,7 +77,7 @@ pub(super) fn lower_expr(
                         } else {
                             format!(
                                 "use `snap({name})` to take a snapshot, or move this code into \
-                                 `watch`, `on`, or `rfn`"
+                                 `watch`, `on`, `track fn`, or `act fn`"
                             )
                         };
                         diagnostics.push(FluxError::ReactiveInPureContext {
@@ -99,7 +99,13 @@ pub(super) fn lower_expr(
         Expr::Call { callee, args, span } => {
             if let Expr::Ident { name, .. } = callee.as_ref() {
                 if name == "snap" {
-                    if scope.context() != crate::CompileContext::PureFn {
+                    // An `act fn` reads without tracking, so `snap(x)` there is
+                    // `x`; allowing it keeps a `fn` that becomes `act fn` valid.
+                    let in_act_fn = symbols
+                        .writers
+                        .last()
+                        .is_some_and(|w| w.kind == crate::symbol::WriterKind::Act);
+                    if scope.context() != crate::CompileContext::PureFn && !in_act_fn {
                         diagnostics.push(FluxError::InvalidControlFlowInDerived {
                             construct: "snap()".into(),
                             span: span_to_miette(*span),
@@ -366,6 +372,7 @@ fn lower_closure(
         symbols,
         diagnostics,
         true,
+        false,
     );
     let uses = symbols.close_closure();
     *reads_reactive |= uses.reads_reactive;

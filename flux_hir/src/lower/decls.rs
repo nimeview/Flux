@@ -9,11 +9,11 @@ use flux_syntax::{
 
 use crate::context::ScopeKind;
 use crate::nodes::{lower_type, *};
-use crate::symbol::{BindingKind, SymbolKind, SymbolTable};
+use crate::symbol::{BindingKind, SymbolKind, SymbolTable, Writer, WriterKind};
 
 use super::constfold::fold_const_hir_expr;
 use super::exprs::lower_expr;
-use super::funcs::lower_fn;
+use super::funcs::lower_fn_as;
 use super::stmts::lower_if;
 
 pub(super) fn lower_trait(decl: &TraitDecl, symbols: &SymbolTable) -> Option<HirTrait> {
@@ -61,7 +61,8 @@ pub(super) fn lower_impl_fns(
         }
         let mut m = method.clone();
         m.name.name = mangled;
-        if let Some(f) = lower_fn(&m, symbols, diagnostics, false) {
+        let writer = Writer::new(WriterKind::Method, &method.name.name, None);
+        if let Some(f) = lower_fn_as(&m, symbols, diagnostics, false, writer) {
             symbols
                 .trait_impl_index
                 .insert((target_name.clone(), method.name.name.clone()), f.name);
@@ -456,27 +457,39 @@ pub(super) fn lower_event(
     symbols: &SymbolTable,
     diagnostics: &mut DiagnosticBag,
 ) -> Option<HirItem> {
-    // Several values are planned (`on Move(x, y)`); until then a second
-    // parameter must not be dropped without a word.
-    if let Some(extra) = decl.params.get(1) {
-        diagnostics.push(FluxError::Parse {
-            message: format!(
-                "event `{}` declares more than one value; an event carries one value for now, so put them in a struct",
-                decl.name.name
-            ),
-            span: span_to_miette(extra.span),
-            source_id: extra.span.source,
-        });
-    }
     let sym = symbols.lookup(&decl.name.name)?;
-    let payload = decl.params.first().map(|p| EventField {
-        name: p.name.name.clone(),
-        ty: lower_type(&p.ty),
-        span: p.span,
-    });
+    for (i, p) in decl.params.iter().enumerate() {
+        if let Some(prev) = decl.params[..i].iter().find(|q| q.name.name == p.name.name) {
+            diagnostics.push(FluxError::DuplicateDefinition {
+                name: p.name.name.clone(),
+                prev_span: span_to_miette(prev.span),
+                span: span_to_miette(p.span),
+                source_id: p.span.source,
+            });
+        }
+    }
+    for (i, p) in decl.params.iter().enumerate() {
+        if let Some(prev) = decl.params[..i].iter().find(|q| q.name.name == p.name.name) {
+            diagnostics.push(FluxError::DuplicateDefinition {
+                name: p.name.name.clone(),
+                prev_span: span_to_miette(prev.span),
+                span: span_to_miette(p.span),
+                source_id: p.span.source,
+            });
+        }
+    }
+    let fields = decl
+        .params
+        .iter()
+        .map(|p| EventField {
+            name: p.name.name.clone(),
+            ty: lower_type(&p.ty),
+            span: p.span,
+        })
+        .collect();
     Some(HirItem::Event(HirEvent {
         name: sym.id,
-        payload,
+        fields,
         span: decl.span,
     }))
 }
