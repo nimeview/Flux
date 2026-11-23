@@ -9,6 +9,7 @@
 //! - [`values`] — pure value helpers (operators, conversions, predicates)
 
 mod eval;
+mod place;
 mod stmts;
 mod values;
 

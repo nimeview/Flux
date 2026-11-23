@@ -49,7 +49,7 @@ use crate::position::offset_to_position;
 const KEYWORDS: &[&str] = &[
     "fn", "track", "act", "watch", "on", "event", "emit", "let", "mut", "derived", "const", "if",
     "else", "while", "for", "in", "return", "break", "continue", "trait", "impl", "struct", "enum",
-    "import", "match", "true", "false", "snap",
+    "import", "match", "true", "false", "snap", "with",
 ];
 
 /// Server capabilities advertised during the `initialize` handshake.

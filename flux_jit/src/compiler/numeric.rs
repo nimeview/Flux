@@ -59,6 +59,7 @@ pub(crate) fn stmts_numeric(stmts: &[IrStmt], jit_fns: &HashSet<String>) -> bool
         IrStmt::Expr { code } => is_numeric_code(code, jit_fns),
         IrStmt::Let { expr, .. } => is_numeric_code(expr, jit_fns),
         IrStmt::Assign { expr, .. } => is_numeric_code(expr, jit_fns),
+        IrStmt::AssignPlace { .. } => false,
         // Handlers run at the `emit`; compiled code could not do that.
         IrStmt::Emit { .. } => false,
         IrStmt::If {
@@ -118,6 +119,11 @@ pub(crate) fn max_call_argc_in_stmts(stmts: &[IrStmt]) -> u32 {
         max = max.max(match stmt {
             IrStmt::Expr { code } => max_call_argc_in_code(code),
             IrStmt::Let { expr, .. } | IrStmt::Assign { expr, .. } => max_call_argc_in_code(expr),
+            IrStmt::AssignPlace { path, expr, .. } => path
+                .iter()
+                .filter_map(|step| step.code())
+                .map(|c| max_call_argc_in_code(c))
+                .fold(max_call_argc_in_code(expr), u32::max),
             IrStmt::Emit { args, .. } => args
                 .iter()
                 .map(|c| max_call_argc_in_code(c))

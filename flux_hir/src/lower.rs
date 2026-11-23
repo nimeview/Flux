@@ -23,8 +23,8 @@ use std::collections::{HashMap, HashSet};
 use flux_diagnostics::{span_to_miette, DiagnosticBag, FluxError};
 use flux_resolve::{link_modules, root_program, LinkedProgram, ResolvedProgram};
 use flux_syntax::{
-    Block, ConstBinding, EnumDecl, EventDecl, FnDecl, ImportDecl, Item, LetPattern, Program,
-    RFnDecl, Stmt, StructDecl, TraitDecl,
+    Block, ConstBinding, EnumDecl, EventDecl, FnDecl, ImportDecl, Item, LetPattern, PlaceStep,
+    Program, RFnDecl, Stmt, StructDecl, TraitDecl,
 };
 
 use crate::nodes::*;
@@ -168,8 +168,10 @@ impl AssignmentCollector {
                     if !locals.contains(&a.name.name) {
                         self.names.insert(a.name.name.clone());
                     }
-                    for index in &a.indices {
-                        self.expr(index, locals);
+                    for step in &a.path {
+                        if let PlaceStep::Index(index) = step {
+                            self.expr(index, locals);
+                        }
                     }
                     self.expr(&a.value, locals);
                 }
@@ -300,6 +302,12 @@ impl AssignmentCollector {
                 }
             }
             Expr::StructLit { fields, .. } => {
+                for field in fields {
+                    self.expr(&field.value, locals);
+                }
+            }
+            Expr::With { base, fields, .. } => {
+                self.expr(base, locals);
                 for field in fields {
                     self.expr(&field.value, locals);
                 }
@@ -480,6 +488,7 @@ fn lower_program_inner(
         };
         check_unused_bindings(&hir, diagnostics);
         crate::cycles::check_watch_cycles(&hir, diagnostics);
+        crate::results::check_unused_results(&hir, diagnostics);
         Some(hir)
     }
 }

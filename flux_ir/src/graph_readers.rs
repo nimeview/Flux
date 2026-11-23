@@ -40,6 +40,18 @@ pub fn graph_readers(program: &CompiledProgram, is_node: impl Fn(&str) -> bool) 
 fn stmts_names<'a>(stmts: &'a [IrStmt], names: &mut HashSet<&'a str>, dynamic: &mut bool) {
     for stmt in stmts {
         match stmt {
+            IrStmt::AssignPlace {
+                target, path, expr, ..
+            } => {
+                // The part is read to update it.
+                names.insert(target.as_str());
+                for step in path {
+                    if let crate::PlaceStep::Index(code) = step {
+                        code_names(code, names, dynamic);
+                    }
+                }
+                code_names(expr, names, dynamic);
+            }
             IrStmt::Assign { expr, .. }
             | IrStmt::Let { expr, .. }
             | IrStmt::Expr { code: expr } => code_names(expr, names, dynamic),

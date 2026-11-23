@@ -400,6 +400,11 @@ impl JitEngine {
                 callable.remove(&func.name);
                 continue;
             }
+            if stmts_assign_place(&func.body) {
+                engine.note_fallback(&func.name, "place_assignment");
+                callable.remove(&func.name);
+                continue;
+            }
             if stmts_leave_loop(&func.body) {
                 engine.note_fallback(&func.name, "break_continue");
                 callable.remove(&func.name);
@@ -506,6 +511,10 @@ impl JitEngine {
                 engine.note_fallback(&key, "emits_events");
                 continue;
             }
+            if stmts_assign_place(&watch.body) {
+                engine.note_fallback(&key, "place_assignment");
+                continue;
+            }
             if !stmts_numeric(&watch.body, &jit_fn_names) {
                 engine.note_fallback(&key, "non_numeric_watch");
                 continue;
@@ -544,6 +553,10 @@ impl JitEngine {
             let key = format!("__on_{i}");
             if stmts_emit(&handler.body) {
                 engine.note_fallback(&key, "emits_events");
+                continue;
+            }
+            if stmts_assign_place(&handler.body) {
+                engine.note_fallback(&key, "place_assignment");
                 continue;
             }
             if !stmts_numeric(&handler.body, &jit_fn_names) {
@@ -893,6 +906,15 @@ fn loads_in_stmts(stmts: &[IrStmt], set: &mut HashSet<String>) {
     for stmt in stmts {
         match stmt {
             IrStmt::Assign { expr, .. } | IrStmt::Let { expr, .. } => loads_in_code(expr, set),
+            IrStmt::AssignPlace {
+                target, path, expr, ..
+            } => {
+                set.insert(target.clone());
+                for code in path.iter().filter_map(|step| step.code()) {
+                    loads_in_code(code, set);
+                }
+                loads_in_code(expr, set);
+            }
             IrStmt::Expr { code } => loads_in_code(code, set),
             IrStmt::Emit { args, .. } => {
                 for code in args {
@@ -953,6 +975,42 @@ fn stmts_leave_loop(stmts: &[IrStmt]) -> bool {
     })
 }
 
+/// Whether `stmts` assign a part of a value (`p.x = v`, `xs[i] += v`) at
+/// any depth; the VM runs those.
+fn stmts_assign_place(stmts: &[IrStmt]) -> bool {
+    fn code_has(code: &[Inst]) -> bool {
+        code.iter().any(|inst| match inst {
+            Inst::Block(block) => stmts_assign_place(block),
+            Inst::LazyIf {
+                then_branch,
+                else_branch,
+            } => code_has(then_branch) || code_has(else_branch),
+            Inst::ShortAnd(inner) | Inst::ShortOr(inner) => code_has(inner),
+            _ => false,
+        })
+    }
+    stmts.iter().any(|stmt| match stmt {
+        IrStmt::AssignPlace { .. } => true,
+        IrStmt::Assign { expr, .. } | IrStmt::Let { expr, .. } | IrStmt::Expr { code: expr } => {
+            code_has(expr)
+        }
+        IrStmt::Emit { args, .. } => args.iter().any(|code| code_has(code)),
+        IrStmt::Return { expr } => expr.as_ref().is_some_and(|code| code_has(code)),
+        IrStmt::If {
+            cond,
+            then_body,
+            else_body,
+        } => {
+            code_has(cond)
+                || stmts_assign_place(then_body)
+                || else_body.as_ref().is_some_and(|b| stmts_assign_place(b))
+        }
+        IrStmt::While { cond, body } => code_has(cond) || stmts_assign_place(body),
+        IrStmt::For { iter, body, .. } => code_has(iter) || stmts_assign_place(body),
+        IrStmt::Break | IrStmt::Continue => false,
+    })
+}
+
 /// Whether `stmts` contain an `emit` (at any depth).
 fn stmts_emit(stmts: &[IrStmt]) -> bool {
     stmts.iter().any(|s| match s {
@@ -1006,6 +1064,16 @@ fn stmts_assign_node(stmts: &[IrStmt], nodes: &HashMap<String, u32>) -> bool {
         IrStmt::Assign { target, expr, .. } => {
             nodes.contains_key(target) || code_assigns(expr, nodes)
         }
+        IrStmt::AssignPlace {
+            target, path, expr, ..
+        } => {
+            nodes.contains_key(target)
+                || code_assigns(expr, nodes)
+                || path
+                    .iter()
+                    .filter_map(|step| step.code())
+                    .any(|code| code_assigns(code, nodes))
+        }
         IrStmt::Let { expr, .. } | IrStmt::Expr { code: expr } => code_assigns(expr, nodes),
         IrStmt::Emit { args, .. } => args.iter().any(|code| code_assigns(code, nodes)),
         IrStmt::Return { expr: arg } => arg.as_ref().is_some_and(|code| code_assigns(code, nodes)),
@@ -1055,6 +1123,13 @@ fn stmts_call_any(stmts: &[IrStmt], names: &HashSet<&str>) -> bool {
     stmts.iter().any(|stmt| match stmt {
         IrStmt::Assign { expr, .. } | IrStmt::Let { expr, .. } | IrStmt::Expr { code: expr } => {
             code_calls(expr, names)
+        }
+        IrStmt::AssignPlace { path, expr, .. } => {
+            code_calls(expr, names)
+                || path
+                    .iter()
+                    .filter_map(|step| step.code())
+                    .any(|code| code_calls(code, names))
         }
         IrStmt::Emit { args, .. } => args.iter().any(|code| code_calls(code, names)),
         IrStmt::Return { expr: arg } => arg.as_ref().is_some_and(|code| code_calls(code, names)),

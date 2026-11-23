@@ -53,6 +53,16 @@ pub enum FluxWarning {
         span: miette::SourceSpan,
         source_id: SourceId,
     },
+    /// A collection function called for a result nobody uses.
+    #[error("the result of `{name}` is not used")]
+    #[diagnostic(code(flux::E030), help("{help}"))]
+    UnusedResult {
+        name: String,
+        help: String,
+        #[label("this value is dropped")]
+        span: miette::SourceSpan,
+        source_id: SourceId,
+    },
     /// A watch changes a source.
     #[error("this watch changes `{name}`")]
     #[diagnostic(
@@ -83,7 +93,8 @@ impl FluxWarning {
             | Self::Deprecated { source_id, .. }
             | Self::WriteOutsideAct { source_id, .. }
             | Self::WatchWrites { source_id, .. }
-            | Self::WatchCycle { source_id, .. } => *source_id,
+            | Self::WatchCycle { source_id, .. }
+            | Self::UnusedResult { source_id, .. } => *source_id,
         }
     }
 
@@ -94,6 +105,7 @@ impl FluxWarning {
             Self::WriteOutsideAct { .. } => "E027",
             Self::WatchWrites { .. } => "E028",
             Self::WatchCycle { .. } => "E029",
+            Self::UnusedResult { .. } => "E030",
         }
     }
 
@@ -104,7 +116,8 @@ impl FluxWarning {
             | Self::Deprecated { span, .. }
             | Self::WriteOutsideAct { span, .. }
             | Self::WatchWrites { span, .. }
-            | Self::WatchCycle { span, .. } => *span,
+            | Self::WatchCycle { span, .. }
+            | Self::UnusedResult { span, .. } => *span,
         };
         span_from_miette(source_id, miette_span)
     }
@@ -129,7 +142,8 @@ impl FluxWarning {
             Self::UnusedBinding { .. }
             | Self::WriteOutsideAct { .. }
             | Self::WatchWrites { .. }
-            | Self::WatchCycle { .. } => None,
+            | Self::WatchCycle { .. }
+            | Self::UnusedResult { .. } => None,
         }
     }
 }

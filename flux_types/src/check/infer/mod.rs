@@ -22,6 +22,7 @@ use super::resolve::resolve_hir_type;
 use super::state::{Scope, TypeCheckContext};
 
 pub(super) use expr::{infer_expr, infer_expr_expected, usable_context};
+pub(crate) use ops::infer_binary;
 
 pub(super) fn infer_block_return(
     ctx: &TypeCheckContext,

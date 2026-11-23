@@ -256,11 +256,21 @@ pub struct LetStmt {
 #[derive(Debug, Clone)]
 pub struct AssignStmt {
     pub name: Ident,
-    /// `name[i]…[j] = value`: the element path, outermost first (empty for a
-    /// plain assignment).
-    pub indices: Vec<Expr>,
+    /// `name[i].f… = value`: the place's path from `name`, outermost first
+    /// (empty for a plain assignment).
+    pub path: Vec<PlaceStep>,
+    /// `+=` and the like: the operator that combines the old value with
+    /// `value`; `None` for `=`.
+    pub op: Option<BinaryOp>,
     pub value: Expr,
     pub span: Span,
+}
+
+/// One step of an assigned place: `[index]` or `.field`.
+#[derive(Debug, Clone)]
+pub enum PlaceStep {
+    Index(Expr),
+    Field(Ident),
 }
 
 #[derive(Debug, Clone)]
@@ -365,6 +375,13 @@ pub enum Expr {
     },
     StructLit {
         name: Ident,
+        fields: Vec<FieldInit>,
+        span: Span,
+    },
+    /// `base with { x: 3 }`: a copy of the struct `base` with these fields
+    /// changed. `base` is evaluated once, then the fields in order.
+    With {
+        base: Box<Expr>,
         fields: Vec<FieldInit>,
         span: Span,
     },
@@ -554,6 +571,7 @@ impl Expr {
             | Self::If { span, .. }
             | Self::Array { span, .. }
             | Self::StructLit { span, .. }
+            | Self::With { span, .. }
             | Self::Match { span, .. }
             | Self::Cast { span, .. }
             | Self::Try { span, .. }

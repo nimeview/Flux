@@ -21,6 +21,8 @@ fn main() {
 [11, 20, 30, 40] 4 20 None
 ```
 
+`push` returns a new array and leaves its argument alone, so `push(xs, 40)` on its own line does nothing; Flux warns about it (E030). Elements also take `+=` and the like: `xs[1] += 5`.
+
 Arrays behave as values. Assigning one to another variable gives you an independent copy, as far as you can tell, and Flux only actually copies when both are still in use:
 
 ```flux
@@ -93,6 +95,37 @@ Point { x: 1, y: 2 } 11 2 false
 ```
 
 `let Point { x, y } = b` takes the fields apart. `==` compares structs field by field, and works the same way for arrays, `Option`, `Result`, and enums.
+
+### Changing a struct
+
+A field of a `let mut` struct can be assigned, and so can a field deep inside arrays and other structs. `p with { ... }` makes a changed copy instead, keeping the fields you do not name:
+
+```flux
+import collections { push }
+
+import io { println }
+
+struct Task {
+    title: String,
+    done: Bool,
+    hours: Int
+}
+
+fn main() {
+    let mut tasks = [Task { title: "write", done: false, hours: 2 }]
+    tasks = push(tasks, Task { title: "test", done: false, hours: 1 })
+    tasks[0].done = true
+    tasks[1].hours += 3
+    let urgent = tasks[1] with { title: "test now" }
+    println("{tasks[0].done} {tasks[1].hours} {urgent.title} {urgent.hours}")
+}
+```
+
+```output
+true 4 test now 4
+```
+
+Each index on the left is evaluated once, before the new value. Like arrays, structs are values: `urgent` is a separate copy, and changing `tasks` later does not change it.
 
 ## Enums and match
 

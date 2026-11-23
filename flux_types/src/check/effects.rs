@@ -127,6 +127,9 @@ fn scan_block(
                 }) {
                     *has_effect = true;
                 }
+                for index in assign.indices() {
+                    scan_expr(index, program, builtin_symbols, calls, has_effect);
+                }
                 scan_expr(&assign.value, program, builtin_symbols, calls, has_effect);
             }
             HirStmt::Emit(emit) => {

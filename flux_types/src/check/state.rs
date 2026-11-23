@@ -177,7 +177,9 @@ impl TypeCheckContext {
             .symbols
             .iter()
             .filter_map(|(id, symbol)| {
-                (symbol.kind == SymbolKind::Builtin && flux_std::is_builtin_fn(&symbol.name))
+                (symbol.kind == SymbolKind::Builtin
+                    && (flux_std::is_builtin_fn(&symbol.name)
+                        || symbol.name == flux_hir::WITH_FIELDS))
                     .then_some(*id)
             })
             .collect();

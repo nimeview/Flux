@@ -506,11 +506,26 @@ fn format_stmt(stmt: &Stmt, out: &mut String, level: usize) {
         Stmt::Assign(a) => {
             indent(out, level);
             let path: String = a
-                .indices
+                .path
                 .iter()
-                .map(|i| format!("[{}]", expr_fmt(i)))
+                .map(|step| match step {
+                    flux_syntax::PlaceStep::Index(i) => format!("[{}]", expr_fmt(i)),
+                    flux_syntax::PlaceStep::Field(f) => format!(".{}", f.name),
+                })
                 .collect();
-            out.push_str(&format!("{}{path} = {}\n", a.name.name, expr_fmt(&a.value)));
+            let op = match a.op {
+                Some(flux_syntax::BinaryOp::Add) => "+=",
+                Some(flux_syntax::BinaryOp::Sub) => "-=",
+                Some(flux_syntax::BinaryOp::Mul) => "*=",
+                Some(flux_syntax::BinaryOp::Div) => "/=",
+                Some(flux_syntax::BinaryOp::Rem) => "%=",
+                _ => "=",
+            };
+            out.push_str(&format!(
+                "{}{path} {op} {}\n",
+                a.name.name,
+                expr_fmt(&a.value)
+            ));
         }
         Stmt::Return(r) => {
             indent(out, level);
@@ -763,6 +778,14 @@ fn expr_fmt(expr: &flux_syntax::Expr) -> String {
         flux_syntax::Expr::Field { base, field, .. } => {
             format!("{}.{}", postfix_base_fmt(base), field)
         }
+        flux_syntax::Expr::With { base, fields, .. } => {
+            let fs = fields
+                .iter()
+                .map(|f| format!("{}: {}", f.name.name, expr_fmt(&f.value)))
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("{} with {{ {fs} }}", postfix_base_fmt(base))
+        }
         flux_syntax::Expr::Closure { params, body, .. } => {
             let ps = params
                 .iter()
@@ -877,7 +900,8 @@ fn expr_prec(expr: &flux_syntax::Expr) -> u8 {
         flux_syntax::Expr::Call { .. }
         | flux_syntax::Expr::Field { .. }
         | flux_syntax::Expr::Index { .. }
-        | flux_syntax::Expr::Try { .. } => PREC_POSTFIX,
+        | flux_syntax::Expr::Try { .. }
+        | flux_syntax::Expr::With { .. } => PREC_POSTFIX,
         _ => PREC_PRIMARY,
     }
 }

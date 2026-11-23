@@ -81,6 +81,14 @@ impl<'a> Slots<'a> {
                         self.bind(target);
                     }
                 }
+                IrStmt::AssignPlace { path, expr, .. } => {
+                    for step in path {
+                        if let crate::PlaceStep::Index(code) = step {
+                            self.collect_code(code);
+                        }
+                    }
+                    self.collect_code(expr);
+                }
                 IrStmt::Let { name, expr, .. } => {
                     self.collect_code(expr);
                     self.bind(name);
@@ -148,6 +156,25 @@ impl<'a> Slots<'a> {
                     self.rewrite_code(expr);
                     // A source is assigned by name even if a local shares
                     // the name: the VM checks sources first.
+                    *slot = if self.sources.contains(target) {
+                        None
+                    } else {
+                        self.map.get(target.as_str()).copied()
+                    };
+                }
+                IrStmt::AssignPlace {
+                    target,
+                    slot,
+                    path,
+                    expr,
+                    ..
+                } => {
+                    for step in path {
+                        if let crate::PlaceStep::Index(code) = step {
+                            self.rewrite_code(code);
+                        }
+                    }
+                    self.rewrite_code(expr);
                     *slot = if self.sources.contains(target) {
                         None
                     } else {

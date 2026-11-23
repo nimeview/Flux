@@ -10,10 +10,15 @@ Notable changes to Flux. The versioning policy is in [`RELEASE.md`](RELEASE.md).
 - A derived value counts as changed only when its new value differs by `==`: `0.0` becoming `-0.0` no longer runs its watches.
 - Changes settle in batches. An `emit` or an `act fn` call opens a batch; all handlers of the event, nested `emit`s, and the `act fn`s they call join it, and watches run once, when it ends. Watches used to run after each handler, and a nested `emit` settled its own handlers' writes before the outer body went on. Migration: code that needs a watch to run between two changes emits them from separate top-level calls.
 - A watch remembers the values it follows and runs only when one differs by `==` from what it saw last time. Assigning a source its current value, or changing it and back within one event, no longer runs its watches. Migration: none unless a program counted such no-op assignments; emit an event for them instead.
+- In a nested element assignment such as `grid[f()][j] = v`, each index is now evaluated once; it used to be evaluated again for every level below it. Migration: none unless an index expression has side effects.
 - A runtime error while settling no longer stops the remaining handlers of the same event from running, since settling now happens after all of them.
 
 ### Added
 
+- Assigning part of a value: a field `p.x = 3`, and paths such as `todos[i].done = true` and `grid[i][j] = v`. Each index is evaluated once.
+- Compound assignment `+=`, `-=`, `*=`, `/=`, and `%=` on any place.
+- `p with { x: 3 }`: a copy of a struct with some fields changed.
+- Warning E030 for a collection function whose result is dropped, such as `push(xs, 3)` on its own line.
 - Events with several values: `event Move(dx: Int, dy: Int)`, `emit Move(1, 2)`, and `on Move(dx, dy) { }`. The older `on Tick { n -> }` still works with warning E026; `flux migrate` rewrites it to `on Tick(n) { }`.
 - Warning E029 for watches that wake each other, or one that wakes itself, in a cycle, found through calls, closures, and emitted events.
 - `watch total(prev) { }` binds the value the watch saw last time.

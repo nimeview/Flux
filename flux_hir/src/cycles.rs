@@ -261,6 +261,13 @@ fn stmt(s: &HirStmt, e: &mut Effects) {
         HirStmt::Let(l) => expr(&l.value, e),
         HirStmt::Assign(a) => {
             e.writes.insert(a.name);
+            // Assigning a part reads the rest of the value.
+            if !a.path.is_empty() {
+                e.reads.insert(a.name);
+            }
+            for index in a.indices() {
+                expr(index, e);
+            }
             expr(&a.value, e);
         }
         HirStmt::Emit(m) => {

@@ -3,7 +3,7 @@
 use flux_diagnostics::{span_to_miette, DiagnosticBag, FluxError, FluxWarning, Span};
 use flux_syntax::{
     AssignStmt, Block, ElseBranch, EmitStmt, Expr, ForStmt, Ident, IfStmt, LetPattern, LetStmt,
-    MatchArm, MatchPattern, ReturnStmt, Stmt, TypeName, UnaryOp, WhileStmt,
+    MatchArm, MatchPattern, PlaceStep, ReturnStmt, Stmt, TypeName, UnaryOp, WhileStmt,
 };
 
 use crate::context::ScopeKind;
@@ -451,7 +451,8 @@ fn lower_stmt(
         }) => lower_local_decl(pattern, ty, value, *span, *mutable, symbols, diagnostics),
         Stmt::Assign(AssignStmt {
             name,
-            indices,
+            path,
+            op,
             value,
             span,
         }) => {
@@ -469,45 +470,66 @@ fn lower_stmt(
             check_writer(sym, &name.name, name.span, symbols, diagnostics);
             let mut reads_reactive = false;
             let scope = tracking_scope(ctx);
+            // The path's indices are evaluated before the value.
+            let mut steps = Vec::with_capacity(path.len());
+            for step in path {
+                steps.push(match step {
+                    PlaceStep::Index(index) => HirPlaceStep::Index(lower_expr(
+                        index,
+                        symbols,
+                        scope,
+                        diagnostics,
+                        &mut reads_reactive,
+                    )?),
+                    PlaceStep::Field(field) => HirPlaceStep::Field {
+                        name: field.name.clone(),
+                        span: field.span,
+                    },
+                });
+            }
             let mut value = lower_expr(value, symbols, scope, diagnostics, &mut reads_reactive)?;
-            if !indices.is_empty() {
-                // `x[i][j] = v` is `x = set(x, i, set(x[i], j, v))`: the
-                // builtin `set` (arrays and maps), whose `x = set(x, …)` form
-                // updates in place.
-                let indices = indices
-                    .iter()
-                    .map(|i| lower_expr(i, symbols, scope, diagnostics, &mut reads_reactive))
-                    .collect::<Option<Vec<_>>>()?;
-                let set_fn = symbols.hidden_builtin("set", *span);
-                let mut containers = vec![HirExpr::Ident {
-                    symbol: sym,
-                    span: name.span,
-                }];
-                for index in &indices[..indices.len() - 1] {
-                    let outer = containers.last().cloned()?;
-                    containers.push(HirExpr::Index {
-                        base: Box::new(outer),
-                        index: Box::new(index.clone()),
+            let _ = reads_reactive;
+            let whole = HirExpr::Ident {
+                symbol: sym,
+                span: name.span,
+            };
+            let assign = |value, path, op| {
+                Some(vec![HirStmt::Assign(HirAssign {
+                    name: sym,
+                    path,
+                    op,
+                    value,
+                    span: *span,
+                })])
+            };
+            match (steps.as_slice(), op) {
+                // `x += v` is `x = x + v`.
+                ([], Some(op)) => {
+                    value = HirExpr::Binary {
+                        op: *op,
+                        left: Box::new(whole),
+                        right: Box::new(value),
                         span: *span,
-                    });
+                    };
+                    assign(value, Vec::new(), None)
                 }
-                for (container, index) in containers.into_iter().zip(indices).rev() {
+                ([], None) => assign(value, Vec::new(), None),
+                // `xs[i] = v` is `xs = set(xs, i, v)`: the builtin `set`
+                // (arrays and maps), which updates in place.
+                ([HirPlaceStep::Index(index)], None) => {
+                    let set_fn = symbols.hidden_builtin("set", *span);
                     value = HirExpr::Call {
                         callee: Box::new(HirExpr::Ident {
                             symbol: set_fn,
                             span: *span,
                         }),
-                        args: vec![container, index, value],
+                        args: vec![whole, index.clone(), value],
                         span: *span,
                     };
+                    assign(value, Vec::new(), None)
                 }
+                _ => assign(value, steps, *op),
             }
-            let _ = reads_reactive;
-            Some(vec![HirStmt::Assign(HirAssign {
-                name: sym,
-                value,
-                span: *span,
-            })])
         }
         Stmt::Emit(EmitStmt { event, args, span }) => {
             let event_id = resolve_name(&event.name, event.span, symbols, diagnostics)?;

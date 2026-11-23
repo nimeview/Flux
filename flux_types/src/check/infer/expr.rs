@@ -105,9 +105,18 @@ fn infer_arm_body(
             }
             // A module binding gets the full check below: it may be read-only.
             HirStmt::Assign(a) if !scope.module().contains_key(&a.name) => {
-                let value = infer_expr(ctx, &a.value, scope, names, source, diagnostics)
+                let target = if a.path.is_empty() {
+                    scope.get(&a.name).cloned()
+                } else {
+                    infer_expr(ctx, &a.place_expr(), scope, names, source, diagnostics)
+                };
+                let mut value = infer_expr(ctx, &a.value, scope, names, source, diagnostics)
                     .unwrap_or(Type::Error);
-                if let Some(target) = scope.get(&a.name).cloned() {
+                if let (Some(op), Some(part)) = (a.op, &target) {
+                    value = super::ops::infer_binary(op, part, &value, a.span, diagnostics)
+                        .unwrap_or(Type::Error);
+                }
+                if let Some(target) = target {
                     check_assignable(&target, &value, a.value.span(), diagnostics);
                 }
             }
@@ -286,6 +295,16 @@ pub(crate) fn infer_expr(
                 if let Some(name) =
                     lookup_name(names, *symbol).filter(|_| ctx.is_builtin_symbol(*symbol))
                 {
+                    if name == flux_hir::WITH_FIELDS {
+                        return super::builtins::infer_with(
+                            ctx,
+                            args,
+                            types,
+                            names,
+                            source,
+                            diagnostics,
+                        );
+                    }
                     if flux_std::is_builtin_fn(name) {
                         return infer_builtin_call(
                             ctx,

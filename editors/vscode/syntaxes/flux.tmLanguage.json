@@ -311,6 +311,10 @@
           "match": "\\bas\\b"
         },
         {
+          "name": "keyword.operator.with.flux",
+          "match": "\\bwith\\b(?=\\s*\\{)"
+        },
+        {
           "name": "storage.type.function.flux",
           "match": "\\bfn\\b"
         },
@@ -373,6 +377,10 @@
         {
           "name": "keyword.operator.arrow.flux",
           "match": "->|=>"
+        },
+        {
+          "name": "keyword.operator.assignment.compound.flux",
+          "match": "[+\\-*/%]="
         },
         {
           "name": "keyword.operator.comparison.flux",

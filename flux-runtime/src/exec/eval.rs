@@ -249,6 +249,24 @@ impl Executor {
                 Inst::Call { name, argc } => {
                     debug_assert_vm(stack.len() >= *argc, "stack underflow in Call arguments");
                     let mut args = stack.split_off(stack.len().saturating_sub(*argc));
+                    // `base with { x: v }`: `(base, "x", v, ...)`; the struct
+                    // is copied only if something else holds it.
+                    if name == flux_ir::WITH_FIELDS {
+                        let mut parts = args.into_iter();
+                        let mut base = parts.next().unwrap_or(RuntimeValue::Unit);
+                        if let RuntimeValue::UserStruct(s) = &mut base {
+                            let fields = &mut std::sync::Arc::make_mut(s).fields;
+                            while let (Some(RuntimeValue::String(field)), Some(value)) =
+                                (parts.next(), parts.next())
+                            {
+                                fields.insert(field, value);
+                            }
+                        } else {
+                            debug_assert_vm(false, &format!("`with` on {base:?}"));
+                        }
+                        stack.push(base);
+                        continue;
+                    }
                     // Builtin `push` on an array: append in place. `make_mut`
                     // copies only if the array is still shared, so value
                     // semantics are unchanged.

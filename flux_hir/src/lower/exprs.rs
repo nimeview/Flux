@@ -219,6 +219,46 @@ pub(super) fn lower_expr(
                 .collect();
             Some(HirExpr::Array { elems, span: *span })
         }
+        // `base with { x: v }` is a call of the hidden builtin
+        // [`WITH_FIELDS`] with the base, then each field's name and value.
+        Expr::With { base, fields, span } => {
+            let mut args = vec![lower_expr(
+                base,
+                symbols,
+                scope,
+                diagnostics,
+                reads_reactive,
+            )?];
+            for (i, field) in fields.iter().enumerate() {
+                if let Some(prev) = fields[..i].iter().find(|f| f.name.name == field.name.name) {
+                    diagnostics.push(FluxError::DuplicateDefinition {
+                        name: field.name.name.clone(),
+                        prev_span: span_to_miette(prev.name.span),
+                        span: span_to_miette(field.name.span),
+                        source_id: field.name.span.source,
+                    });
+                }
+                args.push(HirExpr::String {
+                    value: field.name.name.clone(),
+                    span: field.name.span,
+                });
+                args.push(lower_expr(
+                    &field.value,
+                    symbols,
+                    scope,
+                    diagnostics,
+                    reads_reactive,
+                )?);
+            }
+            Some(HirExpr::Call {
+                callee: Box::new(HirExpr::Ident {
+                    symbol: symbols.hidden_builtin(WITH_FIELDS, *span),
+                    span: *span,
+                }),
+                args,
+                span: *span,
+            })
+        }
         Expr::StructLit { name, fields, span } => {
             let fields = fields
                 .iter()

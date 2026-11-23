@@ -168,6 +168,22 @@ fn validate_stmt(stmt: &IrStmt, allowed: &mut Allowed<'_>, context: &str) -> Res
             validate_code(expr, allowed.clone(), context)?;
             allowed.insert(target.clone());
         }
+        IrStmt::AssignPlace {
+            target, path, expr, ..
+        } => {
+            // The target must exist: its part is read and replaced.
+            validate_code(
+                &[flux_ir::Inst::Load(target.clone())],
+                allowed.clone(),
+                context,
+            )?;
+            for step in path {
+                if let flux_ir::PlaceStep::Index(code) = step {
+                    validate_code(code, allowed.clone(), context)?;
+                }
+            }
+            validate_code(expr, allowed.clone(), context)?;
+        }
         IrStmt::Let { name, expr, .. } => {
             validate_code(expr, allowed.clone(), context)?;
             allowed.insert(name.clone());

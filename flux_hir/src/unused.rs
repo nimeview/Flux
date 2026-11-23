@@ -65,6 +65,9 @@ fn collect_uses_item(item: &HirItem, used: &mut HashSet<SymbolId>) {
         HirItem::InitIf(i) => collect_uses_if(i, used),
         HirItem::SourceAssign(a) => {
             used.insert(a.name);
+            for index in a.indices() {
+                collect_uses_expr(index, used);
+            }
             collect_uses_expr(&a.value, used);
         }
         HirItem::Struct(_)
@@ -86,6 +89,9 @@ fn collect_uses_stmt(stmt: &HirStmt, used: &mut HashSet<SymbolId>) {
         HirStmt::Let(l) => collect_uses_expr(&l.value, used),
         HirStmt::Assign(a) => {
             used.insert(a.name);
+            for index in a.indices() {
+                collect_uses_expr(index, used);
+            }
             collect_uses_expr(&a.value, used);
         }
         HirStmt::Emit(e) => {

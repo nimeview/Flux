@@ -194,8 +194,67 @@ pub struct HirLet {
 #[derive(Debug, Clone)]
 pub struct HirAssign {
     pub name: SymbolId,
+    /// The steps from `name` to the assigned part (`p.x`, `grid[i][j]`);
+    /// empty when the whole value is assigned. Each index is evaluated once,
+    /// before `value`.
+    pub path: Vec<HirPlaceStep>,
+    /// `+=` and the like on a path: the part becomes `part op value`. (A
+    /// plain `x += v` is lowered to `x = x + v`.)
+    pub op: Option<flux_syntax::BinaryOp>,
     pub value: HirExpr,
     pub span: Span,
+}
+
+/// One step of an assigned place.
+#[derive(Debug, Clone)]
+pub enum HirPlaceStep {
+    Index(HirExpr),
+    Field { name: String, span: Span },
+}
+
+/// The hidden builtin that `base with { x: v, y: w }` calls, as
+/// `(base, "x", v, "y", w)`. No user name can be spelled with a NUL.
+pub const WITH_FIELDS: &str = "\0with";
+
+impl HirAssign {
+    /// The assigned part read as an expression (`p.x`, `grid[i][j]`), for
+    /// type checking.
+    pub fn place_expr(&self) -> HirExpr {
+        let mut place = HirExpr::Ident {
+            symbol: self.name,
+            span: self.span,
+        };
+        for step in &self.path {
+            place = match step {
+                HirPlaceStep::Index(index) => HirExpr::Index {
+                    base: Box::new(place),
+                    index: Box::new(index.clone()),
+                    span: self.span,
+                },
+                HirPlaceStep::Field { name, span } => HirExpr::Field {
+                    base: Box::new(place),
+                    field: name.clone(),
+                    span: *span,
+                },
+            };
+        }
+        place
+    }
+
+    /// The index expressions of the path, outermost first.
+    pub fn indices(&self) -> impl Iterator<Item = &HirExpr> {
+        self.path.iter().filter_map(|step| match step {
+            HirPlaceStep::Index(index) => Some(index),
+            HirPlaceStep::Field { .. } => None,
+        })
+    }
+
+    pub fn indices_mut(&mut self) -> impl Iterator<Item = &mut HirExpr> {
+        self.path.iter_mut().filter_map(|step| match step {
+            HirPlaceStep::Index(index) => Some(index),
+            HirPlaceStep::Field { .. } => None,
+        })
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -380,21 +439,37 @@ pub enum PatShape {
 impl HirMatchArm {
     /// Expressions evaluated by the block-arm statements, in order.
     pub fn body_exprs(&self) -> impl Iterator<Item = &HirExpr> {
-        self.body.stmts.iter().filter_map(|stmt| match stmt {
-            HirStmt::Let(l) => Some(&l.value),
-            HirStmt::Assign(a) => Some(&a.value),
-            HirStmt::Expr(e) => Some(e),
-            _ => None,
+        self.body.stmts.iter().flat_map(|stmt| -> Vec<&HirExpr> {
+            match stmt {
+                HirStmt::Let(l) => vec![&l.value],
+                HirStmt::Assign(a) => a.indices().chain([&a.value]).collect(),
+                HirStmt::Expr(e) => vec![e],
+                _ => Vec::new(),
+            }
         })
     }
 
     pub fn body_exprs_mut(&mut self) -> impl Iterator<Item = &mut HirExpr> {
-        self.body.stmts.iter_mut().filter_map(|stmt| match stmt {
-            HirStmt::Let(l) => Some(&mut l.value),
-            HirStmt::Assign(a) => Some(&mut a.value),
-            HirStmt::Expr(e) => Some(e),
-            _ => None,
-        })
+        self.body
+            .stmts
+            .iter_mut()
+            .flat_map(|stmt| -> Vec<&mut HirExpr> {
+                match stmt {
+                    HirStmt::Let(l) => vec![&mut l.value],
+                    HirStmt::Assign(a) => {
+                        let HirAssign { path, value, .. } = a;
+                        path.iter_mut()
+                            .filter_map(|step| match step {
+                                HirPlaceStep::Index(index) => Some(index),
+                                HirPlaceStep::Field { .. } => None,
+                            })
+                            .chain([value])
+                            .collect()
+                    }
+                    HirStmt::Expr(e) => vec![e],
+                    _ => Vec::new(),
+                }
+            })
     }
 }
 

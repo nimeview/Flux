@@ -9,15 +9,16 @@ fn main() {
     let name = "Flux"
     let mut count = 1
     count = count + 1
+    count += 1
     println("{name} has {count} engines")
 }
 ```
 
 ```output
-Flux has 2 engines
+Flux has 3 engines
 ```
 
-Inside a function, `let` declares a variable you cannot reassign, and `let mut` one you can. Types are inferred, and you can write them when you want to:
+Inside a function, `let` declares a variable you cannot reassign, and `let mut` one you can. `count += 1` is short for `count = count + 1`; `-=`, `*=`, `/=`, and `%=` work the same way. Types are inferred, and you can write them when you want to:
 
 ```flux
 import io { println }

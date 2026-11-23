@@ -8,6 +8,7 @@ use std::collections::{BTreeMap, HashMap};
 use serde::{Deserialize, Serialize};
 
 pub use codegen::{Codegen, IrCodegen};
+pub use flux_hir::WITH_FIELDS;
 pub use graph_readers::graph_readers;
 pub use lower::lower_to_ir;
 pub use resolve::resolve_locals;
@@ -232,6 +233,35 @@ pub enum Inst {
     },
 }
 
+/// One step of an assigned place.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum PlaceStep {
+    /// `[index]` of an array or map.
+    Index(Vec<Inst>),
+    /// `.field` of a struct.
+    Field(String),
+}
+
+impl PlaceStep {
+    /// The index's code, if the step has one.
+    pub fn code(&self) -> Option<&Vec<Inst>> {
+        match self {
+            PlaceStep::Index(code) => Some(code),
+            PlaceStep::Field(_) => None,
+        }
+    }
+}
+
+/// The operator of a compound assignment (`+=` and the like).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum PlaceOp {
+    Add,
+    Sub,
+    Mul,
+    Div,
+    Rem,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum IrStmt {
     /// `slot` is the target's frame slot, or `None` for a reactive source
@@ -239,6 +269,17 @@ pub enum IrStmt {
     Assign {
         target: String,
         slot: Option<u32>,
+        expr: Vec<Inst>,
+    },
+    /// `p.x = v`, `grid[i][j] = v`, `xs[i] += v`: a part of `target`, reached
+    /// through `path`. The path's indices are evaluated once, in order, then
+    /// `expr`; with `op`, the part becomes `part op value`. The value is
+    /// updated in place when nothing else holds it. `slot` as for `Assign`.
+    AssignPlace {
+        target: String,
+        slot: Option<u32>,
+        path: Vec<PlaceStep>,
+        op: Option<PlaceOp>,
         expr: Vec<Inst>,
     },
     /// `slot` is set by [`resolve_locals`].

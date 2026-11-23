@@ -192,6 +192,10 @@ pub(super) fn tree_depth_exceeds(program: &Program) -> Option<Span> {
                     Expr::StructLit { fields, .. } => {
                         work.extend(fields.iter().map(|f| (Node::Expr(&f.value), d)));
                     }
+                    Expr::With { base, fields, .. } => {
+                        work.push((Node::Expr(base), d));
+                        work.extend(fields.iter().map(|f| (Node::Expr(&f.value), d)));
+                    }
                     Expr::Match {
                         scrutinee, arms, ..
                     } => {

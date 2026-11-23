@@ -320,10 +320,14 @@ fn emit_expr(expr: &HirExpr, program: &HirProgram, code: &mut Vec<Inst>) {
                 // as a statement, so that it propagates.
                 let inline = arm.body.stmts.iter().all(|s| match s {
                     HirStmt::Let(_) | HirStmt::Expr(_) => true,
-                    HirStmt::Assign(a) => !matches!(
-                        program.symbols.get(&a.name).map(|symbol| symbol.kind),
-                        Some(SymbolKind::Source | SymbolKind::Derived)
-                    ),
+                    // A path runs as a statement too: it is not a binding.
+                    HirStmt::Assign(a) => {
+                        a.path.is_empty()
+                            && !matches!(
+                                program.symbols.get(&a.name).map(|symbol| symbol.kind),
+                                Some(SymbolKind::Source | SymbolKind::Derived)
+                            )
+                    }
                     _ => false,
                 });
                 if inline {

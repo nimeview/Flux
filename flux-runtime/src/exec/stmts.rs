@@ -100,6 +100,90 @@ impl Executor {
                     flow: FlowControl::None,
                 }
             }
+            IrStmt::AssignPlace {
+                target,
+                slot,
+                path,
+                op,
+                expr,
+            } => {
+                let mut keys = Vec::with_capacity(path.len());
+                for step in path {
+                    keys.push(match step {
+                        flux_ir::PlaceStep::Index(code) => {
+                            let index = self.eval_expr(code, locals);
+                            if let Some(stop) = self.interrupted() {
+                                return stop;
+                            }
+                            super::place::Key::Index(index)
+                        }
+                        flux_ir::PlaceStep::Field(name) => super::place::Key::Field(name),
+                    });
+                }
+                // `part op= v` reads the old part before evaluating `v`.
+                let old = match op {
+                    Some(_) => {
+                        let root = match slot {
+                            Some(slot) => locals.get(*slot),
+                            None => self.graph.get_by_name(target),
+                        };
+                        let old = root.map_or(Err(flux_value::ArithError::Internal), |root| {
+                            super::place::get(root, &keys)
+                        });
+                        match old {
+                            Ok(old) => Some(old),
+                            Err(error) => {
+                                self.raise(error);
+                                return self.interrupted().unwrap_or(StmtResult {
+                                    value: RuntimeValue::Unit,
+                                    flow: FlowControl::None,
+                                });
+                            }
+                        }
+                    }
+                    None => None,
+                };
+                let value = self.eval_expr(expr, locals);
+                if let Some(stop) = self.interrupted() {
+                    return stop;
+                }
+                let value = match (op, old) {
+                    (Some(op), Some(old)) => super::place::combine(*op, old, value),
+                    _ => Ok(value),
+                };
+                let result = value.and_then(|value| match slot {
+                    // A local is taken out, so nothing else holds it and the
+                    // update is in place.
+                    Some(slot) => {
+                        let mut root = locals.take(*slot).unwrap_or(RuntimeValue::Unit);
+                        let result = super::place::update(&mut root, &keys, value);
+                        locals.set(*slot, root);
+                        result
+                    }
+                    None => {
+                        let mut root = self
+                            .graph
+                            .get_by_name(target)
+                            .cloned()
+                            .unwrap_or(RuntimeValue::Unit);
+                        let result = super::place::update(&mut root, &keys, value);
+                        if result.is_ok() {
+                            self.set_source(target, root);
+                        }
+                        result
+                    }
+                });
+                if let Err(error) = result {
+                    self.raise(error);
+                    if let Some(stop) = self.interrupted() {
+                        return stop;
+                    }
+                }
+                StmtResult {
+                    value: RuntimeValue::Unit,
+                    flow: FlowControl::None,
+                }
+            }
             IrStmt::Let { slot, expr, .. } => {
                 let value = self.eval_expr(expr, locals);
                 if let Some(stop) = self.interrupted() {

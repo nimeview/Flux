@@ -52,7 +52,16 @@ fn collect_stmt_reads(
     set: &mut HashSet<SymbolId>,
 ) {
     match stmt {
-        HirStmt::Assign(a) => collect_expr_reads(&a.value, program, reactive_fns, set),
+        HirStmt::Assign(a) => {
+            // Assigning a part reads the rest of the value.
+            if !a.path.is_empty() {
+                set.insert(a.name);
+            }
+            for index in a.indices() {
+                collect_expr_reads(index, program, reactive_fns, set);
+            }
+            collect_expr_reads(&a.value, program, reactive_fns, set);
+        }
         HirStmt::Emit(e) => {
             for a in &e.args {
                 collect_expr_reads(a, program, reactive_fns, set);

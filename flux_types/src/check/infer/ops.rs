@@ -48,7 +48,7 @@ pub(crate) fn equality_allowed(l: &Type, r: &Type) -> bool {
         || (types_compatible(&l, &r) && types_compatible(&r, &l) && equality_supported(&l))
 }
 
-pub(super) fn infer_binary(
+pub(crate) fn infer_binary(
     op: BinaryOp,
     left: &Type,
     right: &Type,

@@ -111,9 +111,14 @@ break_stmt = @{ "break" ~ kw_end }
 continue_stmt = @{ "continue" ~ kw_end }
 
 let_stmt = { "let" ~ mut_modifier? ~ let_pattern ~ type_ann? ~ "=" ~ expr }
-// `x = v`, or an element: `xs[i] = v`, `grid[i][j] = v`, `m[k] = v`.
-assign_stmt = { ident ~ assign_index* ~ "=" ~ expr }
+// `x = v`, or a part of `x`: an element `xs[i] = v`, `m[k] = v`, a field
+// `p.x = v`, or a path of them `grid[i][j].done = v`; `+=`, `-=`, `*=`, `/=`,
+// and `%=` combine the old value with the new one.
+assign_stmt = { ident ~ place_step* ~ assign_op ~ expr }
+place_step = { assign_index | assign_field }
 assign_index = { "[" ~ expr ~ "]" }
+assign_field = { "." ~ ident }
+assign_op = { "+=" | "-=" | "*=" | "/=" | "%=" | "=" }
 emit_stmt = { "emit" ~ ident ~ emit_args? }
 emit_args = { "(" ~ expr_list? ~ ")" }
 expr_stmt = { expr }
@@ -161,7 +166,10 @@ cast_expr = { unary_expr ~ (kw_as ~ type_name)* }
 unary_expr = { unary_op ~ unary_expr | postfix_expr }
 unary_op = { "-" | "!" }
 
-postfix_expr = { primary_expr ~ (call_suffix | field_suffix | index_suffix | try_suffix)* }
+postfix_expr = { primary_expr ~ (call_suffix | field_suffix | index_suffix | try_suffix | with_suffix)* }
+// `p with { x: 3 }`: a copy of the struct `p` with some fields changed.
+with_suffix = { kw_with ~ "{" ~ field_init ~ ("," ~ field_init)* ~ ","? ~ "}" }
+kw_with = @{ "with" ~ kw_end }
 // `xs[i]`: the element at `i` (out of range is a runtime error).
 index_suffix = { "[" ~ expr ~ "]" }
 // `expr?`: the `Ok`/`Some` value, or return the `Err`/`None` from the function.

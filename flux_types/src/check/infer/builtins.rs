@@ -768,3 +768,66 @@ fn check_arg(
     }
     got
 }
+
+/// `base with { x: v }`, lowered to `(base, "x", v, ...)`: the base must be a
+/// struct with those fields, and each value must fit its field. The result
+/// has the base's type.
+pub(super) fn infer_with(
+    ctx: &TypeCheckContext,
+    args: &[HirExpr],
+    types: &Scope<'_>,
+    names: &HashMap<SymbolId, String>,
+    source: SourceId,
+    diagnostics: &mut DiagnosticBag,
+) -> Option<Type> {
+    let (base, pairs) = args.split_first()?;
+    let base_ty = unwrap_value_type(&infer_expr(ctx, base, types, names, source, diagnostics)?);
+    let expanded = ctx.expand(base_ty.clone());
+    let fields = match &expanded {
+        Type::Struct { fields, .. } => Some(fields.clone()),
+        Type::Error => None,
+        other => {
+            diagnostics.push(FluxError::TypeMismatch {
+                expected: "a struct".into(),
+                found: other.display(),
+                span: span_to_miette(base.span()),
+                source_id: base.span().source,
+            });
+            None
+        }
+    };
+    for pair in pairs.chunks(2) {
+        let [HirExpr::String {
+            value: name,
+            span: name_span,
+        }, value] = pair
+        else {
+            continue;
+        };
+        let got = infer_expr(ctx, value, types, names, source, diagnostics)
+            .map(|ty| unwrap_value_type(&ty))
+            .unwrap_or(Type::Error);
+        let Some(fields) = &fields else {
+            continue;
+        };
+        match fields.iter().find(|(field, _)| field == name) {
+            None => diagnostics.push(FluxError::TypeMismatch {
+                expected: format!("field `{name}`"),
+                found: expanded.display(),
+                span: span_to_miette(*name_span),
+                source_id: name_span.source,
+            }),
+            Some((_, want)) => {
+                if !want.is_error() && !got.is_error() && !types_compatible(want, &got) {
+                    diagnostics.push(FluxError::TypeMismatch {
+                        expected: want.display(),
+                        found: got.display(),
+                        span: span_to_miette(value.span()),
+                        source_id: value.span().source,
+                    });
+                }
+            }
+        }
+    }
+    Some(base_ty)
+}

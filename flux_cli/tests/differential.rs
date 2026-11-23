@@ -236,8 +236,10 @@ impl ReactiveGen {
     }
 
     fn handler_stmt(&mut self, depth: u32) -> String {
-        match self.pick(12) {
+        match self.pick(14) {
             9 => format!("b = bump({})", self.int_expr(1, 0)),
+            12 => format!("a += {}", self.int_expr(1, 0)),
+            13 => format!("xs[{} % 2] *= {}", self.int_expr(1, 0), self.int_expr(0, 0)),
             10 if depth > 0 => format!("emit M({}, {})", self.int_expr(1, 0), self.int_expr(1, 0)),
             0..=2 => format!("a = {}", self.int_expr(2, 0)),
             3 => format!("b = {}", self.int_expr(1, 0)),

@@ -98,6 +98,42 @@ fn stmt_span(stmt: &HirStmt) -> Span {
 
 fn lower_stmt(stmt: &HirStmt, program: &HirProgram) -> Option<IrStmt> {
     match stmt {
+        HirStmt::Assign(a) if !a.path.is_empty() => Some(IrStmt::AssignPlace {
+            target: runtime_symbol_name(program, &a.name)?,
+            slot: None,
+            path: a
+                .path
+                .iter()
+                .map(|step| match step {
+                    flux_hir::HirPlaceStep::Index(index) => {
+                        crate::PlaceStep::Index(lower_expr(index, program))
+                    }
+                    flux_hir::HirPlaceStep::Field { name, .. } => {
+                        crate::PlaceStep::Field(name.clone())
+                    }
+                })
+                .collect(),
+            op: a.op.map(|op| match op {
+                flux_syntax::BinaryOp::Sub => crate::PlaceOp::Sub,
+                flux_syntax::BinaryOp::Mul => crate::PlaceOp::Mul,
+                flux_syntax::BinaryOp::Div => crate::PlaceOp::Div,
+                flux_syntax::BinaryOp::Rem => crate::PlaceOp::Rem,
+                _ => crate::PlaceOp::Add,
+            }),
+            expr: lower_expr(&a.value, program),
+        }),
+        // `xs = set(xs, i, v)` (also how `xs[i] = v` is checked) updates the
+        // element in place even when `v` reads `xs`; `set` would copy then.
+        HirStmt::Assign(a) if set_of_self(a, program).is_some() => {
+            let [_, index, value] = set_of_self(a, program)?;
+            Some(IrStmt::AssignPlace {
+                target: runtime_symbol_name(program, &a.name)?,
+                slot: None,
+                path: vec![crate::PlaceStep::Index(lower_expr(index, program))],
+                op: None,
+                expr: lower_expr(value, program),
+            })
+        }
         HirStmt::Assign(a) => {
             let target = runtime_symbol_name(program, &a.name)?;
             let mut expr = lower_expr(&a.value, program);
@@ -169,6 +205,80 @@ pub(super) fn const_expr(expr: &HirExpr) -> Option<IrValue> {
 /// `x = set(x, i, v)` likewise). When the other arguments do not touch `x`,
 /// loading `x` by move leaves the array unshared, so the VM updates it in
 /// place instead of copying it (O(1) rather than O(n)).
+/// The arguments of `x = set(x, i, v)`: the builtin `set` applied to the
+/// assigned binding itself.
+fn set_of_self<'a>(a: &'a flux_hir::HirAssign, program: &HirProgram) -> Option<&'a [HirExpr; 3]> {
+    if !a.path.is_empty() {
+        return None;
+    }
+    let HirExpr::Call { callee, args, .. } = &a.value else {
+        return None;
+    };
+    let HirExpr::Ident { symbol, .. } = callee.as_ref() else {
+        return None;
+    };
+    let builtin = program
+        .symbols
+        .get(symbol)
+        .is_some_and(|s| s.kind == flux_hir::SymbolKind::Builtin && s.name == "set");
+    let args: &[HirExpr; 3] = args.as_slice().try_into().ok()?;
+    // `set` reads `x` before its other arguments; only a match-arm block in
+    // them could assign `x` in between, so those keep the call.
+    if has_arm_block(&args[1]) || has_arm_block(&args[2]) {
+        return None;
+    }
+    match &args[0] {
+        HirExpr::Ident { symbol, .. } if builtin && *symbol == a.name => Some(args),
+        _ => None,
+    }
+}
+
+/// Whether `e` contains a `match` arm with statements.
+fn has_arm_block(e: &HirExpr) -> bool {
+    match e {
+        HirExpr::Match {
+            scrutinee, arms, ..
+        } => {
+            has_arm_block(scrutinee)
+                || arms.iter().any(|arm| {
+                    !arm.body.stmts.is_empty()
+                        || arm.guard.as_ref().is_some_and(has_arm_block)
+                        || has_arm_block(&arm.expr)
+                })
+        }
+        HirExpr::Snap { expr, .. }
+        | HirExpr::Field { base: expr, .. }
+        | HirExpr::Unary { expr, .. }
+        | HirExpr::Cast { expr, .. }
+        | HirExpr::ToText { expr, .. }
+        | HirExpr::Try { expr, .. } => has_arm_block(expr),
+        HirExpr::Call { callee, args, .. } => {
+            has_arm_block(callee) || args.iter().any(has_arm_block)
+        }
+        HirExpr::Binary { left, right, .. }
+        | HirExpr::Index {
+            base: left,
+            index: right,
+            ..
+        } => has_arm_block(left) || has_arm_block(right),
+        HirExpr::If {
+            cond,
+            then_expr,
+            else_expr,
+            ..
+        } => has_arm_block(cond) || has_arm_block(then_expr) || has_arm_block(else_expr),
+        HirExpr::Array { elems, .. } => elems.iter().any(has_arm_block),
+        HirExpr::StructLit { fields, .. } => fields.iter().any(|(_, v)| has_arm_block(v)),
+        HirExpr::EnumVariant { payload, .. } => payload.as_deref().is_some_and(has_arm_block),
+        HirExpr::Int { .. }
+        | HirExpr::Float { .. }
+        | HirExpr::Bool { .. }
+        | HirExpr::String { .. }
+        | HirExpr::Ident { .. }
+        | HirExpr::Closure { .. } => false,
+    }
+}
+
 fn take_for_push(target: &str, code: &mut [Inst]) {
     if !target.starts_with("\0flux_local_") {
         return;

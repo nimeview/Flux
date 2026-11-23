@@ -34,6 +34,8 @@ pub(crate) fn lower_stmts(
 
     for stmt in stmts {
         match stmt {
+            // Runs on the VM (`place_assignment`).
+            IrStmt::AssignPlace { .. } => return None,
             IrStmt::Expr { code } => {
                 last = lower_insts(
                     code, layout, slots_ptr, ptr_ty, host_slots, jit_fns, host_funcs, tables,

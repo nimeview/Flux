@@ -441,7 +441,10 @@ pub(super) fn check_stmt(
                 }
             }
         }
-        HirStmt::Assign(HirAssign { name, value, span }) => {
+        HirStmt::Assign(assign) => {
+            let HirAssign {
+                name, value, span, ..
+            } = assign;
             if let Some(local_name) = names.get(name) {
                 // Only the module `const` itself: a local of the same name
                 // (`let mut x` in a function, beside `const x`) is assignable.
@@ -475,12 +478,26 @@ pub(super) fn check_stmt(
                     });
                 }
             }
-            let expected = module
-                .get(name)
-                .or_else(|| scope.get(name))
-                .map(unwrap_value_type);
+            // A path assigns a part: `p.x`, `xs[i].done`.
+            let expected = if assign.path.is_empty() {
+                module
+                    .get(name)
+                    .or_else(|| scope.get(name))
+                    .map(unwrap_value_type)
+            } else {
+                infer_expr(ctx, &assign.place_expr(), scope, names, source, diagnostics)
+                    .map(|ty| unwrap_value_type(&ty))
+            };
             let got = infer_expr(ctx, value, scope, names, source, diagnostics)
                 .map(|ty| unwrap_value_type(&ty));
+            // `part op= value` stores `part op value`.
+            let got = match (assign.op, &expected, got) {
+                (Some(op), Some(part), Some(got)) => {
+                    super::infer::infer_binary(op, part, &got, *span, diagnostics)
+                        .map(|ty| unwrap_value_type(&ty))
+                }
+                (_, _, got) => got,
+            };
             if let (Some(expected), Some(got)) = (expected, got) {
                 if !expected.is_error() && !got.is_error() && !types_compatible(&expected, &got) {
                     diagnostics.push(FluxError::TypeMismatch {

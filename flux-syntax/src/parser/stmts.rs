@@ -155,14 +155,28 @@ pub(super) fn parse_stmt(
         Rule::assign_stmt => {
             let mut inner = pair.into_inner().peekable();
             let name = parse_ident(source_id, inner.next().expect("assign name"));
-            let mut indices = Vec::new();
-            while let Some(p) = inner.next_if(|p| p.as_rule() == Rule::assign_index) {
-                indices.push(parse_expr(source_id, p.into_inner().next().expect("index")));
+            let mut path = Vec::new();
+            while let Some(p) = inner.next_if(|p| p.as_rule() == Rule::place_step) {
+                let step = p.into_inner().next().expect("place step");
+                let part = step.clone().into_inner().next().expect("place step part");
+                path.push(match step.as_rule() {
+                    Rule::assign_field => PlaceStep::Field(parse_ident(source_id, part)),
+                    _ => PlaceStep::Index(parse_expr(source_id, part)),
+                });
             }
+            let op = match inner.next().expect("assign op").as_str() {
+                "+=" => Some(BinaryOp::Add),
+                "-=" => Some(BinaryOp::Sub),
+                "*=" => Some(BinaryOp::Mul),
+                "/=" => Some(BinaryOp::Div),
+                "%=" => Some(BinaryOp::Rem),
+                _ => None,
+            };
             let value = parse_expr(source_id, inner.next().expect("assign value"));
             Some(Stmt::Assign(AssignStmt {
                 name,
-                indices,
+                path,
+                op,
                 value,
                 span,
             }))

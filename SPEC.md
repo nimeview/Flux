@@ -121,6 +121,12 @@ Each `.fl` file is a module with its own namespace. Inside a module, all of its 
 
 `let` / `let mut`, assignment, `if`/`else`, `while`, `for x in expr`, `return expr?`, `break`, `continue`, `emit Event(args?)`, expression statements.
 
+**Assignment.** `x = v` assigns a `let mut` local, or a source where sources may change. A place may also be a part of one: an element `xs[i] = v` or `m[k] = v`, a struct field `p.x = v`, or a path of them, `todos[i].done = true`, `grid[i][j] = v`, `board.cells[k].owner = p`. The index expressions are evaluated once each, left to right, then `v`; then the part is replaced. The root must be assignable as for `x = v`, and a part of a source is a write to that source. An index out of range, or a map key missing on the way to a deeper part, is a runtime error and changes nothing; `m[k] = v` on its own adds `k`. Arrays, maps, and structs are updated in place when nothing else holds them; a copy someone else holds keeps its old contents.
+
+**Compound assignment.** `x += v`, `-=`, `*=`, `/=`, and `%=` work on any place and mean `place = place op v`, with the operator's types and errors (so `s += "x"` appends to a string, and integer overflow is a runtime error that leaves the place unchanged). The indices are evaluated once, then the old value of the place is read, then `v`.
+
+**Unused results.** A collection function (`push`, `set`, `pop`, `len`, `map`, `filter`, and the rest of the `collections` module) called as a statement whose value nobody uses warns (**E030**): they return a new value and leave their arguments as they were, so `push(xs, 3)` alone does nothing. A block's last statement is checked only where its value is dropped (loop bodies, handlers, watches).
+
 **Block value.** A function's value is its last statement's: an expression, a `return`, or an `if … else` (including `else if` chains), whose value is the final expression of the branch that runs. Both branches must have compatible types, with no numeric widening. Any other last statement (`let`, an assignment, `while`, `for`, an `if` without `else`) gives `Unit`. So `fn main() { let x = 7 }` exits with status 0, and `fn f() -> Int { 1\n let x = 2 }` is a type error.
 
 **Module initialization order.** Bindings with literal initializers have their values from the start. Computed initializers (`let a = f()`, `const C = B + 1`) run in dependency order: after the bindings they read, directly or through any function they call, and otherwise in declaration order. So a binding may use a `const` declared later. Top-level `if` and assignments keep their position. A cycle among initializers is an error.
@@ -182,7 +188,7 @@ An `impl` must match its trait (**E020**): the trait must be declared, and the i
 
 `xs[i]` is the element of array `xs` at integer index `i`, counting from 0: `names[0]`, `grid[1][0]`, `rows[i].field`, `f(x)[0]`. An index outside `0..len(xs)`, negative ones included, is the runtime error `index out of bounds`. Indexing a non-array or using a non-integer index is a type error (**E005**). To read without the possibility of an error, use `get(xs, i)`, which returns an `Option`.
 
-**Element assignment.** `xs[i] = v`, `grid[i][j] = v`, and `m[k] = v` assign an element of a `let mut` local (or a source in a handler). They mean `xs = set(xs, i, v)`, and nested ones `grid = set(grid, i, set(grid[i], j, v))`, so the out-of-range and type rules of `set` apply. The array or map is updated in place when nobody else holds it, and a copy someone else holds keeps its old contents. In a nested assignment the index expressions are evaluated more than once.
+**Element assignment.** `xs[i] = v` and `m[k] = v` mean `xs = set(xs, i, v)`, so the out-of-range and type rules of `set` apply; deeper places are described under **Assignment** in §4.
 
 ### Maps
 
@@ -268,6 +274,10 @@ fn add(a: String, b: String) -> Result[Int, String] {
 ### Destructuring let
 
 `let Point { x, y } = pt` binds struct fields from a value.
+
+### Record update
+
+`p with { x: 3, y: 4 }` is a copy of the struct `p` with those fields changed and the rest kept: `p` is evaluated once, then the field values in order. Each name must be a field of `p`'s type, at most once, and each value must have the field's type; the result has `p`'s type. `with` binds like a postfix operator: `a + p with { x: 1 }` is `a + (p with { x: 1 })`. It is a keyword only after an expression, so `with` stays usable as a name.
 
 ## 6. Standard library
 
@@ -375,6 +385,7 @@ These limits keep extreme programs a language error rather than a native stack o
 | E027 | Warning: a `fn`, `track fn`, or method changes a source (§ Reactive semantics); an error from 0.3. For a `fn`, the quick fix and `flux migrate` write `act fn` |
 | E028 | Warning: a `watch` changes a source |
 | E029 | Warning: watches that wake each other, or one that wakes itself, in a cycle |
+| E030 | Warning: a collection function's result is not used (`push(xs, 3)` alone) |
 | E016 | `let` without `mut` cannot be reassigned (use `let mut`) |
 | E017 | Side effect (`print`, I/O) in derived expression |
 | E018 | Runtime error (overflow, division by zero, failed assertion, …) |

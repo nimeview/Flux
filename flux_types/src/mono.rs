@@ -389,6 +389,8 @@ fn infer_mono_type(
             };
             let name = program.names.get(symbol).map(String::as_str)?;
             match name {
+                // `base with { ... }` has the base's type.
+                flux_hir::WITH_FIELDS => infer_mono_type(args.first()?, symbols, program),
                 "Some" => Some(Type::Option(Box::new(infer_mono_type(
                     args.first()?,
                     symbols,
@@ -833,7 +835,12 @@ fn collect_block_local_declarations(
                 out.insert(binding.name);
                 collect_expr_local_declarations(&binding.value, out);
             }
-            HirStmt::Assign(assign) => collect_expr_local_declarations(&assign.value, out),
+            HirStmt::Assign(assign) => {
+                for index in assign.indices() {
+                    collect_expr_local_declarations(index, out);
+                }
+                collect_expr_local_declarations(&assign.value, out);
+            }
             HirStmt::Emit(emit) => {
                 for arg in &emit.args {
                     collect_expr_local_declarations(arg, out);
@@ -984,6 +991,9 @@ fn remap_block_symbols(block: &mut flux_hir::HirBlock, remap: &Remap<'_>) {
             }
             HirStmt::Assign(assign) => {
                 remap_id(&mut assign.name, remap);
+                for index in assign.indices_mut() {
+                    remap_expr_symbols(index, remap);
+                }
                 remap_expr_symbols(&mut assign.value, remap);
             }
             HirStmt::Emit(emit) => {
@@ -1202,7 +1212,12 @@ fn collect_block_symbol_types(
                     symbols.insert(binding.name, ty);
                 }
             }
-            HirStmt::Assign(assign) => collect_expr_symbol_types(&assign.value, symbols, program),
+            HirStmt::Assign(assign) => {
+                for index in assign.indices() {
+                    collect_expr_symbol_types(index, symbols, program);
+                }
+                collect_expr_symbol_types(&assign.value, symbols, program);
+            }
             HirStmt::Expr(expr) => collect_expr_symbol_types(expr, symbols, program),
             HirStmt::Emit(emit) => {
                 for arg in &emit.args {
@@ -1490,7 +1505,12 @@ fn walk_block_calls(
         match stmt {
             HirStmt::Expr(e) => walk_expr_calls(e, program, generic_fns, out),
             HirStmt::Let(s) => walk_expr_calls(&s.value, program, generic_fns, out),
-            HirStmt::Assign(a) => walk_expr_calls(&a.value, program, generic_fns, out),
+            HirStmt::Assign(a) => {
+                for index in a.indices() {
+                    walk_expr_calls(index, program, generic_fns, out);
+                }
+                walk_expr_calls(&a.value, program, generic_fns, out);
+            }
             HirStmt::Return(r) => {
                 if let Some(v) = &r.value {
                     walk_expr_calls(v, program, generic_fns, out);
@@ -1654,7 +1674,12 @@ fn collect_calls_in_block(
         match stmt {
             HirStmt::Expr(e) => collect_calls_in_expr(program, e, base_name, out),
             HirStmt::Let(s) => collect_calls_in_expr(program, &s.value, base_name, out),
-            HirStmt::Assign(a) => collect_calls_in_expr(program, &a.value, base_name, out),
+            HirStmt::Assign(a) => {
+                for index in a.indices() {
+                    collect_calls_in_expr(program, index, base_name, out);
+                }
+                collect_calls_in_expr(program, &a.value, base_name, out);
+            }
             HirStmt::Return(r) => {
                 if let Some(v) = &r.value {
                     collect_calls_in_expr(program, v, base_name, out);
@@ -1894,14 +1919,26 @@ fn rewrite_block_matching_calls(
                 symbol_types,
                 program,
             ),
-            HirStmt::Assign(a) => rewrite_expr_matching_calls(
-                &mut a.value,
-                from,
-                to,
-                match_types,
-                symbol_types,
-                program,
-            ),
+            HirStmt::Assign(a) => {
+                for index in a.indices_mut() {
+                    rewrite_expr_matching_calls(
+                        index,
+                        from,
+                        to,
+                        match_types,
+                        symbol_types,
+                        program,
+                    );
+                }
+                rewrite_expr_matching_calls(
+                    &mut a.value,
+                    from,
+                    to,
+                    match_types,
+                    symbol_types,
+                    program,
+                );
+            }
             HirStmt::Return(r) => {
                 if let Some(v) = &mut r.value {
                     rewrite_expr_matching_calls(v, from, to, match_types, symbol_types, program);

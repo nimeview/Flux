@@ -111,6 +111,9 @@ fn collect_refs_item(item: &HirItem, map: &mut HashMap<SymbolId, Vec<Span>>) {
         HirItem::InitIf(i) => collect_refs_if(i, map),
         HirItem::SourceAssign(a) => {
             push_ref(map, a.name, a.span);
+            for index in a.indices() {
+                collect_refs_expr(index, map);
+            }
             collect_refs_expr(&a.value, map);
         }
         HirItem::Impl(i) => {
@@ -138,7 +141,12 @@ fn collect_refs_block(block: &HirBlock, map: &mut HashMap<SymbolId, Vec<Span>>) 
 fn collect_refs_stmt(stmt: &HirStmt, map: &mut HashMap<SymbolId, Vec<Span>>) {
     match stmt {
         HirStmt::Let(l) => collect_refs_expr(&l.value, map),
-        HirStmt::Assign(a) => collect_refs_expr(&a.value, map),
+        HirStmt::Assign(a) => {
+            for index in a.indices() {
+                collect_refs_expr(index, map);
+            }
+            collect_refs_expr(&a.value, map);
+        }
         HirStmt::Emit(e) => {
             for arg in &e.args {
                 collect_refs_expr(arg, map);
@@ -275,6 +283,9 @@ fn collect_write_spans_item(
             if a.name == symbol_id {
                 out.push(narrow_name_span(a.span, name, sources));
             }
+            for index in a.indices() {
+                collect_write_spans_expr(index, symbol_id, name, sources, out);
+            }
             collect_write_spans_expr(&a.value, symbol_id, name, sources, out);
         }
         HirItem::Impl(i) => {
@@ -309,6 +320,9 @@ fn collect_write_spans_stmt(
         HirStmt::Assign(a) => {
             if a.name == symbol_id {
                 out.push(narrow_name_span(a.span, name, sources));
+            }
+            for index in a.indices() {
+                collect_write_spans_expr(index, symbol_id, name, sources, out);
             }
             collect_write_spans_expr(&a.value, symbol_id, name, sources, out);
         }

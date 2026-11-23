@@ -545,6 +545,28 @@ fn parse_postfix_expr(source_id: SourceId, pair: pest::iterators::Pair<'_, Rule>
                 index: Box::new(index),
                 span,
             };
+        } else if suffix.as_rule() == Rule::with_suffix {
+            let span = merge_span(expr.span(), span_of(source_id, &suffix));
+            let fields = suffix
+                .into_inner()
+                .filter(|p| p.as_rule() == Rule::field_init)
+                .map(|f| {
+                    let fspan = span_of(source_id, &f);
+                    let mut fi = f.into_inner();
+                    let name = parse_ident(source_id, fi.next().expect("field name"));
+                    let value = parse_expr(source_id, fi.next().expect("field value"));
+                    FieldInit {
+                        name,
+                        value,
+                        span: fspan,
+                    }
+                })
+                .collect();
+            expr = Expr::With {
+                base: Box::new(expr),
+                fields,
+                span,
+            };
         } else if suffix.as_rule() == Rule::try_suffix {
             let span = merge_span(expr.span(), span_of(source_id, &suffix));
             expr = Expr::Try {

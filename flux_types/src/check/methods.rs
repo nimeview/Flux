@@ -40,7 +40,12 @@ fn block(b: &mut HirBlock, calls: &Calls, owner: Option<SymbolId>) {
     for stmt in &mut b.stmts {
         match stmt {
             HirStmt::Let(binding) => expr(&mut binding.value, calls, owner),
-            HirStmt::Assign(assign) => expr(&mut assign.value, calls, owner),
+            HirStmt::Assign(assign) => {
+                for index in assign.indices_mut() {
+                    expr(index, calls, owner);
+                }
+                expr(&mut assign.value, calls, owner);
+            }
             HirStmt::Emit(emit) => emit.args.iter_mut().for_each(|a| expr(a, calls, owner)),
             HirStmt::Expr(e) => expr(e, calls, owner),
             HirStmt::Return(ret) => {
