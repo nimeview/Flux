@@ -15,6 +15,9 @@ Notable changes to Flux. The versioning policy is in [`RELEASE.md`](RELEASE.md).
 
 ### Added
 
+- Methods: `impl Type { }` with `self`, `mut self` (called on a place, written back only when it succeeds), type functions called as `Point::new`, and `Self`; traits may use `Self`. Methods may be added to `Int`, `String`, and the other library types, visible where their file is imported.
+- Paths `::` for module items (`math::sqrt`), type functions, and variants (`Shape::Circle`). `m.name` for a module still works with warning E026, and `flux migrate` rewrites it.
+- `(op.f)(3)` calls the function in field `f`; `op.f(3)` for that still works with warning E026.
 - Tuples: `(1, "a")` of type `(Int, String)`, `t.0`, `let (a, b) = t`, tuple patterns in `match` with exhaustiveness checking (`(true, _)`, `(Some(x), 0)`), and `for (k, v) in m`, which walks a map's entries in key order.
 - Assigning part of a value: a field `p.x = 3`, and paths such as `todos[i].done = true` and `grid[i][j] = v`. Each index is evaluated once.
 - Compound assignment `+=`, `-=`, `*=`, `/=`, and `%=` on any place.

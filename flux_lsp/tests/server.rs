@@ -199,7 +199,7 @@ fn resolves_imports_for_open_document_with_unsaved_edits() {
     let uri = Url::from_file_path(&path).expect("valid file uri");
     let saved = std::fs::read_to_string(&path).expect("read import_math.fl");
     // Simulate an unsaved edit that still depends on the imported `math` module.
-    let unsaved = format!("{saved}let z = m.double(y)\nimport io\nwatch {{ print(z) }}\n");
+    let unsaved = format!("{saved}let z = m::double(y)\nimport io\nwatch {{ print(z) }}\n");
 
     did_open_uri(&client, uri, &unsaved);
     let diags = recv_diagnostics(&client);
@@ -1176,4 +1176,43 @@ fn rename_of_watch_prev_and_handler_values_edits_only_the_names() {
     let edits = rename_ranges(text, 1, 8);
     assert!(edits.contains(&(5, 6, 7)), "{edits:?}");
     assert!(edits.iter().all(|(_, s, e)| e - s == 1), "{edits:?}");
+}
+
+#[test]
+fn rename_of_a_method_edits_its_definition_and_calls() {
+    let text = "struct P {\n    x: Int\n}\nimpl P {\n    fn len(self) -> Int {\n        self.x\n    }\n}\nfn main() {\n    let p = P { x: 1 }\n    let n = p.len()\n}\n";
+    // From the call and from the definition.
+    let from_call = rename_ranges(text, 10, 15);
+    let from_def = rename_ranges(text, 4, 8);
+    assert_eq!(from_call, from_def);
+    assert!(from_call.contains(&(4, 7, 10)), "{from_call:?}");
+    assert!(from_call.contains(&(10, 14, 17)), "{from_call:?}");
+}
+
+#[test]
+fn rename_of_a_type_function_edits_only_its_name() {
+    let text = "struct P {\n    x: Int\n}\nimpl P {\n    fn new() -> Self {\n        Self { x: 0 }\n    }\n}\nfn main() {\n    let p = P::new()\n}\n";
+    let edits = rename_ranges(text, 9, 15);
+    assert_eq!(edits, [(4, 7, 10), (9, 15, 18)]);
+}
+
+#[test]
+fn hover_on_a_method_call_shows_the_method() {
+    let (client, handle) = start_server();
+    did_open(
+        &client,
+        "struct P {\n    x: Int\n}\nimpl P {\n    fn len(self) -> Int {\n        self.x\n    }\n}\nfn main() {\n    let p = P { x: 1 }\n    let _n = p.len()\n}\n",
+    );
+    let _ = recv_diagnostics(&client);
+    let hover = ask(&client, 2, "textDocument/hover", at(10, 16)).to_string();
+    assert!(hover.contains("len: fn("), "{hover}");
+    assert!(!hover.contains("From `collections`"), "{hover}");
+    shutdown(&client, handle);
+}
+
+#[test]
+fn rename_of_a_type_function_reaches_self_paths() {
+    let text = "struct C {\n    n: Int\n}\nimpl C {\n    fn zero() -> Self {\n        Self { n: 0 }\n    }\n    fn origin() -> Self {\n        Self::zero()\n    }\n}\nfn main() {\n    let c = C::zero()\n}\n";
+    let edits = rename_ranges(text, 12, 15);
+    assert_eq!(edits, [(4, 7, 11), (8, 14, 18), (12, 15, 19)]);
 }

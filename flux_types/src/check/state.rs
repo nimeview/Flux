@@ -66,6 +66,13 @@ pub struct TypeCheckContext {
     user_types: HashMap<String, Type>,
     type_aliases: HashMap<String, flux_hir::HirType>,
     trait_impls: HashMap<(String, String), SymbolId>,
+    /// `mut self` methods, and the call sites written as statements on a
+    /// place (see `flux_hir::HirProgram::mut_call_sites`).
+    pub(crate) mut_methods: std::collections::HashSet<SymbolId>,
+    pub(crate) mut_call_sites: std::collections::HashSet<flux_diagnostics::Span>,
+    pub(crate) extension_sources: HashMap<SymbolId, flux_diagnostics::SourceId>,
+    pub(crate) file_imports:
+        HashMap<flux_diagnostics::SourceId, std::collections::HashSet<flux_diagnostics::SourceId>>,
     builtin_symbols: std::collections::HashSet<SymbolId>,
     effectful_functions: std::collections::HashSet<SymbolId>,
     /// Closure bodies are checked where created, with contextual parameter
@@ -173,6 +180,10 @@ impl TypeCheckContext {
         }
 
         ctx.trait_impls = program.trait_impls.clone();
+        ctx.mut_methods = program.mut_methods.clone();
+        ctx.mut_call_sites = program.mut_call_sites.clone();
+        ctx.extension_sources = program.extension_sources.clone();
+        ctx.file_imports = program.file_imports.clone();
         ctx.builtin_symbols = program
             .symbols
             .iter()
@@ -181,7 +192,8 @@ impl TypeCheckContext {
                     && (flux_std::is_builtin_fn(&symbol.name)
                         || symbol.name == flux_hir::WITH_FIELDS
                         || symbol.name == flux_hir::TUPLE
-                        || symbol.name == flux_hir::TUPLE_CHECK))
+                        || symbol.name == flux_hir::TUPLE_CHECK
+                        || symbol.name == flux_hir::GROUPED))
                     .then_some(*id)
             })
             .collect();

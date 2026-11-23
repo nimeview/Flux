@@ -442,10 +442,27 @@ pub(super) fn check_stmt(
                 }
             }
         }
-        HirStmt::Assign(assign) => {
+        HirStmt::Assign(assign) => 'assign: {
             let HirAssign {
                 name, value, span, ..
             } = assign;
+            // `x.m(…)` written as a statement on a place: it stores the
+            // receiver back only when `m` is a `mut self` method; otherwise it
+            // is just the call.
+            let mut pre_got = None;
+            if ctx.mut_call_sites.contains(span) {
+                let got = infer_expr(ctx, value, scope, names, source, diagnostics)
+                    .map(|ty| unwrap_value_type(&ty));
+                let resolved = ctx
+                    .method_calls
+                    .borrow()
+                    .get(&(ctx.current_function.get(), *span))
+                    .copied();
+                if !resolved.is_some_and(|id| ctx.mut_methods.contains(&id)) {
+                    break 'assign;
+                }
+                pre_got = Some(got);
+            }
             if let Some(local_name) = names.get(name) {
                 // Only the module `const` itself: a local of the same name
                 // (`let mut x` in a function, beside `const x`) is assignable.
@@ -489,8 +506,11 @@ pub(super) fn check_stmt(
                 infer_expr(ctx, &assign.place_expr(), scope, names, source, diagnostics)
                     .map(|ty| unwrap_value_type(&ty))
             };
-            let got = infer_expr(ctx, value, scope, names, source, diagnostics)
-                .map(|ty| unwrap_value_type(&ty));
+            let got = match pre_got {
+                Some(got) => got,
+                None => infer_expr(ctx, value, scope, names, source, diagnostics)
+                    .map(|ty| unwrap_value_type(&ty)),
+            };
             // `part op= value` stores `part op value`.
             let got = match (assign.op, &expected, got) {
                 (Some(op), Some(part), Some(got)) => {

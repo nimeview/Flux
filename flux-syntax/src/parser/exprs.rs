@@ -197,7 +197,7 @@ pub(super) fn parse_expr(source_id: SourceId, pair: pest::iterators::Pair<'_, Ru
                 span,
             }
         }
-        Rule::ident => {
+        Rule::ident | Rule::path_ident => {
             let span = span_of(source_id, &pair);
             Expr::Ident {
                 name: pair.as_str().to_string(),
@@ -250,6 +250,11 @@ fn parse_match_pattern(source_id: SourceId, pair: pest::iterators::Pair<'_, Rule
                     None,
                 ),
                 Some(p) if p.as_rule() == Rule::ident => (vec![parse_ident(source_id, p)], None),
+                // `Some(Shape::Dot)`: a payload-free variant.
+                Some(p) if p.as_rule() == Rule::path_ident => (
+                    vec![],
+                    Some(Box::new(MatchPattern::Simple(parse_ident(source_id, p)))),
+                ),
                 Some(p) => (vec![], Some(Box::new(parse_match_pattern(source_id, p)))),
             };
             MatchPattern::Tuple {
@@ -522,9 +527,30 @@ fn parse_unary_expr(source_id: SourceId, pair: pest::iterators::Pair<'_, Rule>) 
 
 fn parse_postfix_expr(source_id: SourceId, pair: pest::iterators::Pair<'_, Rule>) -> Expr {
     let mut inner = pair.into_inner();
-    let primary = parse_expr(source_id, inner.next().expect("postfix primary"));
+    let primary_pair = inner.next().expect("postfix primary");
+    let primary_span = span_of(source_id, &primary_pair);
+    // `(x)` with no tuple tail: parentheses that only group.
+    let grouped = primary_pair
+        .clone()
+        .into_inner()
+        .next()
+        .is_some_and(|p| p.as_rule() == Rule::paren_expr && p.into_inner().count() == 1);
+    let primary = parse_expr(source_id, primary_pair);
     let mut expr = primary;
+    let mut first = true;
     for suffix in inner {
+        // `(op.f)(3)` calls the function in field `f`; the parentheses are
+        // kept so that it stays apart from the method call `op.f(3)`.
+        let keep_parens = std::mem::take(&mut first)
+            && grouped
+            && suffix.as_rule() == Rule::call_suffix
+            && matches!(expr, Expr::Field { .. });
+        if keep_parens {
+            expr = Expr::Paren {
+                inner: Box::new(expr),
+                span: primary_span,
+            };
+        }
         if suffix.as_rule() == Rule::call_suffix {
             let call_span = span_of(source_id, &suffix);
             let args = suffix

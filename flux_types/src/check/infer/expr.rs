@@ -300,7 +300,40 @@ pub(crate) fn infer_expr(
                 let base_ty = infer_expr(ctx, base, types, names, source, diagnostics)?;
                 let type_tag = trait_dispatch_tag(&base_ty);
                 let fn_id = ctx.trait_impl(&type_tag, field);
+                // A method added to a library type is visible in its own file
+                // and in files that import it.
+                if let Some(defined) = fn_id.and_then(|id| ctx.extension_sources.get(&id)) {
+                    let here = span.source;
+                    let visible = *defined == here
+                        || ctx
+                            .file_imports
+                            .get(&here)
+                            .is_some_and(|i| i.contains(defined));
+                    if !visible {
+                        diagnostics.push(FluxError::TypeMismatch {
+                            expected: format!("`{field}` imported: import the module that adds it to `{type_tag}`"),
+                            found: format!("`{field}`, added to `{type_tag}` in a module this file does not import"),
+                            span: span_to_miette(*span),
+                            source_id: span.source,
+                        });
+                        return Some(Type::Error);
+                    }
+                }
                 if let Some(fn_id) = fn_id {
+                    // A `mut self` method stores the changed receiver back,
+                    // which only a statement on a place does.
+                    let changes = ctx.mut_methods.contains(&fn_id);
+                    let at_place = ctx.mut_call_sites.contains(span);
+                    if changes && !at_place {
+                        diagnostics.push(FluxError::TypeMismatch {
+                            expected: format!(
+                                "`{field}` called on its own line, on a variable or a part of one: `x.{field}(…)`"
+                            ),
+                            found: format!("a call of the `mut self` method `{field}` inside an expression"),
+                            span: span_to_miette(*span),
+                            source_id: span.source,
+                        });
+                    }
                     ctx.method_calls
                         .borrow_mut()
                         .insert((ctx.current_function.get(), *span), fn_id);
@@ -343,6 +376,31 @@ pub(crate) fn infer_expr(
                     ctx.expand(unwrap_value_type(&base_ty)),
                     Type::Struct { ref fields, .. } if fields.iter().any(|(n, _)| n == field)
                 );
+                // `op.f(3)` calls the function in field `f`; `(op.f)(3)` says so.
+                if is_field {
+                    let callee_span = callee.span();
+                    let message = format!(
+                        "calling the function in field `{field}` is now written with parentheses: `(….{field})(…)`"
+                    );
+                    match base.as_ref() {
+                        HirExpr::Ident { symbol, .. } if lookup_name(names, *symbol).is_some() => {
+                            let name = lookup_name(names, *symbol).cloned().unwrap_or_default();
+                            diagnostics.push_warning(flux_diagnostics::FluxWarning::Deprecated {
+                                message: format!(
+                                    "`{name}.{field}(…)` is now written `({name}.{field})(…)`"
+                                ),
+                                replacement: format!("({name}.{field})"),
+                                span: span_to_miette(callee_span),
+                                source_id: callee_span.source,
+                            });
+                        }
+                        _ => diagnostics.push_warning(flux_diagnostics::FluxWarning::OldForm {
+                            message,
+                            span: span_to_miette(callee_span),
+                            source_id: callee_span.source,
+                        }),
+                    }
+                }
                 if !is_field && !base_ty.is_error() {
                     diagnostics.push(FluxError::UnknownMethod {
                         method: field.clone(),
@@ -357,6 +415,10 @@ pub(crate) fn infer_expr(
                 if let Some(name) =
                     lookup_name(names, *symbol).filter(|_| ctx.is_builtin_symbol(*symbol))
                 {
+                    // `(op.f)`: the value itself.
+                    if name == flux_hir::GROUPED {
+                        return infer_expr(ctx, args.first()?, types, names, source, diagnostics);
+                    }
                     // A destructured value: a tuple of exactly `n` values.
                     if name == flux_hir::TUPLE_CHECK {
                         let value = args.first()?;

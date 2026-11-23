@@ -42,7 +42,7 @@ fn main() {
 |---|---|
 | `import m { a, b }` | the listed names |
 | `import m` | every `pub` name |
-| `import m as x` | also lets you write `x.name` |
+| `import m as x` | also lets you write `x::name` |
 | `import a.b` | the file `a/b.fl`, relative to the importing file |
 
 Importing a name that is not `pub` is an error. A module never sees its importer's names. Cyclic imports are an error, and a module imported along several paths is initialized once.

@@ -228,6 +228,28 @@
           }
         },
         {
+          "match": "\\b(impl)\\s+([A-Za-z_][A-Za-z0-9_]*)\\s*(?=\\{)",
+          "captures": {
+            "1": {
+              "name": "storage.type.impl.flux"
+            },
+            "2": {
+              "name": "entity.name.type.flux"
+            }
+          }
+        },
+        {
+          "match": "\\b([A-Za-z_][A-Za-z0-9_]*)(::)(?=[A-Za-z_])",
+          "captures": {
+            "1": {
+              "name": "entity.name.namespace.flux"
+            },
+            "2": {
+              "name": "punctuation.separator.path.flux"
+            }
+          }
+        },
+        {
           "match": "\\b(pub)?\\s*\\b(event)\\s+([A-Za-z_][A-Za-z0-9_]*)",
           "captures": {
             "1": {

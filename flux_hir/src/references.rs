@@ -12,12 +12,31 @@ pub struct ReferenceIndex {
     pub references: HashMap<SymbolId, Vec<Span>>,
 }
 
+thread_local! {
+    /// Method calls the type checker resolved, by call span, while an index
+    /// is built (see [`build_reference_index_with_methods`]).
+    static METHOD_CALLS: std::cell::RefCell<HashMap<Span, SymbolId>> =
+        std::cell::RefCell::new(HashMap::new());
+}
+
 /// Collect every identifier use site keyed by resolved [`SymbolId`].
 pub fn build_reference_index(hir: &HirProgram) -> ReferenceIndex {
+    build_reference_index_with_methods(hir, &HashMap::new())
+}
+
+/// Like [`build_reference_index`], also counting each `x.m(…)` in `calls`
+/// (call span to the method it resolved to) as a use of that method, at the
+/// method's name.
+pub fn build_reference_index_with_methods(
+    hir: &HirProgram,
+    calls: &HashMap<Span, SymbolId>,
+) -> ReferenceIndex {
+    METHOD_CALLS.with(|m| *m.borrow_mut() = calls.clone());
     let mut references: HashMap<SymbolId, Vec<Span>> = HashMap::new();
     for item in &hir.items {
         collect_refs_item(item, &mut references);
     }
+    METHOD_CALLS.with(|m| m.borrow_mut().clear());
     ReferenceIndex { references }
 }
 
@@ -71,6 +90,27 @@ pub fn rename_spans(
     let Some(name) = hir.names.get(&symbol_id) else {
         return dedupe_spans(out);
     };
+    // A type function `Type::f` is renamed by its last part, where it is
+    // called by path as well as where it is declared.
+    if let Some((_, last)) = name.rsplit_once("::") {
+        // `Type::f` or `Self::f`: every use ends in the name.
+        for span in &mut out {
+            if span.end - span.start > last.len() {
+                span.start = span.end - last.len();
+            }
+        }
+        if let Some(sym) = hir.symbols.get(&symbol_id) {
+            out.push(sym.span);
+        }
+        return dedupe_spans(out);
+    }
+    // A method's internal name is not in the source: its spans are exact.
+    if name.starts_with("__impl_") {
+        if let Some(sym) = hir.symbols.get(&symbol_id) {
+            out.push(sym.span);
+        }
+        return dedupe_spans(out);
+    }
     // Some uses are recorded with their statement's span (`watch total { }`,
     // `on Tick { }`): rewrite only the name in it.
     for span in &mut out {
@@ -196,7 +236,17 @@ fn collect_refs_expr(expr: &HirExpr, map: &mut HashMap<SymbolId, Vec<Span>>) {
     match expr {
         HirExpr::Ident { symbol, span } => push_ref(map, *symbol, *span),
         HirExpr::Snap { expr, .. } => collect_refs_expr(expr, map),
-        HirExpr::Call { callee, args, .. } => {
+        HirExpr::Call { callee, args, span } => {
+            // `x.m(…)`: a use of method `m`, at its name (the end of the field).
+            if let HirExpr::Field {
+                field, span: at, ..
+            } = callee.as_ref()
+            {
+                if let Some(method) = METHOD_CALLS.with(|m| m.borrow().get(span).copied()) {
+                    let start = at.end.saturating_sub(field.len());
+                    push_ref(map, method, Span { start, ..*at });
+                }
+            }
             collect_refs_expr(callee, map);
             for a in args {
                 collect_refs_expr(a, map);

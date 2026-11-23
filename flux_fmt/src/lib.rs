@@ -288,12 +288,7 @@ fn format_item(item: &Item, out: &mut String, level: usize) {
                     .as_ref()
                     .map(|r| format!(" -> {}", type_name_fmt(r)))
                     .unwrap_or_default();
-                let params = m
-                    .params
-                    .iter()
-                    .map(|p| format!("{}: {}", p.name.name, type_name_fmt(&p.ty)))
-                    .collect::<Vec<_>>()
-                    .join(", ");
+                let params = params_fmt(&m.params, m.mut_self);
                 out.push_str(&format!("fn {}({}){};\n", m.name.name, params, ret));
             }
             indent(out, level);
@@ -301,11 +296,14 @@ fn format_item(item: &Item, out: &mut String, level: usize) {
         }
         Item::Impl(i) => {
             indent(out, level);
-            out.push_str(&format!(
-                "impl {} for {} {{\n",
-                i.trait_name.name,
-                type_name_fmt(&i.target_type)
-            ));
+            match &i.trait_name {
+                Some(name) => out.push_str(&format!(
+                    "impl {} for {} {{\n",
+                    name.name,
+                    type_name_fmt(&i.target_type)
+                )),
+                None => out.push_str(&format!("impl {} {{\n", type_name_fmt(&i.target_type))),
+            }
             for m in &i.methods {
                 format_fn_like(
                     false,
@@ -317,6 +315,7 @@ fn format_item(item: &Item, out: &mut String, level: usize) {
                     out,
                     level + 1,
                     Some(flux_syntax::FnKind::Plain),
+                    m.mut_self,
                 );
             }
             indent(out, level);
@@ -332,6 +331,7 @@ fn format_item(item: &Item, out: &mut String, level: usize) {
             out,
             level,
             Some(f.kind),
+            f.mut_self,
         ),
         Item::RFn(f) => format_fn_like(
             f.pub_,
@@ -343,6 +343,7 @@ fn format_item(item: &Item, out: &mut String, level: usize) {
             out,
             level,
             None,
+            false,
         ),
         Item::Event(e) => {
             indent(out, level);
@@ -419,6 +420,7 @@ fn format_fn_like(
     out: &mut String,
     level: usize,
     kind: Option<flux_syntax::FnKind>,
+    mut_self: bool,
 ) {
     indent(out, level);
     let prefix = pub_prefix(pub_);
@@ -434,11 +436,7 @@ fn format_fn_like(
     } else {
         format!("[{}]", type_params.join(", "))
     };
-    let ps = params
-        .iter()
-        .map(|p| format!("{}: {}", p.name.name, type_name_fmt(&p.ty)))
-        .collect::<Vec<_>>()
-        .join(", ");
+    let ps = params_fmt(params, mut_self);
     let ret = ret
         .map(|r| format!(" -> {}", type_name_fmt(r)))
         .unwrap_or_default();
@@ -786,6 +784,7 @@ fn expr_fmt(expr: &flux_syntax::Expr) -> String {
         flux_syntax::Expr::Field { base, field, .. } => {
             format!("{}.{}", postfix_base_fmt(base), field)
         }
+        flux_syntax::Expr::Paren { inner, .. } => format!("({})", expr_fmt(inner)),
         flux_syntax::Expr::Tuple { elems, .. } => {
             let items = elems.iter().map(expr_fmt).collect::<Vec<_>>().join(", ");
             // `(x,)` stays as written, so that the error about it stays too.
@@ -1057,4 +1056,23 @@ fn on_head(o: &flux_syntax::OnStmt) -> String {
     }
     let names: Vec<&str> = o.params.iter().map(|p| p.name.as_str()).collect();
     format!("{}({}) {{", o.event.name, names.join(", "))
+}
+
+/// A parameter list; a method's receiver prints as `self` or `mut self`.
+fn params_fmt(params: &[flux_syntax::Param], mut_self: bool) -> String {
+    params
+        .iter()
+        .enumerate()
+        .map(|(i, p)| {
+            let receiver = i == 0
+                && p.name.name == "self"
+                && matches!(&p.ty, flux_syntax::TypeName::Simple { name, .. } if name == "Self");
+            match (receiver, mut_self) {
+                (true, true) => "mut self".to_string(),
+                (true, false) => "self".to_string(),
+                _ => format!("{}: {}", p.name.name, type_name_fmt(&p.ty)),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
 }

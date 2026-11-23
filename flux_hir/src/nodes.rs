@@ -23,6 +23,21 @@ pub struct HirProgram {
     pub const_bindings: std::collections::HashSet<String>,
     /// Symbol metadata for every id in `names` (kind + span for IDE diagnostics).
     pub symbols: std::collections::HashMap<SymbolId, crate::symbol::Symbol>,
+    /// The functions `mut self` methods lower to (they return the changed
+    /// receiver).
+    pub mut_methods: std::collections::HashSet<SymbolId>,
+    /// Spans of `place.m(…)` calls written as statements, lowered to
+    /// `place = place.m(…)`.
+    pub mut_call_sites: std::collections::HashSet<Span>,
+    /// Methods of `impl Type { }` for a library type (`String`, `Int`, …),
+    /// with the file that declares them: visible there and in files that
+    /// import it.
+    pub extension_sources: std::collections::HashMap<SymbolId, flux_diagnostics::SourceId>,
+    /// The files each file imports.
+    pub file_imports: std::collections::HashMap<
+        flux_diagnostics::SourceId,
+        std::collections::HashSet<flux_diagnostics::SourceId>,
+    >,
 }
 
 #[derive(Debug, Clone)]
@@ -220,6 +235,10 @@ pub const WITH_FIELDS: &str = "\0with";
 /// generic type `(A, B)` is lowered to. At run time a tuple is a struct of
 /// this name with fields `"0"`, `"1"`, ….
 pub const TUPLE: &str = "\0tuple";
+
+/// The hidden builtin `(op.f)` lowers to, as `(op.f)`: the value of its
+/// argument, so that a call of it calls the field's function, never a method.
+pub const GROUPED: &str = "\0group";
 
 /// The hidden builtin that checks a destructured value: `(value, n)` is
 /// `value`, which must be a tuple of exactly `n` values.

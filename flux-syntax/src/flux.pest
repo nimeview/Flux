@@ -62,7 +62,10 @@ trait_decl = { pub_modifier? ~ "trait" ~ ident ~ trait_body }
 trait_body = { "{" ~ trait_method* ~ "}" }
 trait_method = { "fn" ~ ident ~ fn_sig ~ ";" }
 
-impl_decl = { "impl" ~ ident ~ "for" ~ type_name ~ impl_body }
+// `impl Trait for Type { }`, or `impl Type { }` for the type's own methods
+// and type functions.
+impl_decl = { "impl" ~ (ident ~ kw_for)? ~ type_name ~ impl_body }
+kw_for = @{ "for" ~ kw_end }
 impl_body = { "{" ~ impl_method* ~ "}" }
 impl_method = { "fn" ~ ident ~ fn_sig ~ block }
 
@@ -75,7 +78,11 @@ kw_act = @{ "act" ~ kw_end }
 // The older spelling of `track fn`.
 rfn_decl = { pub_modifier? ~ kw_rfn ~ ident ~ type_params? ~ fn_sig ~ block }
 kw_rfn = @{ "rfn" ~ kw_end }
-fn_sig = { "(" ~ param_list? ~ ")" ~ return_type? }
+// `self` alone, not `self: T` (an ordinary parameter named `self`).
+fn_sig = { "(" ~ (self_param ~ &("," | ")") ~ ("," ~ param_list?)? | param_list)? ~ ")" ~ return_type? }
+// `self` or `mut self`: the value a method is called on.
+self_param = { mut_modifier? ~ kw_self }
+kw_self = @{ "self" ~ kw_end }
 return_type = { "->" ~ type_name }
 
 // `watch total(prev) { }`: `prev` is the value the watch saw last time.
@@ -148,10 +155,10 @@ tuple_value_pat = { "(" ~ match_pattern ~ ("," ~ match_pattern)+ ~ ","? ~ ")" }
 // Int, String, and Bool literals; compared with `==`.
 lit_pat = { float_lit | neg_int_lit | int_lit | raw_string_lit | string_lit | bool_lit }
 neg_int_lit = ${ "-" ~ int_lit }
-simple_pat = { ident }
+simple_pat = { path_ident | ident }
 // The payload may itself be a pattern: `Some(Num(n))`, `Ok(0)`, `Some(LParen)`.
-tuple_pat = { ident ~ "(" ~ (lit_pat | tuple_value_pat | tuple_pat | ident_list)? ~ ")" }
-struct_pat = { ident ~ "{" ~ ident_list ~ "}" }
+tuple_pat = { (path_ident | ident) ~ "(" ~ (lit_pat | tuple_value_pat | tuple_pat | path_ident | ident_list)? ~ ")" }
+struct_pat = { (path_ident | ident) ~ "{" ~ ident_list ~ "}" }
 
 if_expr = { kw_if ~ or_expr ~ "{" ~ expr ~ "}" ~ kw_else ~ "{" ~ expr ~ "}" }
 
@@ -197,6 +204,7 @@ primary_expr = {
   | raw_string_lit
   | string_lit
   | bool_lit
+  | path_ident
   | ident
   | paren_expr
 }
@@ -212,7 +220,7 @@ closure_params = { closure_param ~ ("," ~ closure_param)* ~ ","? }
 closure_param = { ident ~ (":" ~ type_name)? }
 
 array_lit = { "[" ~ expr_list? ~ "]" }
-struct_lit = { ident ~ "{" ~ field_init ~ ("," ~ field_init)* ~ ","? ~ "}" }
+struct_lit = { (path_ident | ident) ~ "{" ~ field_init ~ ("," ~ field_init)* ~ ","? ~ "}" }
 field_init = { ident ~ ":" ~ expr }
 
 param_list = { param ~ ("," ~ param)* ~ ","? }
@@ -231,6 +239,9 @@ array_type = { "[" ~ type_name ~ "]" }
 simple_type = { ident }
 
 ident = @{ (ASCII_ALPHA | "_") ~ (ASCII_ALPHANUMERIC | "_")* }
+// `math::sqrt`, `Point::new`, `Shape::Circle`: a name known at compile time,
+// written without spaces around `::`.
+path_ident = @{ ident ~ ("::" ~ ident)+ }
 
 // Keywords that continue an expression or statement must end at a word
 // boundary: otherwise `3` followed by a line `assert_eq(…)` parses as the

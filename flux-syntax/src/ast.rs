@@ -100,14 +100,18 @@ pub struct TraitDecl {
 #[derive(Debug, Clone)]
 pub struct TraitMethod {
     pub name: Ident,
+    /// With `self` first (typed `Self`) when the method takes one.
     pub params: Vec<Param>,
+    /// `mut self`.
+    pub mut_self: bool,
     pub ret: Option<TypeName>,
     pub span: Span,
 }
 
 #[derive(Debug, Clone)]
 pub struct ImplDecl {
-    pub trait_name: Ident,
+    /// `None` for `impl Type { }`: the type's own methods.
+    pub trait_name: Option<Ident>,
     pub target_type: TypeName,
     pub methods: Vec<FnDecl>,
     pub span: Span,
@@ -123,6 +127,9 @@ pub struct EventDecl {
 
 #[derive(Debug, Clone)]
 pub struct FnDecl {
+    /// `mut self`: a method that changes the value it is called on. Its
+    /// `self` is the first of `params`, typed `Self`.
+    pub mut_self: bool,
     pub pub_: bool,
     pub kind: FnKind,
     /// The `fn` keyword.
@@ -382,6 +389,12 @@ pub enum Expr {
         fields: Vec<FieldInit>,
         span: Span,
     },
+    /// `(op.f)` called as `(op.f)(3)`: the function in a field, not a method.
+    /// Other grouping parentheses are not kept.
+    Paren {
+        inner: Box<Expr>,
+        span: Span,
+    },
     /// `(a, b)`: a tuple of two or more values (one is reported later).
     Tuple {
         elems: Vec<Expr>,
@@ -602,6 +615,7 @@ impl Expr {
             | Self::StructLit { span, .. }
             | Self::With { span, .. }
             | Self::Tuple { span, .. }
+            | Self::Paren { span, .. }
             | Self::Match { span, .. }
             | Self::Cast { span, .. }
             | Self::Try { span, .. }

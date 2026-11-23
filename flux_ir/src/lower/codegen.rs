@@ -204,7 +204,8 @@ fn emit_expr(expr: &HirExpr, program: &HirProgram, code: &mut Vec<Inst>) {
             // A tuple is a struct with fields "0", "1", …
             if let HirExpr::Ident { symbol, .. } = callee.as_ref() {
                 // A destructuring check is only for the type checker.
-                if program.names.get(symbol).map(String::as_str) == Some(flux_hir::TUPLE_CHECK) {
+                let name = program.names.get(symbol).map(String::as_str);
+                if name == Some(flux_hir::TUPLE_CHECK) || name == Some(flux_hir::GROUPED) {
                     if let Some(value) = args.first() {
                         emit_expr(value, program, code);
                     }

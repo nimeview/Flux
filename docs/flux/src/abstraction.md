@@ -109,6 +109,48 @@ fn main() {
 6 a!
 ```
 
+## Methods
+
+`impl Type { }` gives a type its own functions. A method takes `self` and is called on a value; a type function takes no `self` and is called with `::`. Inside the `impl`, `Self` means the type:
+
+```flux
+import io { println }
+
+struct Counter {
+    count: Int,
+    step: Int
+}
+
+impl Counter {
+    fn new(step: Int) -> Self {
+        Self { count: 0, step: step }
+    }
+    fn tick(mut self) {
+        self.count += self.step
+    }
+    fn report(self) -> String {
+        "count {self.count}"
+    }
+}
+
+fn main() {
+    let mut c = Counter::new(5)
+    c.tick()
+    c.tick()
+    println(c.report())
+}
+```
+
+```output
+count 10
+```
+
+`mut self` makes a method that changes the value it is called on. Call it on its own line, on a `let mut` variable or a field or element of one (`board.counters[i].tick()`). The method works on a copy, and the copy replaces the value only when the method finishes, so a method that fails changes nothing. It cannot return a value.
+
+You can add methods to `String`, `Int`, and the other built-in types the same way (`impl String { fn shout(self) -> String { self + "!" } }`). Such a method is visible in its own file and in files that import that file.
+
+A function stored in a field is called with parentheses around the field: `(op.f)(3)`. Without them, `op.f(3)` is a method call.
+
 ## Traits and methods
 
 A trait names a set of methods. An `impl` provides them for a type, and `value.method()` calls them. Which method runs is decided at compile time from the value's type:
@@ -117,7 +159,7 @@ A trait names a set of methods. An `impl` provides them for a type, and `value.m
 import io { println }
 
 trait Area {
-    fn area(self: Int) -> Float;
+    fn area(self) -> Float;
 }
 
 struct Square {
@@ -129,13 +171,13 @@ struct Circle {
 }
 
 impl Area for Square {
-    fn area(self: Square) -> Float {
+    fn area(self) -> Float {
         self.side * self.side
     }
 }
 
 impl Area for Circle {
-    fn area(self: Circle) -> Float {
+    fn area(self) -> Float {
         3.0 * self.radius * self.radius
     }
 }
@@ -151,4 +193,4 @@ fn main() {
 4.0 3.0
 ```
 
-An `impl` must define exactly the trait's methods with matching signatures, apart from the receiver. Traits have no `Self` type, and there is no way yet to write a function that accepts "any type with this trait".
+An `impl` must define exactly the trait's methods with matching signatures. In a trait, `Self` is the type that implements it (`fn grow(self, by: Int) -> Self;`). There is no way yet to write a function that accepts "any type with this trait".

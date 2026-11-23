@@ -163,6 +163,47 @@ fn lower_local_decl(
     }
 }
 
+/// For `place.m(…)` where `m` is the name of some `mut self` method and the
+/// receiver is a place (a name, then fields and indices): the place's root,
+/// its path, and `m`.
+fn mut_call_place(callee: &Expr, symbols: &SymbolTable) -> Option<(Ident, Vec<PlaceStep>, String)> {
+    let Expr::Field { base, field, .. } = callee else {
+        return None;
+    };
+    if !symbols.mut_method_names.contains(field) {
+        return None;
+    }
+    let mut steps = Vec::new();
+    let mut at = base.as_ref();
+    loop {
+        match at {
+            Expr::Ident { name, span } => {
+                if name.contains("::") || symbols.module_aliases.contains_key(name) {
+                    return None;
+                }
+                steps.reverse();
+                let root = Ident {
+                    name: name.clone(),
+                    span: *span,
+                };
+                return Some((root, steps, field.clone()));
+            }
+            Expr::Field { base, field, span } => {
+                steps.push(PlaceStep::Field(Ident {
+                    name: field.clone(),
+                    span: *span,
+                }));
+                at = base;
+            }
+            Expr::Index { base, index, .. } => {
+                steps.push(PlaceStep::Index((**index).clone()));
+                at = base;
+            }
+            _ => return None,
+        }
+    }
+}
+
 /// The names a tuple pattern binds, each with the expression for its part of
 /// `base` (`base.0`, `base.1.0`, …); `_` binds nothing. Each level of the
 /// pattern first checks that its value is a tuple of exactly that many
@@ -835,6 +876,108 @@ fn lower_stmt(
         }
         Stmt::Break(span) => Some(vec![HirStmt::Break(*span)]),
         Stmt::Continue(span) => Some(vec![HirStmt::Continue(*span)]),
+        // `place.m(…)` with a `mut self` method `m`: `place = place.m(…)`.
+        // Which method `m` is depends on the receiver's type, known only to
+        // the type checker: the call site is recorded, and if `m` turns out
+        // not to change its receiver, the assignment is only the call.
+        Stmt::Expr(Expr::Call { callee, args, span })
+            if mut_call_place(callee, symbols).is_some() =>
+        {
+            let (root, steps, method) = mut_call_place(callee, symbols)?;
+            let sym = resolve_name(&root.name, root.span, symbols, diagnostics)?;
+            if symbols.is_captured(sym) {
+                diagnostics.push(FluxError::AssignToImmutableLocal {
+                    name: root.name.clone(),
+                    span: span_to_miette(*span),
+                    source_id: span.source,
+                });
+                return None;
+            }
+            check_writer(sym, &root.name, root.span, symbols, diagnostics);
+            let mut out = Vec::new();
+            let mut reads_reactive = false;
+            let scope = tracking_scope(ctx);
+            // Each index of the place is evaluated once, before the
+            // arguments: into a hidden local unless it is a literal.
+            let mut path = Vec::with_capacity(steps.len());
+            for (k, step) in steps.into_iter().enumerate() {
+                match step {
+                    PlaceStep::Index(index) => {
+                        let value =
+                            lower_expr(&index, symbols, scope, diagnostics, &mut reads_reactive)?;
+                        if matches!(value, HirExpr::Int { .. }) {
+                            path.push(HirPlaceStep::Index(value));
+                            continue;
+                        }
+                        let at = index.span();
+                        let tmp = symbols
+                            .declare(
+                                &format!("\0recv{}_{k}", span.start),
+                                SymbolKind::Local { mutable: false },
+                                at,
+                            )
+                            .ok()?;
+                        out.push(HirStmt::Let(HirLet {
+                            name: tmp,
+                            ty: None,
+                            value,
+                            mutable: false,
+                            span: at,
+                        }));
+                        path.push(HirPlaceStep::Index(HirExpr::Ident {
+                            symbol: tmp,
+                            span: at,
+                        }));
+                    }
+                    PlaceStep::Field(field) => path.push(HirPlaceStep::Field {
+                        name: field.name,
+                        span: field.span,
+                    }),
+                }
+            }
+            // The receiver is the place's current value: read like the
+            // assignment's own read of it, without the pure-function rule.
+            let mut receiver = HirExpr::Ident {
+                symbol: sym,
+                span: root.span,
+            };
+            for step in &path {
+                receiver = match step {
+                    HirPlaceStep::Index(index) => HirExpr::Index {
+                        base: Box::new(receiver),
+                        index: Box::new(index.clone()),
+                        span: *span,
+                    },
+                    HirPlaceStep::Field { name, span: at } => HirExpr::Field {
+                        base: Box::new(receiver),
+                        field: name.clone(),
+                        span: *at,
+                    },
+                };
+            }
+            let args = args
+                .iter()
+                .map(|a| lower_expr(a, symbols, scope, diagnostics, &mut reads_reactive))
+                .collect::<Option<Vec<_>>>()?;
+            symbols.mut_call_sites.insert(*span);
+            let call = HirExpr::Call {
+                callee: Box::new(HirExpr::Field {
+                    base: Box::new(receiver),
+                    field: method,
+                    span: callee.span(),
+                }),
+                args,
+                span: *span,
+            };
+            out.push(HirStmt::Assign(HirAssign {
+                name: sym,
+                path,
+                op: None,
+                value: call,
+                span: *span,
+            }));
+            Some(out)
+        }
         Stmt::Expr(expr) => {
             let mut reads_reactive = false;
             let scope = tracking_scope(ctx);

@@ -57,6 +57,13 @@ pub struct SymbolTable {
     all_symbols: HashMap<SymbolId, Symbol>,
     /// Enum variant name → enum type name.
     pub enum_variants: HashMap<String, String>,
+    /// Each enum's variants: `A::X` names `A`'s `X` even when another enum
+    /// also has an `X`.
+    pub enum_variant_sets: HashMap<String, std::collections::HashSet<String>>,
+    /// `(alias, type)` for each `pub` type an imported module exports.
+    pub module_types: std::collections::HashSet<(String, String)>,
+    /// Type functions already lowered, so that a second one is an error.
+    pub lowered_type_fns: std::collections::HashSet<String>,
     pub closure_counter: u32,
     /// Names that imports brought into the module's scope.
     pub imported_names: std::collections::HashSet<String>,
@@ -87,6 +94,19 @@ pub struct SymbolTable {
     /// The function, handler, or watch being lowered, innermost last; empty at
     /// module level. Decides whether a write to a source warns.
     pub writers: Vec<Writer>,
+    /// Inside an `impl`: the name of the type `Self` stands for.
+    pub self_type: Option<String>,
+    /// Names of `mut self` methods of any type: `place.m(…)` as a statement
+    /// with one of these names becomes `place = place.m(…)`.
+    pub mut_method_names: std::collections::HashSet<String>,
+    /// The functions `mut self` methods lower to.
+    pub mut_methods: std::collections::HashSet<SymbolId>,
+    /// Spans of the calls rewritten that way; the type checker requires the
+    /// method there to be `mut self`, and a `mut self` method to be called
+    /// nowhere else.
+    pub mut_call_sites: std::collections::HashSet<Span>,
+    /// See `HirProgram::extension_sources`.
+    pub extension_sources: HashMap<SymbolId, flux_diagnostics::SourceId>,
 }
 
 /// Code that may change sources, and whether it is allowed to.
@@ -145,6 +165,9 @@ impl SymbolTable {
             all_names: HashMap::new(),
             all_symbols: HashMap::new(),
             enum_variants: HashMap::new(),
+            enum_variant_sets: HashMap::new(),
+            lowered_type_fns: std::collections::HashSet::new(),
+            module_types: std::collections::HashSet::new(),
             closure_counter: 0,
             imported_names: std::collections::HashSet::new(),
             closure_frames: Vec::new(),
@@ -159,6 +182,11 @@ impl SymbolTable {
             module_aliases: HashMap::new(),
             qualified_symbols: HashMap::new(),
             writers: Vec::new(),
+            self_type: None,
+            mut_method_names: std::collections::HashSet::new(),
+            mut_methods: std::collections::HashSet::new(),
+            mut_call_sites: std::collections::HashSet::new(),
+            extension_sources: HashMap::new(),
         }
     }
 

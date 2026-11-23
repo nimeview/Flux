@@ -64,12 +64,22 @@ fn collect_reassigned_sources(program: &Program) -> HashSet<String> {
         names: HashSet::new(),
         // Like is_variant_name in stmts: only None is special without a declaration.
         variants: HashSet::from(["None".into()]),
+        mut_methods: HashSet::new(),
     };
     for item in &program.items {
         if let Item::Enum(e) = item {
             collector
                 .variants
                 .extend(e.variants.iter().map(|v| v.name.name.clone()));
+        }
+        // `x.m()` with a `mut self` method `m` assigns `x`.
+        if let Item::Impl(i) = item {
+            collector.mut_methods.extend(
+                i.methods
+                    .iter()
+                    .filter(|m| m.mut_self)
+                    .map(|m| m.name.name.clone()),
+            );
         }
     }
     for item in &program.items {
@@ -145,6 +155,7 @@ impl FromIterator<String> for AssignmentLocals<'_> {
 struct AssignmentCollector {
     names: HashSet<String>,
     variants: HashSet<String>,
+    mut_methods: HashSet<String>,
 }
 
 impl AssignmentCollector {
@@ -175,7 +186,26 @@ impl AssignmentCollector {
                     }
                     self.expr(&a.value, locals);
                 }
-                Stmt::Expr(e) => self.expr(e, locals),
+                Stmt::Expr(e) => {
+                    if let flux_syntax::Expr::Call { callee, .. } = e {
+                        if let flux_syntax::Expr::Field { base, field, .. } = callee.as_ref() {
+                            if self.mut_methods.contains(field) {
+                                let mut root = base.as_ref();
+                                while let flux_syntax::Expr::Field { base, .. }
+                                | flux_syntax::Expr::Index { base, .. } = root
+                                {
+                                    root = base;
+                                }
+                                if let flux_syntax::Expr::Ident { name, .. } = root {
+                                    if !locals.contains(name) {
+                                        self.names.insert(name.clone());
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    self.expr(e, locals)
+                }
                 Stmt::Return(r) => {
                     if let Some(value) = &r.value {
                         self.expr(value, locals);
@@ -319,6 +349,7 @@ impl AssignmentCollector {
                     self.expr(elem, locals);
                 }
             }
+            Expr::Paren { inner, .. } => self.expr(inner, locals),
             Expr::With { base, fields, .. } => {
                 self.expr(base, locals);
                 for field in fields {
@@ -432,6 +463,11 @@ fn lower_program_inner(
                 symbols
                     .enum_variants
                     .insert(v.name.name.clone(), e.name.name.clone());
+                symbols
+                    .enum_variant_sets
+                    .entry(e.name.name.clone())
+                    .or_default()
+                    .insert(v.name.name.clone());
             }
         }
     }
@@ -498,6 +534,10 @@ fn lower_program_inner(
             qualified_symbols: symbols.qualified_symbols.clone(),
             const_bindings: symbols.const_bindings.clone(),
             symbols: symbols.export_symbols(),
+            mut_methods: symbols.mut_methods.clone(),
+            mut_call_sites: symbols.mut_call_sites.clone(),
+            extension_sources: symbols.extension_sources.clone(),
+            file_imports: linked.map(file_imports).unwrap_or_default(),
         };
         check_unused_bindings(&hir, diagnostics);
         crate::cycles::check_watch_cycles(&hir, diagnostics);
@@ -682,7 +722,10 @@ pub(super) fn declare_item(item: &Item, symbols: &mut SymbolTable) -> Option<Sym
         Item::Trait(TraitDecl { name, .. }) => symbols
             .declare(&name.name, SymbolKind::Builtin, name.span)
             .err(),
-        Item::Impl(_) => None,
+        Item::Impl(decl) => {
+            decls::declare_type_functions(decl, symbols);
+            None
+        }
         Item::Const(ConstBinding { name, .. }) => {
             match symbols.declare(&name.name, SymbolKind::Source, name.span) {
                 Ok(id) => {
@@ -753,7 +796,12 @@ fn item_name_span(item: &Item) -> (String, flux_diagnostics::Span) {
         Item::Struct(s) => (s.name.name.clone(), s.span),
         Item::Enum(e) => (e.name.name.clone(), e.span),
         Item::Trait(t) => (t.name.name.clone(), t.span),
-        Item::Impl(i) => (i.trait_name.name.clone(), i.span),
+        Item::Impl(i) => (
+            i.trait_name
+                .as_ref()
+                .map_or_else(|| "impl".to_string(), |t| t.name.clone()),
+            i.span,
+        ),
         Item::TypeAlias(t) => (t.name.name.clone(), t.span),
     }
 }
@@ -781,6 +829,25 @@ pub(super) fn lower_item(
         Item::Impl(_) => None, // methods lowered separately in lower_impl_fns
         Item::TypeAlias(_) => None,
     }
+}
+
+/// The files each module's file imports (user modules only).
+fn file_imports(
+    linked: &LinkedProgram,
+) -> HashMap<flux_diagnostics::SourceId, HashSet<flux_diagnostics::SourceId>> {
+    linked
+        .module_imports
+        .iter()
+        .enumerate()
+        .filter_map(|(i, imports)| {
+            let from = linked.modules.get(i)?.source.id;
+            let targets = imports
+                .iter()
+                .filter_map(|b| linked.modules.get(b.module_index).map(|m| m.source.id))
+                .collect();
+            Some((from, targets))
+        })
+        .collect()
 }
 
 #[cfg(test)]

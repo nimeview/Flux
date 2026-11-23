@@ -58,7 +58,8 @@ pub(super) fn declare_module_items(
                         source_id: span.source,
                     });
                 }
-                Item::Import(_) | Item::Impl(_) | Item::TypeAlias(_) => {}
+                Item::Impl(decl) => super::decls::declare_type_functions(decl, symbols),
+                Item::Import(_) | Item::TypeAlias(_) => {}
                 Item::Struct(_) | Item::Enum(_) | Item::Trait(_) => {
                     if let Some(err) = super::declare_item(item, symbols) {
                         push_duplicate(diagnostics, item, err);
@@ -68,6 +69,11 @@ pub(super) fn declare_module_items(
                             symbols
                                 .enum_variants
                                 .insert(v.name.name.clone(), e.name.name.clone());
+                            symbols
+                                .enum_variant_sets
+                                .entry(e.name.name.clone())
+                                .or_default()
+                                .insert(v.name.name.clone());
                         }
                     }
                 }
@@ -98,7 +104,12 @@ fn bind_import(
     }
     for item in pub_items(&module.ast) {
         if is_type_item(item) {
-            continue; // type names are program-global
+            // Type names are program-global; `alias::Type { … }` checks that
+            // the module exports it.
+            if let Some(name) = item_export_name(item) {
+                symbols.module_types.insert((import.alias.clone(), name));
+            }
+            continue;
         }
         let Some(name) = item_export_name(item) else {
             continue;

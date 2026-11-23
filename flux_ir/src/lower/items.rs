@@ -98,6 +98,14 @@ fn stmt_span(stmt: &HirStmt) -> Span {
 
 fn lower_stmt(stmt: &HirStmt, program: &HirProgram) -> Option<IrStmt> {
     match stmt {
+        // `x.m(…)` on a place where `m` does not change its receiver: the call.
+        HirStmt::Assign(a)
+            if program.mut_call_sites.contains(&a.span) && !calls_mut_method(&a.value, program) =>
+        {
+            Some(IrStmt::Expr {
+                code: lower_expr(&a.value, program),
+            })
+        }
         HirStmt::Assign(a) if !a.path.is_empty() => Some(IrStmt::AssignPlace {
             target: runtime_symbol_name(program, &a.name)?,
             slot: None,
@@ -205,6 +213,17 @@ pub(super) fn const_expr(expr: &HirExpr) -> Option<IrValue> {
 /// `x = set(x, i, v)` likewise). When the other arguments do not touch `x`,
 /// loading `x` by move leaves the array unshared, so the VM updates it in
 /// place instead of copying it (O(1) rather than O(n)).
+/// Whether `call` (a resolved method call) calls a `mut self` method.
+fn calls_mut_method(call: &HirExpr, program: &HirProgram) -> bool {
+    match call {
+        HirExpr::Call { callee, .. } => match callee.as_ref() {
+            HirExpr::Ident { symbol, .. } => program.mut_methods.contains(symbol),
+            _ => false,
+        },
+        _ => false,
+    }
+}
+
 /// The arguments of `x = set(x, i, v)`: the builtin `set` applied to the
 /// assigned binding itself.
 fn set_of_self<'a>(a: &'a flux_hir::HirAssign, program: &HirProgram) -> Option<&'a [HirExpr; 3]> {

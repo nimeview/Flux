@@ -28,6 +28,15 @@ pub enum FluxWarning {
         span: miette::SourceSpan,
         source_id: SourceId,
     },
+    /// An older form whose replacement cannot be written as one edit.
+    #[error("{message}")]
+    #[diagnostic(code(flux::E026))]
+    OldForm {
+        message: String,
+        #[label("older form")]
+        span: miette::SourceSpan,
+        source_id: SourceId,
+    },
     /// A function other than an `act fn` changes a source. An error from 0.3.
     #[error("`{function}` changes `{name}`, but only `on` handlers and `act fn` change state")]
     #[diagnostic(code(flux::E027), help("{help}"))]
@@ -94,14 +103,15 @@ impl FluxWarning {
             | Self::WriteOutsideAct { source_id, .. }
             | Self::WatchWrites { source_id, .. }
             | Self::WatchCycle { source_id, .. }
-            | Self::UnusedResult { source_id, .. } => *source_id,
+            | Self::UnusedResult { source_id, .. }
+            | Self::OldForm { source_id, .. } => *source_id,
         }
     }
 
     pub fn code(&self) -> &'static str {
         match self {
             Self::UnusedBinding { .. } => "E015",
-            Self::Deprecated { .. } => "E026",
+            Self::Deprecated { .. } | Self::OldForm { .. } => "E026",
             Self::WriteOutsideAct { .. } => "E027",
             Self::WatchWrites { .. } => "E028",
             Self::WatchCycle { .. } => "E029",
@@ -117,7 +127,8 @@ impl FluxWarning {
             | Self::WriteOutsideAct { span, .. }
             | Self::WatchWrites { span, .. }
             | Self::WatchCycle { span, .. }
-            | Self::UnusedResult { span, .. } => *span,
+            | Self::UnusedResult { span, .. }
+            | Self::OldForm { span, .. } => *span,
         };
         span_from_miette(source_id, miette_span)
     }
@@ -143,7 +154,8 @@ impl FluxWarning {
             | Self::WriteOutsideAct { .. }
             | Self::WatchWrites { .. }
             | Self::WatchCycle { .. }
-            | Self::UnusedResult { .. } => None,
+            | Self::UnusedResult { .. }
+            | Self::OldForm { .. } => None,
         }
     }
 }

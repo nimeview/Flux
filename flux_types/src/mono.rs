@@ -400,7 +400,9 @@ fn infer_mono_type(
             match name {
                 // `base with { ... }` has the base's type.
                 flux_hir::WITH_FIELDS => infer_mono_type(args.first()?, symbols, program),
-                flux_hir::TUPLE_CHECK => infer_mono_type(args.first()?, symbols, program),
+                flux_hir::TUPLE_CHECK | flux_hir::GROUPED => {
+                    infer_mono_type(args.first()?, symbols, program)
+                }
                 flux_hir::TUPLE => Some(Type::Tuple(
                     args.iter()
                         .map(|a| infer_mono_type(a, symbols, program))

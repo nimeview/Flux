@@ -444,8 +444,17 @@ impl DiagnosticBag {
         }
     }
 
+    /// Adds `warning` unless the same one (code, place, and text) is already
+    /// there: code lowered twice reports once.
     pub fn push_warning(&mut self, warning: crate::FluxWarning) {
-        self.warnings.push(warning);
+        let duplicate = self.warnings.iter().any(|w| {
+            w.code() == warning.code()
+                && w.label_span() == warning.label_span()
+                && w.to_string() == warning.to_string()
+        });
+        if !duplicate {
+            self.warnings.push(warning);
+        }
     }
 
     pub fn has_errors(&self) -> bool {

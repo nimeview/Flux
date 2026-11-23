@@ -10,8 +10,7 @@ pub use crate::position::position_to_offset;
 use crate::position::{byte_range_to_lsp, LineIndex};
 use flux_driver::analyze_document_with as driver_analyze;
 use flux_hir::{
-    build_reference_index, rename_spans, symbol_at_offset, HirItem, HirProgram, ReferenceIndex,
-    SymbolId, SymbolKind,
+    rename_spans, symbol_at_offset, HirItem, HirProgram, ReferenceIndex, SymbolId, SymbolKind,
 };
 use flux_types::{Type, TypeCheckContext, TypedProgram};
 
@@ -104,7 +103,18 @@ pub fn analyze_document_with(
     let symbols = hir
         .map(|h| build_symbol_index(h, &analyzed.source_paths, &fallback_path))
         .unwrap_or_default();
-    let references = hir.map(build_reference_index);
+    // Method calls resolve during type checking: `x.m(…)` is a use of `m`.
+    let method_calls: HashMap<flux_diagnostics::Span, flux_hir::SymbolId> = analyzed
+        .typed
+        .as_ref()
+        .map(|t| {
+            t.method_calls
+                .iter()
+                .map(|((_, at), id)| (*at, *id))
+                .collect()
+        })
+        .unwrap_or_default();
+    let references = hir.map(|h| flux_hir::build_reference_index_with_methods(h, &method_calls));
     DocAnalysis {
         diagnostics: to_ranged(&analyzed.diagnostics, contents, &analyzed.sources),
         sources: analyzed.sources,

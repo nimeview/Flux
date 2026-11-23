@@ -429,6 +429,17 @@ fn compute_hover(store: &mut DocumentStore, params: HoverParams) -> Option<Hover
     let word = word_at_offset(&text, offset)?;
     let analysis = store.analyze(&uri);
 
+    // A method or type function: found by position, as its internal name is
+    // not the word under the cursor.
+    let method = analysis.as_ref().and_then(|a| {
+        let id = crate::analysis::symbol_at_position(a, &text, position.line, position.character)?;
+        let name = a.hir.as_ref()?.names.get(&id)?;
+        if !(name.starts_with("__impl_") || name.contains("::")) {
+            return None;
+        }
+        let ty = a.typed.as_ref()?.types.get(&id)?;
+        Some(format!("{word}: {}", crate::analysis::describe_type(ty)))
+    });
     // A name the program defines itself hides the library's.
     let own_name = analysis.as_ref().is_some_and(|a| {
         a.hir.as_ref().is_some_and(|hir| {
@@ -437,7 +448,7 @@ fn compute_hover(store: &mut DocumentStore, params: HoverParams) -> Option<Hover
                 .any(|s| s.name == word && s.kind != flux_hir::SymbolKind::Builtin)
         })
     });
-    if !own_name {
+    if !own_name && method.is_none() {
         if let Some(value) = library_markdown(word) {
             return Some(Hover {
                 contents: HoverContents::Markup(MarkupContent {
@@ -448,9 +459,11 @@ fn compute_hover(store: &mut DocumentStore, params: HoverParams) -> Option<Hover
             });
         }
     }
-    let user = analysis
-        .as_ref()
-        .and_then(|a| hover_for_name(a.hir.as_ref()?, a.typed.as_ref(), word));
+    let user = method.or_else(|| {
+        analysis
+            .as_ref()
+            .and_then(|a| hover_for_name(a.hir.as_ref()?, a.typed.as_ref(), word))
+    });
     let text_str = match keyword_doc(word) {
         Some(doc) => doc.to_string(),
         None => user?,

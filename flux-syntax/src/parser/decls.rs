@@ -249,8 +249,9 @@ pub(super) fn parse_fn(
             _ => {}
         }
     }
-    let (params, ret) = parse_fn_sig(source_id, sig.expect("fn sig"));
+    let (params, ret, mut_self) = parse_fn_sig(source_id, sig.expect("fn sig"));
     FnDecl {
+        mut_self,
         pub_,
         kind,
         keyword,
@@ -289,7 +290,7 @@ pub(super) fn parse_rfn(
             _ => {}
         }
     }
-    let (params, ret) = parse_fn_sig(source_id, sig.expect("rfn sig"));
+    let (params, ret, _) = parse_fn_sig(source_id, sig.expect("rfn sig"));
     RFnDecl {
         pub_,
         keyword,
@@ -325,10 +326,11 @@ pub(super) fn parse_trait(
                 }
             }
             let mname = mname.expect("trait method name");
-            let (params, ret) = parse_fn_sig(source_id, sig.expect("trait method sig"));
+            let (params, ret, mut_self) = parse_fn_sig(source_id, sig.expect("trait method sig"));
             TraitMethod {
                 name: mname,
                 params,
+                mut_self,
                 ret,
                 span: mspan,
             }
@@ -347,9 +349,19 @@ pub(super) fn parse_impl(
     pair: pest::iterators::Pair<'_, Rule>,
     span: Span,
 ) -> ImplDecl {
-    let mut inner = pair.into_inner();
-    let trait_name = parse_ident(source_id, inner.next().expect("trait name"));
-    let target_type = parse_type_name(source_id, inner.next().expect("impl type"));
+    let mut inner = pair.into_inner().peekable();
+    // `impl Trait for Type`: a name, then `for`.
+    let first = inner.next().expect("impl head");
+    let (trait_name, target) = if inner.peek().map(|p| p.as_rule()) == Some(Rule::kw_for) {
+        inner.next();
+        (
+            Some(parse_ident(source_id, first)),
+            inner.next().expect("impl type"),
+        )
+    } else {
+        (None, first)
+    };
+    let target_type = parse_type_name(source_id, target);
     let body = inner.next().expect("impl body");
     let methods = body
         .into_inner()
@@ -367,8 +379,9 @@ pub(super) fn parse_impl(
                 }
             }
             let mname = mname.expect("impl method name");
-            let (params, ret) = parse_fn_sig(source_id, sig.expect("impl method sig"));
+            let (params, ret, mut_self) = parse_fn_sig(source_id, sig.expect("impl method sig"));
             FnDecl {
+                mut_self,
                 kind: FnKind::Plain,
                 // Every method starts with `fn`.
                 keyword: Span {
@@ -393,15 +406,38 @@ pub(super) fn parse_impl(
     }
 }
 
+/// The parameters (with `self` first, typed `Self`, if the signature has
+/// one), the return type, and whether it is `mut self`.
 fn parse_fn_sig(
     source_id: SourceId,
     pair: pest::iterators::Pair<'_, Rule>,
-) -> (Vec<Param>, Option<TypeName>) {
+) -> (Vec<Param>, Option<TypeName>, bool) {
     let mut params = Vec::new();
     let mut ret = None;
+    let mut mut_self = false;
     for child in pair.into_inner() {
         match child.as_rule() {
-            Rule::param_list => params = parse_param_list(source_id, child),
+            Rule::self_param => {
+                let span = span_of(source_id, &child);
+                mut_self = child
+                    .into_inner()
+                    .any(|p| p.as_rule() == Rule::mut_modifier);
+                params.insert(
+                    0,
+                    Param {
+                        name: Ident {
+                            name: "self".to_string(),
+                            span,
+                        },
+                        ty: TypeName::Simple {
+                            name: "Self".to_string(),
+                            span,
+                        },
+                        span,
+                    },
+                );
+            }
+            Rule::param_list => params.extend(parse_param_list(source_id, child)),
             Rule::return_type => {
                 let ty = child.into_inner().next().expect("return type");
                 ret = Some(parse_type_name(source_id, ty));
@@ -409,7 +445,7 @@ fn parse_fn_sig(
             _ => {}
         }
     }
-    (params, ret)
+    (params, ret, mut_self)
 }
 
 fn parse_params_from(source_id: SourceId, pair: pest::iterators::Pair<'_, Rule>) -> Vec<Param> {

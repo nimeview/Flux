@@ -21,6 +21,18 @@ pub(super) fn lower_fn(
         FnKind::Track => WriterKind::Track,
         FnKind::Act => WriterKind::Act,
     };
+    if let Some(p) = decl
+        .params
+        .first()
+        .filter(|p| super::decls::takes_self(decl) && p.name.name == "self")
+    {
+        diagnostics.push(FluxError::Parse {
+            message: "`self` is only for methods inside an `impl`".to_string(),
+            span: span_to_miette(p.span),
+            source_id: p.span.source,
+        });
+        return None;
+    }
     let writer = Writer::new(kind, &decl.name.name, Some(decl.keyword));
     lower_fn_as(decl, symbols, diagnostics, reactive, writer)
 }
