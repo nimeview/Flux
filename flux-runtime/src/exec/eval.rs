@@ -565,7 +565,7 @@ impl Executor {
                     }
                     acc
                 }
-                _ => RuntimeValue::Unit,
+                _ => self.call_method_hof(name, args),
             };
         }
 
@@ -650,5 +650,79 @@ impl Executor {
             self.locals_pool.push(locals);
         }
         value
+    }
+}
+
+impl Executor {
+    /// The library methods that call a function argument: `xs.find(f)`,
+    /// `xs.any(f)`, `xs.all(f)`, `xs.sorted_by(key)`, and `map`, `and_then`,
+    /// `map_err` on `Option` and `Result`.
+    fn call_method_hof(&mut self, name: &str, args: &[RuntimeValue]) -> RuntimeValue {
+        let Some(callback) = args.get(1).and_then(Callback::of) else {
+            debug_assert_vm(false, &format!("{name:?}: expected a function argument"));
+            return RuntimeValue::Unit;
+        };
+        let call = |this: &mut Self, value: &RuntimeValue| {
+            this.call_callback(&callback, std::slice::from_ref(value))
+        };
+        let items = match args.first() {
+            Some(RuntimeValue::Array(items)) => Some(items.clone()),
+            _ => None,
+        };
+        match (name, args.first()) {
+            ("\0find", _) => {
+                for item in items.iter().flat_map(|xs| xs.iter()) {
+                    let hit = call(self, item).as_bool().unwrap_or(false);
+                    if self.trap.is_some() {
+                        return RuntimeValue::Unit;
+                    }
+                    if hit {
+                        return RuntimeValue::Option(Some(Box::new(item.clone())));
+                    }
+                }
+                RuntimeValue::Option(None)
+            }
+            ("\0any" | "\0all", _) => {
+                let want = name == "\0any";
+                for item in items.iter().flat_map(|xs| xs.iter()) {
+                    let hit = call(self, item).as_bool().unwrap_or(false);
+                    if self.trap.is_some() {
+                        return RuntimeValue::Unit;
+                    }
+                    if hit == want {
+                        return RuntimeValue::Bool(want);
+                    }
+                }
+                RuntimeValue::Bool(!want)
+            }
+            // Stable: equal keys keep their order.
+            ("\0sorted_by", _) => {
+                let xs = items.map(|xs| xs.to_vec()).unwrap_or_default();
+                let mut keyed = Vec::with_capacity(xs.len());
+                for item in xs {
+                    let key = call(self, &item);
+                    if self.trap.is_some() {
+                        return RuntimeValue::Unit;
+                    }
+                    keyed.push((key, item));
+                }
+                keyed.sort_by(|a, b| flux_std::methods::order(&a.0, &b.0));
+                RuntimeValue::array(keyed.into_iter().map(|(_, item)| item).collect())
+            }
+            ("\0map_value", Some(RuntimeValue::Option(Some(v)))) => {
+                RuntimeValue::Option(Some(Box::new(call(self, v))))
+            }
+            ("\0map_value", Some(RuntimeValue::Result(Ok(v)))) => {
+                RuntimeValue::Result(Ok(Box::new(call(self, v))))
+            }
+            ("\0and_then", Some(RuntimeValue::Option(Some(v))))
+            | ("\0and_then", Some(RuntimeValue::Result(Ok(v)))) => call(self, v),
+            ("\0map_err", Some(RuntimeValue::Result(Err(e)))) => {
+                RuntimeValue::Result(Err(Box::new(call(self, e))))
+            }
+            // `None` and `Err` pass through `map`/`and_then`; `Ok` through `map_err`.
+            ("\0map_value" | "\0and_then" | "\0map_err", Some(other)) => other.clone(),
+            _ => RuntimeValue::Unit,
+        }
     }
 }

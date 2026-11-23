@@ -100,7 +100,9 @@ fn lower_stmt(stmt: &HirStmt, program: &HirProgram) -> Option<IrStmt> {
     match stmt {
         // `x.m(…)` on a place where `m` does not change its receiver: the call.
         HirStmt::Assign(a)
-            if program.mut_call_sites.contains(&a.span) && !calls_mut_method(&a.value, program) =>
+            if program.mut_call_sites.contains(&a.span)
+                && !program.changing_calls.contains(&a.span)
+                && !calls_mut_method(&a.value, program) =>
         {
             Some(IrStmt::Expr {
                 code: lower_expr(&a.value, program),

@@ -128,7 +128,7 @@ Each `.fl` file is a module with its own namespace. Inside a module, all of its 
 
 **Compound assignment.** `x += v`, `-=`, `*=`, `/=`, and `%=` work on any place and mean `place = place op v`, with the operator's types and errors (so `s += "x"` appends to a string, and integer overflow is a runtime error that leaves the place unchanged). The indices are evaluated once, then the old value of the place is read, then `v`.
 
-**Unused results.** A collection function (`push`, `set`, `pop`, `len`, `map`, `filter`, and the rest of the `collections` module) called as a statement whose value nobody uses warns (**E030**): they return a new value and leave their arguments as they were, so `push(xs, 3)` alone does nothing. A block's last statement is checked only where its value is dropped (loop bodies, handlers, watches).
+**Unused results.** A collection function (`push`, `set`, `pop`, `len`, `map`, `filter`, and the rest of the `collections` module) called as a statement whose value nobody uses warns (**E030**): they return a new value and leave their arguments as they were, so `push(xs, 3)` alone does nothing. So does a library method that only computes a value (`xs.sorted()`, `xs.len()`, `m.keys()`), unless the program declares a method or field of that name; the changing methods (`xs.push(3)`) store their result back instead. A block's last statement is checked only where its value is dropped (loop bodies, handlers, watches).
 
 **Block value.** A function's value is its last statement's: an expression, a `return`, or an `if … else` (including `else if` chains), whose value is the final expression of the branch that runs. Both branches must have compatible types, with no numeric widening. Any other last statement (`let`, an assignment, `while`, `for`, an `if` without `else`) gives `Unit`. So `fn main() { let x = 7 }` exits with status 0, and `fn f() -> Int { 1\n let x = 2 }` is a type error.
 
@@ -322,6 +322,23 @@ Selective imports: `import io { println, read_line }`. Stdlib modules are built 
 | `str` | `str_len`, `str_split`, `str_chars`, `str_join`, `str_contains`, `str_trim`, `str_starts_with`, `str_ends_with`, `str_replace`, `str_to_lower`, `str_to_upper`, `to_string`, `parse_int`, `parse_float` |
 | `option` | `Some`, `None` |
 | `result` | `Ok`, `Err` |
+
+### Library methods
+
+Values of library types have methods, which need no import: `text.split(",")` is `str_split(text, ",")`. The free functions stay valid and are the same implementation. A method of the value's own type (an `impl`, or an extension the file can see) takes precedence.
+
+| Receiver | Methods |
+|---|---|
+| `String` | `len`, `split`, `chars`, `contains`, `trim`, `starts_with`, `ends_with`, `replace`, `to_lower`, `to_upper`, `parse_int`, `parse_float`, `to_string`, `split_once(sep) -> Option[(String, String)]`, `lines() -> [String]`, `words() -> [String]` |
+| `[T]` | `len`, `get`, `map`, `filter`, `reduce`, `join` (for `[String]`), `contains(v) -> Bool`, `find(f) -> Option[T]`, `any(f)`, `all(f)`, `enumerate() -> [(Int, T)]`, `zip(ys) -> [(T, U)]`, `slice(a, b)` (elements `a` up to `b`; out of range is a runtime error), `sorted()`, `sorted_by(key)`, `reversed()`, `first()`, `last()` (`Option[T]`) |
+| `Map[K, V]` | `len`, `get`, `has`, `keys`, `values`, `entries() -> [(K, V)]`, `get_or(k, default)` |
+| `Option[T]` | `unwrap_or(default)`, `map(f)`, `and_then(f)` (`f` returns an `Option`), `ok_or(err)`, `is_some()`, `is_none()` |
+| `Result[T, E]` | `unwrap_or(default)`, `map(f)`, `and_then(f)` (`f` returns a `Result` with error type `E`), `map_err(f)`, `is_ok()`, `is_err()` |
+| numbers | `abs`, `sqrt`, `floor`, `ceil`, `pow`, `min`, `max`, `clamp`, `to_string` |
+
+`sorted` and `sorted_by` sort numbers by value and strings by code point (`sorted_by(|p| p.age)` sorts by the key the function gives, keeping equal keys in order); other element types are a compile error. `a + b` joins two arrays of the same type.
+
+**Changing methods.** `xs.push(v)`, `xs.pop()`, `xs.set(i, v)`, `xs.sort()`, `xs.sort_by(key)`, `xs.reverse()`, `m.set(k, v)`, and `m.remove(k)` change the value they are called on, like a `mut self` method: they are called on their own line on a place, return nothing, and store the result back only when they succeed. Calling one inside an expression is a compile error. The free functions `push(xs, v)`, `pop(xs)`, `set(xs, i, v)`, and `map_remove(m, k)` still return a new value and change nothing.
 
 `Ok`, `Err`, `Some`, and `None` need no import. A module that declares the same name itself, as an item or an enum variant, uses its own; so does a local. Importing them from `option` and `result` remains valid.
 

@@ -85,6 +85,9 @@ pub(super) fn infer_builtin_call(
         }
     }
 
+    if name.starts_with('\0') {
+        return infer_method_builtin(ctx, name, args, types, names, source, diagnostics, span);
+    }
     match name {
         "args" => Some(Type::Array(Box::new(Type::String))),
         "print" | "println" | "eprint" | "eprintln" => {
@@ -830,4 +833,305 @@ pub(super) fn infer_with(
         }
     }
     Some(base_ty)
+}
+
+/// The method-only library functions (`flux_std::methods`); `args[0]` is the
+/// receiver.
+#[allow(clippy::too_many_arguments)]
+fn infer_method_builtin(
+    ctx: &TypeCheckContext,
+    name: &str,
+    args: &[HirExpr],
+    types: &Scope<'_>,
+    names: &HashMap<SymbolId, String>,
+    source: SourceId,
+    diagnostics: &mut DiagnosticBag,
+    span: flux_diagnostics::Span,
+) -> Option<Type> {
+    let infer = |e: &HirExpr, diagnostics: &mut DiagnosticBag| {
+        infer_expr(ctx, e, types, names, source, diagnostics)
+            .map(|t| unwrap_value_type(&t))
+            .unwrap_or(Type::Error)
+    };
+    let mismatch = |expected: String,
+                    found: &Type,
+                    at: flux_diagnostics::Span,
+                    diagnostics: &mut DiagnosticBag| {
+        if !found.is_error() {
+            diagnostics.push(FluxError::TypeMismatch {
+                expected,
+                found: found.display(),
+                span: span_to_miette(at),
+                source_id: at.source,
+            });
+        }
+    };
+    let expect = |want: &Type, e: &HirExpr, got: &Type, diagnostics: &mut DiagnosticBag| {
+        if !want.is_error() && !got.is_error() && !types_compatible(want, got) {
+            diagnostics.push(FluxError::TypeMismatch {
+                expected: want.display(),
+                found: got.display(),
+                span: span_to_miette(e.span()),
+                source_id: e.span().source,
+            });
+        }
+    };
+    let callback = |cb: Option<&HirExpr>, params: &[Type], diagnostics: &mut DiagnosticBag| {
+        cb.and_then(|cb| check_callback(ctx, cb, params, types, names, source, diagnostics))
+            .map(|t| unwrap_value_type(&t))
+            .unwrap_or(Type::Error)
+    };
+    let sortable = |t: &Type| t.is_error() || t.is_integer() || t.is_float() || *t == Type::String;
+    let receiver = args.first()?;
+    let recv = infer(receiver, diagnostics);
+    let elem = match &recv {
+        Type::Array(e) => (**e).clone(),
+        _ => Type::Error,
+    };
+    let rest = &args[1..];
+    let want_args = |n: usize, diagnostics: &mut DiagnosticBag| {
+        if rest.len() != n {
+            diagnostics.push(FluxError::TypeMismatch {
+                expected: format!("{n} arguments"),
+                found: format!("{} arguments", rest.len()),
+                span: span_to_miette(span),
+                source_id: span.source,
+            });
+        }
+    };
+    let array = |t: Type| Type::Array(Box::new(t));
+    Some(match name {
+        "\0contains" => {
+            want_args(1, diagnostics);
+            if let Some(v) = rest.first() {
+                let got = infer(v, diagnostics);
+                expect(&elem, v, &got, diagnostics);
+            }
+            Type::Bool
+        }
+        "\0enumerate" => {
+            want_args(0, diagnostics);
+            array(Type::Tuple(vec![Type::Int64, elem]))
+        }
+        "\0zip" => {
+            want_args(1, diagnostics);
+            let other = rest
+                .first()
+                .map(|e| infer(e, diagnostics))
+                .unwrap_or(Type::Error);
+            let other_elem = match other {
+                Type::Array(e) => *e,
+                ref t => {
+                    if let Some(e) = rest.first() {
+                        mismatch("an array".into(), t, e.span(), diagnostics);
+                    }
+                    Type::Error
+                }
+            };
+            array(Type::Tuple(vec![elem, other_elem]))
+        }
+        "\0slice" => {
+            want_args(2, diagnostics);
+            for e in rest {
+                let got = infer(e, diagnostics);
+                if !got.is_integer() {
+                    mismatch("an integer index".into(), &got, e.span(), diagnostics);
+                }
+            }
+            array(elem)
+        }
+        "\0sorted" => {
+            want_args(0, diagnostics);
+            if !sortable(&elem) {
+                mismatch(
+                    "an array of numbers or strings".into(),
+                    &recv,
+                    receiver.span(),
+                    diagnostics,
+                );
+            }
+            array(elem)
+        }
+        "\0reversed" => {
+            want_args(0, diagnostics);
+            array(elem)
+        }
+        "\0first" | "\0last" => {
+            want_args(0, diagnostics);
+            Type::Option(Box::new(elem))
+        }
+        "\0concat" => {
+            let other = rest
+                .first()
+                .map(|e| infer(e, diagnostics))
+                .unwrap_or(Type::Error);
+            if let Some(e) = rest.first() {
+                expect(&recv, e, &other, diagnostics);
+            }
+            recv
+        }
+        "\0unwrap_or" => {
+            want_args(1, diagnostics);
+            let inner = match &recv {
+                Type::Option(t) => (**t).clone(),
+                Type::Result { ok, .. } => (**ok).clone(),
+                _ => Type::Error,
+            };
+            if let Some(d) = rest.first() {
+                let got = infer(d, diagnostics);
+                expect(&inner, d, &got, diagnostics);
+                return Some(super::super::util::refine_unknown(&inner, &got));
+            }
+            inner
+        }
+        "\0ok_or" => {
+            want_args(1, diagnostics);
+            let inner = match &recv {
+                Type::Option(t) => (**t).clone(),
+                _ => Type::Error,
+            };
+            let err = rest
+                .first()
+                .map(|e| infer(e, diagnostics))
+                .unwrap_or(Type::Error);
+            Type::Result {
+                ok: Box::new(inner),
+                err: Box::new(err),
+            }
+        }
+        "\0is_some" | "\0is_none" | "\0is_ok" | "\0is_err" => {
+            want_args(0, diagnostics);
+            Type::Bool
+        }
+        "\0get_or" => {
+            want_args(2, diagnostics);
+            let (key, value) = match &recv {
+                Type::Map { key, value } => ((**key).clone(), (**value).clone()),
+                _ => (Type::Error, Type::Error),
+            };
+            if let (Some(k), Some(d)) = (rest.first(), rest.get(1)) {
+                let got = infer(k, diagnostics);
+                expect(&key, k, &got, diagnostics);
+                let got = infer(d, diagnostics);
+                expect(&value, d, &got, diagnostics);
+                return Some(super::super::util::refine_unknown(&value, &got));
+            }
+            value
+        }
+        "\0entries" => {
+            want_args(0, diagnostics);
+            match &recv {
+                Type::Map { key, value } => {
+                    array(Type::Tuple(vec![(**key).clone(), (**value).clone()]))
+                }
+                _ => Type::Error,
+            }
+        }
+        "\0split_once" => {
+            want_args(1, diagnostics);
+            if let Some(sep) = rest.first() {
+                let got = infer(sep, diagnostics);
+                expect(&Type::String, sep, &got, diagnostics);
+            }
+            Type::Option(Box::new(Type::Tuple(vec![Type::String, Type::String])))
+        }
+        "\0lines" | "\0words" => {
+            want_args(0, diagnostics);
+            array(Type::String)
+        }
+        "\0find" | "\0any" | "\0all" => {
+            want_args(1, diagnostics);
+            let ret = callback(rest.first(), std::slice::from_ref(&elem), diagnostics);
+            if !ret.is_error() && ret != Type::Bool {
+                if let Some(cb) = rest.first() {
+                    mismatch(
+                        "a function returning Bool".into(),
+                        &ret,
+                        cb.span(),
+                        diagnostics,
+                    );
+                }
+            }
+            if name == "\0find" {
+                Type::Option(Box::new(elem))
+            } else {
+                Type::Bool
+            }
+        }
+        "\0sorted_by" => {
+            want_args(1, diagnostics);
+            let key = callback(rest.first(), std::slice::from_ref(&elem), diagnostics);
+            if !sortable(&key) {
+                if let Some(cb) = rest.first() {
+                    mismatch(
+                        "a key that is a number or a string".into(),
+                        &key,
+                        cb.span(),
+                        diagnostics,
+                    );
+                }
+            }
+            array(elem)
+        }
+        "\0map_value" => {
+            want_args(1, diagnostics);
+            match &recv {
+                Type::Option(t) => Type::Option(Box::new(callback(
+                    rest.first(),
+                    &[(**t).clone()],
+                    diagnostics,
+                ))),
+                Type::Result { ok, err } => Type::Result {
+                    ok: Box::new(callback(rest.first(), &[(**ok).clone()], diagnostics)),
+                    err: err.clone(),
+                },
+                _ => Type::Error,
+            }
+        }
+        "\0and_then" => {
+            want_args(1, diagnostics);
+            let (inner, kind) = match &recv {
+                Type::Option(t) => ((**t).clone(), "an Option"),
+                Type::Result { ok, .. } => ((**ok).clone(), "a Result with the same error type"),
+                _ => (Type::Error, ""),
+            };
+            let ret = callback(rest.first(), &[inner], diagnostics);
+            let fits = match (&recv, &ret) {
+                (Type::Option(_), Type::Option(_)) => true,
+                (Type::Result { err: e1, .. }, Type::Result { err: e2, .. }) => {
+                    types_compatible(e1, e2)
+                }
+                _ => ret.is_error() || recv.is_error(),
+            };
+            if !fits {
+                if let Some(cb) = rest.first() {
+                    mismatch(
+                        format!("a function returning {kind}"),
+                        &ret,
+                        cb.span(),
+                        diagnostics,
+                    );
+                }
+            }
+            // The error type is the receiver's: an `Err` passes through.
+            match (&recv, ret) {
+                (Type::Result { err, .. }, Type::Result { ok, err: ret_err }) => Type::Result {
+                    ok,
+                    err: Box::new(super::super::util::refine_unknown(err, &ret_err)),
+                },
+                (_, ret) => ret,
+            }
+        }
+        "\0map_err" => {
+            want_args(1, diagnostics);
+            match &recv {
+                Type::Result { ok, err } => Type::Result {
+                    ok: ok.clone(),
+                    err: Box::new(callback(rest.first(), &[(**err).clone()], diagnostics)),
+                },
+                _ => Type::Error,
+            }
+        }
+        _ => Type::Error,
+    })
 }

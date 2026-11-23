@@ -344,6 +344,33 @@ pub fn member_completions(
         });
     }
 
+    // The library's methods for this kind of value.
+    use flux_std::methods::{library_method, Receiver, LIBRARY_METHOD_NAMES};
+    let receiver = match &inner {
+        Type::String => Receiver::String,
+        Type::Array(_) => Receiver::Array,
+        Type::Map { .. } => Receiver::Map,
+        Type::Option(_) => Receiver::Option,
+        Type::Result { .. } => Receiver::Result,
+        t if t.is_integer() || t.is_float() => Receiver::Number,
+        _ => Receiver::Other,
+    };
+    for name in LIBRARY_METHOD_NAMES {
+        if let Some((_, changes)) = library_method(receiver, name) {
+            if seen.insert(name.to_string()) {
+                items.push(MemberCompletion {
+                    label: name.to_string(),
+                    detail: Some(if changes {
+                        "library method; changes the value".to_string()
+                    } else {
+                        "library method".to_string()
+                    }),
+                    kind: MemberKind::Method,
+                });
+            }
+        }
+    }
+
     let _ = ctx;
     items
 }
@@ -421,9 +448,15 @@ fn type_of_receiver(receiver: &str, hir: &HirProgram, typed: &TypedProgram) -> O
     let sym = hir
         .names
         .iter()
-        .find(|(_, n)| n.as_str() == name)
-        .map(|(id, _)| *id)?;
-    typed.types.get(&sym).cloned()
+        .filter(|(_, n)| n.as_str() == name)
+        .map(|(id, _)| *id)
+        .find(|id| typed.types.contains_key(id) || typed.local_types.contains_key(id))?;
+    // A module item, or a local or parameter.
+    typed
+        .types
+        .get(&sym)
+        .or_else(|| typed.local_types.get(&sym))
+        .cloned()
 }
 
 fn unwrap_type(ty: &Type) -> Type {
@@ -987,6 +1020,18 @@ mod tests {
         let labels: Vec<_> = items.iter().map(|i| i.label.as_str()).collect();
         assert!(labels.contains(&"x"), "{labels:?}");
         assert!(labels.contains(&"y"), "{labels:?}");
+    }
+
+    #[test]
+    fn member_completions_for_library_methods() {
+        let src = "fn main() {\n    let xs = [3, 1]\n    let n = xs.len()\n}\n";
+        let analysis = analyze_document(None, src);
+        assert!(analysis.typed.is_some(), "{:?}", analysis.diagnostics);
+        let items = member_completions(&analysis, src, 2, 15);
+        let labels: Vec<_> = items.iter().map(|i| i.label.as_str()).collect();
+        assert!(labels.contains(&"sorted"), "{labels:?}");
+        assert!(labels.contains(&"push"), "{labels:?}");
+        assert!(!labels.contains(&"split"), "{labels:?}");
     }
 
     #[test]

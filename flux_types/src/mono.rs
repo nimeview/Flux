@@ -393,6 +393,10 @@ fn infer_mono_type(
         }
         HirExpr::EnumVariant { enum_name, .. } => resolve_type_name(enum_name, program),
         HirExpr::Call { callee, args, .. } => {
+            if let HirExpr::Field { base, field, .. } = callee.as_ref() {
+                let recv = infer_mono_type(base, symbols, program)?;
+                return library_method_type(&recv, field, args, symbols, program);
+            }
             let HirExpr::Ident { symbol, .. } = callee.as_ref() else {
                 return None;
             };
@@ -459,6 +463,64 @@ fn infer_mono_type(
             }
         }
         HirExpr::Closure { fn_symbol, .. } => function_type(fn_symbol, symbols, program),
+    }
+}
+
+/// The result type of the common library methods (`xs.len()`,
+/// `s.split(",")`, `o.unwrap_or(0)`), for inferring a generic argument;
+/// `None` for anything else, which the type checker then decides.
+fn library_method_type(
+    recv: &Type,
+    method: &str,
+    args: &[HirExpr],
+    symbols: &HashMap<SymbolId, Type>,
+    program: &HirProgram,
+) -> Option<Type> {
+    let array = |t: Type| Type::Array(Box::new(t));
+    // A user's `impl` may give a library type a method of the same name.
+    let user_method = program
+        .trait_impls
+        .iter()
+        .any(|((_, name), _)| name == method);
+    if user_method {
+        return None;
+    }
+    match (recv, method) {
+        (_, "to_string") => Some(Type::String),
+        (Type::String | Type::Array(_) | Type::Map { .. }, "len") => Some(Type::Int),
+        (Type::String, "split" | "chars" | "lines" | "words") => Some(array(Type::String)),
+        (Type::String, "contains" | "starts_with" | "ends_with") => Some(Type::Bool),
+        (Type::String, "trim" | "replace" | "to_lower" | "to_upper") => Some(Type::String),
+        (Type::String, "split_once") => Some(Type::Option(Box::new(Type::Tuple(vec![
+            Type::String,
+            Type::String,
+        ])))),
+        (Type::Array(_), "contains" | "any" | "all") => Some(Type::Bool),
+        (Type::Array(_), "sorted" | "sorted_by" | "reversed" | "slice" | "filter") => {
+            Some(recv.clone())
+        }
+        (Type::Array(e), "first" | "last" | "find") => Some(Type::Option(e.clone())),
+        (Type::Array(e), "enumerate") => Some(array(Type::Tuple(vec![Type::Int, (**e).clone()]))),
+        (Type::Array(_), "join") => Some(Type::String),
+        (Type::Array(_), "map") => {
+            let Type::Func { ret, .. } = infer_mono_type(args.first()?, symbols, program)? else {
+                return None;
+            };
+            Some(Type::Array(ret))
+        }
+        (Type::Map { .. }, "has") => Some(Type::Bool),
+        (Type::Map { key, .. }, "keys") => Some(array((**key).clone())),
+        (Type::Map { value, .. }, "values") => Some(array((**value).clone())),
+        (Type::Map { value, .. }, "get_or") => Some((**value).clone()),
+        (Type::Map { key, value }, "entries") => {
+            Some(array(Type::Tuple(vec![(**key).clone(), (**value).clone()])))
+        }
+        (Type::Option(t), "unwrap_or") => Some((**t).clone()),
+        (Type::Result { ok, .. }, "unwrap_or") => Some((**ok).clone()),
+        (Type::Option(_), "is_some" | "is_none") => Some(Type::Bool),
+        (Type::Result { .. }, "is_ok" | "is_err") => Some(Type::Bool),
+        (t, "abs" | "min" | "max" | "clamp") if t.is_integer() || t.is_float() => Some(t.clone()),
+        _ => None,
     }
 }
 

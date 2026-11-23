@@ -105,6 +105,9 @@ pub struct SymbolTable {
     /// method there to be `mut self`, and a `mut self` method to be called
     /// nowhere else.
     pub mut_call_sites: std::collections::HashSet<Span>,
+    /// `place.m(…)` statements inside a closure whose place's root the
+    /// closure captures: an error if `m` changes its receiver.
+    pub captured_call_sites: std::collections::HashSet<Span>,
     /// See `HirProgram::extension_sources`.
     pub extension_sources: HashMap<SymbolId, flux_diagnostics::SourceId>,
 }
@@ -186,6 +189,7 @@ impl SymbolTable {
             mut_method_names: std::collections::HashSet::new(),
             mut_methods: std::collections::HashSet::new(),
             mut_call_sites: std::collections::HashSet::new(),
+            captured_call_sites: std::collections::HashSet::new(),
             extension_sources: HashMap::new(),
         }
     }

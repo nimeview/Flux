@@ -880,18 +880,19 @@ fn lower_stmt(
         // Which method `m` is depends on the receiver's type, known only to
         // the type checker: the call site is recorded, and if `m` turns out
         // not to change its receiver, the assignment is only the call.
-        Stmt::Expr(Expr::Call { callee, args, span })
+        Stmt::Expr(whole @ Expr::Call { callee, args, span })
             if mut_call_place(callee, symbols).is_some() =>
         {
             let (root, steps, method) = mut_call_place(callee, symbols)?;
             let sym = resolve_name(&root.name, root.span, symbols, diagnostics)?;
+            // A closure cannot assign what it captures: the plain call, which
+            // the type checker rejects only if `m` changes its receiver.
             if symbols.is_captured(sym) {
-                diagnostics.push(FluxError::AssignToImmutableLocal {
-                    name: root.name.clone(),
-                    span: span_to_miette(*span),
-                    source_id: span.source,
-                });
-                return None;
+                symbols.captured_call_sites.insert(*span);
+                let mut reads_reactive = false;
+                let scope = tracking_scope(ctx);
+                return lower_expr(whole, symbols, scope, diagnostics, &mut reads_reactive)
+                    .map(|e| vec![HirStmt::Expr(e)]);
             }
             check_writer(sym, &root.name, root.span, symbols, diagnostics);
             let mut out = Vec::new();

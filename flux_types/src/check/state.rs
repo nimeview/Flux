@@ -70,7 +70,9 @@ pub struct TypeCheckContext {
     /// place (see `flux_hir::HirProgram::mut_call_sites`).
     pub(crate) mut_methods: std::collections::HashSet<SymbolId>,
     pub(crate) mut_call_sites: std::collections::HashSet<flux_diagnostics::Span>,
+    pub(crate) captured_call_sites: std::collections::HashSet<flux_diagnostics::Span>,
     pub(crate) extension_sources: HashMap<SymbolId, flux_diagnostics::SourceId>,
+    pub(crate) builtin_ids: HashMap<String, SymbolId>,
     pub(crate) file_imports:
         HashMap<flux_diagnostics::SourceId, std::collections::HashSet<flux_diagnostics::SourceId>>,
     builtin_symbols: std::collections::HashSet<SymbolId>,
@@ -92,6 +94,10 @@ pub struct TypeCheckContext {
     /// `recv.method(…)` call spans resolved to their impl function.
     pub(crate) method_calls:
         std::cell::RefCell<HashMap<(Option<SymbolId>, flux_diagnostics::Span), SymbolId>>,
+    /// `place.m(…)` statements whose `m` is a library method that changes
+    /// its receiver (`xs.push(1)`, `xs.sort()`): they store the result back.
+    pub(crate) changing_sites:
+        std::cell::RefCell<std::collections::HashSet<flux_diagnostics::Span>>,
     /// Declared return type of the function being checked, if it has one;
     /// checks a `return` wherever it appears, including inside match arms.
     pub(crate) fn_return: std::cell::RefCell<Option<Type>>,
@@ -182,7 +188,9 @@ impl TypeCheckContext {
         ctx.trait_impls = program.trait_impls.clone();
         ctx.mut_methods = program.mut_methods.clone();
         ctx.mut_call_sites = program.mut_call_sites.clone();
+        ctx.captured_call_sites = program.captured_call_sites.clone();
         ctx.extension_sources = program.extension_sources.clone();
+        ctx.builtin_ids = program.builtin_ids.clone();
         ctx.file_imports = program.file_imports.clone();
         ctx.builtin_symbols = program
             .symbols

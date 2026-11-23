@@ -18,6 +18,45 @@ fn main() {
 
 `Ok`, `Err`, `Some`, and `None` need no import. `len`, `range`, and the rest do, unlike in many languages. A file of your own named `math.fl` next to your code takes priority over the standard module.
 
+## Methods
+
+Most of the library is also available as methods, which need no import:
+
+```flux
+import io { println }
+
+struct Player {
+    name: String,
+    score: Int
+}
+
+fn main() {
+    let words = "pear apple fig".words()
+    let mut scores = [30, 10, 20]
+    scores.push(40)
+    scores.sort()
+    let players = [Player { name: "ann", score: 7 }, Player { name: "bo", score: 3 }]
+    let best = players.sorted_by(|p| p.score).last()
+    let first_big = scores.find(|s| s > 15)
+    println("{words.sorted()} {scores} {first_big.unwrap_or(0)}")
+    let name = best.map(|p| p.name).unwrap_or("nobody")
+    println("best: {name}")
+    for (i, w) in words.enumerate() {
+        println("{i}: {w.to_upper()}")
+    }
+}
+```
+
+```output
+["apple", "fig", "pear"] [10, 20, 30, 40] 20
+best: ann
+0: PEAR
+1: APPLE
+2: FIG
+```
+
+`scores.push(40)` and `scores.sort()` change `scores` itself, so they go on their own line and `scores` must be `let mut`. The free functions such as `push(xs, v)` stay, and return a new array instead. The full list of methods is in the language reference.
+
 ## io
 
 | Function | Returns | Notes |

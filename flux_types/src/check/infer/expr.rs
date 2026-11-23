@@ -324,7 +324,9 @@ pub(crate) fn infer_expr(
                     // which only a statement on a place does.
                     let changes = ctx.mut_methods.contains(&fn_id);
                     let at_place = ctx.mut_call_sites.contains(span);
-                    if changes && !at_place {
+                    if changes && ctx.captured_call_sites.contains(span) {
+                        captured_change(base, names, *span, diagnostics);
+                    } else if changes && !at_place {
                         diagnostics.push(FluxError::TypeMismatch {
                             expected: format!(
                                 "`{field}` called on its own line, on a variable or a part of one: `x.{field}(…)`"
@@ -376,6 +378,43 @@ pub(crate) fn infer_expr(
                     ctx.expand(unwrap_value_type(&base_ty)),
                     Type::Struct { ref fields, .. } if fields.iter().any(|(n, _)| n == field)
                 );
+                // A library method: `text.split(",")` is `str_split(text, ",")`.
+                let receiver = library_receiver(&ctx.expand(unwrap_value_type(&base_ty)));
+                if let Some((target, changes)) = flux_std::methods::library_method(receiver, field)
+                {
+                    if let Some(&id) = ctx.builtin_ids.get(target) {
+                        if changes && ctx.mut_call_sites.contains(span) {
+                            ctx.changing_sites.borrow_mut().insert(*span);
+                        }
+                        if changes && ctx.captured_call_sites.contains(span) {
+                            captured_change(base, names, *span, diagnostics);
+                        } else if changes && !ctx.mut_call_sites.contains(span) {
+                            diagnostics.push(FluxError::TypeMismatch {
+                                expected: format!(
+                                    "`{field}` called on its own line, on a variable or a part of one: `xs.{field}(…)`"
+                                ),
+                                found: format!("`{field}`, which changes its receiver, inside an expression"),
+                                span: span_to_miette(*span),
+                                source_id: span.source,
+                            });
+                        }
+                        ctx.method_calls
+                            .borrow_mut()
+                            .insert((ctx.current_function.get(), *span), id);
+                        let mut full = vec![base.as_ref().clone()];
+                        full.extend(args.iter().cloned());
+                        return super::builtins::infer_builtin_call(
+                            ctx,
+                            target,
+                            &full,
+                            types,
+                            names,
+                            source,
+                            diagnostics,
+                            *span,
+                        );
+                    }
+                }
                 // `op.f(3)` calls the function in field `f`; `(op.f)(3)` says so.
                 if is_field {
                     let callee_span = callee.span();
@@ -571,6 +610,32 @@ pub(crate) fn infer_expr(
         } => {
             let l = infer_expr(ctx, left, types, names, source, diagnostics)?;
             let r = infer_expr(ctx, right, types, names, source, diagnostics)?;
+            // `a + b` on arrays joins them: the library's `concat`, which the
+            // rewrite after type checking calls.
+            if *op == flux_syntax::BinaryOp::Add {
+                if let (Type::Array(_), Type::Array(_)) =
+                    (unwrap_value_type(&l), unwrap_value_type(&r))
+                {
+                    if !types_compatible(&unwrap_value_type(&l), &unwrap_value_type(&r)) {
+                        diagnostics.push(FluxError::TypeMismatch {
+                            expected: unwrap_value_type(&l).display(),
+                            found: unwrap_value_type(&r).display(),
+                            span: span_to_miette(right.span()),
+                            source_id: right.span().source,
+                        });
+                    }
+                    if let Some(&id) = ctx.builtin_ids.get("\0concat") {
+                        ctx.method_calls
+                            .borrow_mut()
+                            .insert((ctx.current_function.get(), *span), id);
+                    }
+                    // `[] + [1]` is `[Int]`: each side fills what the other
+                    // leaves unknown.
+                    let (l, r) = (unwrap_value_type(&l), unwrap_value_type(&r));
+                    let joined = super::super::util::refine_unknown(&l, &r);
+                    return Some(super::super::util::refine_unknown(&joined, &l));
+                }
+            }
             infer_binary(*op, &l, &r, *span, diagnostics)
         }
         HirExpr::If {
@@ -1293,4 +1358,41 @@ pub(crate) fn usable_context(ty: &Type) -> bool {
         Type::Func { params, ret } => params.iter().all(usable_context) && usable_context(ret),
         _ => true,
     }
+}
+
+/// Which library methods a value of type `ty` has.
+fn library_receiver(ty: &Type) -> flux_std::methods::Receiver {
+    use flux_std::methods::Receiver;
+    match ty {
+        Type::String => Receiver::String,
+        Type::Array(_) => Receiver::Array,
+        Type::Map { .. } => Receiver::Map,
+        Type::Option(_) => Receiver::Option,
+        Type::Result { .. } => Receiver::Result,
+        t if t.is_integer() || t.is_float() => Receiver::Number,
+        _ => Receiver::Other,
+    }
+}
+
+/// `x.m(…)` in a closure that captures `x`, where `m` changes its receiver:
+/// a closure cannot assign what it captures.
+fn captured_change(
+    base: &HirExpr,
+    names: &HashMap<SymbolId, String>,
+    span: flux_diagnostics::Span,
+    diagnostics: &mut DiagnosticBag,
+) {
+    let mut root = base;
+    while let HirExpr::Field { base, .. } | HirExpr::Index { base, .. } = root {
+        root = base;
+    }
+    let name = match root {
+        HirExpr::Ident { symbol, .. } => names.get(symbol).cloned().unwrap_or_default(),
+        _ => String::new(),
+    };
+    diagnostics.push(FluxError::AssignToImmutableLocal {
+        name,
+        span: span_to_miette(span),
+        source_id: span.source,
+    });
 }

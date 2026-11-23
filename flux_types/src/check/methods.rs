@@ -13,6 +13,9 @@ use flux_hir::{HirBlock, HirElse, HirExpr, HirIf, HirItem, HirProgram, HirStmt, 
 use super::TypedProgram;
 
 pub fn resolve_method_calls(program: &mut HirProgram, typed: &TypedProgram) {
+    program
+        .changing_calls
+        .extend(typed.changing_sites.iter().copied());
     if typed.method_calls.is_empty() {
         return;
     }
@@ -107,8 +110,33 @@ fn expr(e: &mut HirExpr, calls: &Calls, owner: Option<SymbolId>) {
         | HirExpr::ToText { expr: inner, .. }
         | HirExpr::Try { expr: inner, .. } => expr(inner, calls, owner),
         HirExpr::Field { base, .. } => expr(base, calls, owner),
-        HirExpr::Binary { left, right, .. }
-        | HirExpr::Index {
+        // `a + b` on arrays: the library's `concat(a, b)`.
+        HirExpr::Binary {
+            left, right, span, ..
+        } => {
+            expr(left, calls, owner);
+            expr(right, calls, owner);
+            let found = calls
+                .get(&(owner, *span))
+                .or_else(|| calls.get(&(None, *span)))
+                .copied();
+            if let Some(concat) = found {
+                let span = *span;
+                let (l, r) = (
+                    std::mem::replace(left.as_mut(), HirExpr::Bool { value: false, span }),
+                    std::mem::replace(right.as_mut(), HirExpr::Bool { value: false, span }),
+                );
+                *e = HirExpr::Call {
+                    callee: Box::new(HirExpr::Ident {
+                        symbol: concat,
+                        span,
+                    }),
+                    args: vec![l, r],
+                    span,
+                };
+            }
+        }
+        HirExpr::Index {
             base: left,
             index: right,
             ..

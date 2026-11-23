@@ -458,7 +458,9 @@ pub(super) fn check_stmt(
                     .borrow()
                     .get(&(ctx.current_function.get(), *span))
                     .copied();
-                if !resolved.is_some_and(|id| ctx.mut_methods.contains(&id)) {
+                let changing = resolved.is_some_and(|id| ctx.mut_methods.contains(&id))
+                    || ctx.changing_sites.borrow().contains(span);
+                if !changing {
                     break 'assign;
                 }
                 pre_got = Some(got);

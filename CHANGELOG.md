@@ -15,6 +15,7 @@ Notable changes to Flux. The versioning policy is in [`RELEASE.md`](RELEASE.md).
 
 ### Added
 
+- Library methods on strings, arrays, maps, `Option`, `Result`, and numbers, without an import: `text.split(",")`, `xs.sorted()`, `o.unwrap_or(0)`, and new ones: `contains`, `find`, `any`, `all`, `enumerate`, `zip`, `slice`, `sorted`, `sorted_by`, `reversed`, `first`, `last`, `get_or`, `entries`, `split_once`, `lines`, `words`, `map`/`and_then`/`map_err`/`ok_or`/`is_some`/`is_none`/`is_ok`/`is_err`, and `a + b` for arrays. `xs.push(v)`, `xs.pop()`, `xs.set(i, v)`, `xs.sort()`, `xs.reverse()`, and `m.remove(k)` change the value in place; the free functions keep returning a new value. A method that only computes a value warns (E030) when its result is dropped.
 - Methods: `impl Type { }` with `self`, `mut self` (called on a place, written back only when it succeeds), type functions called as `Point::new`, and `Self`; traits may use `Self`. Methods may be added to `Int`, `String`, and the other library types, visible where their file is imported.
 - Paths `::` for module items (`math::sqrt`), type functions, and variants (`Shape::Circle`). `m.name` for a module still works with warning E026, and `flux migrate` rewrites it.
 - `(op.f)(3)` calls the function in field `f`; `op.f(3)` for that still works with warning E026.

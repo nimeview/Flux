@@ -29,10 +29,17 @@ pub struct HirProgram {
     /// Spans of `place.m(…)` calls written as statements, lowered to
     /// `place = place.m(…)`.
     pub mut_call_sites: std::collections::HashSet<Span>,
+    /// The `mut_call_sites` that call a library method changing its receiver
+    /// (`xs.push(1)`); filled in after type checking.
+    pub changing_calls: std::collections::HashSet<Span>,
+    /// `place.m(…)` statements in a closure that captures the place's root.
+    pub captured_call_sites: std::collections::HashSet<Span>,
     /// Methods of `impl Type { }` for a library type (`String`, `Int`, …),
     /// with the file that declares them: visible there and in files that
     /// import it.
     pub extension_sources: std::collections::HashMap<SymbolId, flux_diagnostics::SourceId>,
+    /// Symbols of the library functions methods on library values call.
+    pub builtin_ids: std::collections::HashMap<String, SymbolId>,
     /// The files each file imports.
     pub file_imports: std::collections::HashMap<
         flux_diagnostics::SourceId,

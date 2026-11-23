@@ -714,6 +714,7 @@ dependencies = [
  "flux_driver",
  "flux_fmt",
  "flux_hir",
+ "flux_std",
  "flux_syntax",
  "flux_types",
  "lsp-server",

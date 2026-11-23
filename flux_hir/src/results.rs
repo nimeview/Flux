@@ -70,10 +70,49 @@ fn if_stmt(i: &HirIf, dropped: bool, hir: &HirProgram, diagnostics: &mut Diagnos
     }
 }
 
+/// Library methods that only compute a value (the changing ones, like
+/// `xs.push(1)`, store their result back).
+const COMPUTING_METHODS: &[&str] = &[
+    "len",
+    "get",
+    "map",
+    "filter",
+    "reduce",
+    "join",
+    "contains",
+    "find",
+    "any",
+    "all",
+    "enumerate",
+    "zip",
+    "slice",
+    "sorted",
+    "sorted_by",
+    "reversed",
+    "first",
+    "last",
+    "has",
+    "keys",
+    "values",
+    "entries",
+    "get_or",
+];
+
 fn check(e: &HirExpr, hir: &HirProgram, diagnostics: &mut DiagnosticBag) {
     let HirExpr::Call { callee, span, .. } = e else {
         return;
     };
+    if let HirExpr::Field { field, .. } = callee.as_ref() {
+        if COMPUTING_METHODS.contains(&field.as_str()) && !user_named(field, hir) {
+            diagnostics.push_warning(FluxWarning::UnusedResult {
+                name: field.clone(),
+                help: format!("`.{field}()` only computes a value: use it, or remove the call"),
+                span: span_to_miette(*span),
+                source_id: span.source,
+            });
+        }
+        return;
+    }
     let HirExpr::Ident { symbol, .. } = callee.as_ref() else {
         return;
     };
@@ -103,4 +142,20 @@ fn collection_fn(symbol: SymbolId, hir: &HirProgram) -> Option<&'static str> {
         return None;
     }
     COLLECTION_FNS.iter().copied().find(|n| *n == sym.name)
+}
+
+/// Whether the program gives `name` its own meaning as a method (an `impl`)
+/// or a struct field, which a call through `.` may reach instead.
+fn user_named(name: &str, hir: &HirProgram) -> bool {
+    hir.trait_impls.keys().any(|(_, m)| m == name)
+        || hir.items.iter().any(|item| match item {
+            HirItem::Struct(st) => st.fields.iter().any(|(f, _)| f == name),
+            HirItem::Trait(t) => t.methods.iter().any(|m| m.0 == name),
+            HirItem::Impl(i) => i.methods.iter().any(|m| {
+                hir.names
+                    .get(&m.name)
+                    .is_some_and(|n| n == name || n.ends_with(&format!("::{name}")))
+            }),
+            _ => false,
+        })
 }

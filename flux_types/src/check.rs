@@ -44,6 +44,9 @@ pub struct TypedProgram {
     /// Resolved impls by enclosing function (None at module level) and call span;
     /// [`resolve_method_calls`] turns these into direct calls.
     pub method_calls: HashMap<(Option<SymbolId>, flux_diagnostics::Span), SymbolId>,
+    /// `place.m(…)` statements calling a library method that changes its
+    /// receiver; [`resolve_method_calls`] copies them to the program.
+    pub changing_sites: std::collections::HashSet<flux_diagnostics::Span>,
     /// The types of locals and parameters, for hover and inlay hints.
     pub local_types: HashMap<SymbolId, Type>,
 }
@@ -582,6 +585,7 @@ fn typecheck_with_context(
         Some(TypedProgram {
             types,
             method_calls: ctx.method_calls.borrow().clone(),
+            changing_sites: ctx.changing_sites.borrow().clone(),
             local_types,
         })
     }

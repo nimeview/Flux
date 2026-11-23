@@ -64,7 +64,11 @@ fn collect_reassigned_sources(program: &Program) -> HashSet<String> {
         names: HashSet::new(),
         // Like is_variant_name in stmts: only None is special without a declaration.
         variants: HashSet::from(["None".into()]),
-        mut_methods: HashSet::new(),
+        // Library methods that change their receiver: `xs.push(1)`.
+        mut_methods: flux_std::methods::CHANGING_METHODS
+            .iter()
+            .map(|m| m.to_string())
+            .collect(),
     };
     for item in &program.items {
         if let Item::Enum(e) = item {
@@ -382,6 +386,20 @@ fn lower_program_inner(
     linked: Option<&LinkedProgram>,
 ) -> Option<HirProgram> {
     let mut symbols = SymbolTable::new();
+    // Methods on library values (`xs.sorted()`) call library functions the
+    // type checker picks: each gets a symbol now. Changing ones (`xs.push(v)`)
+    // store their result back, like `mut self` methods.
+    let mut builtin_ids = HashMap::new();
+    for target in flux_std::methods::library_method_targets()
+        .into_iter()
+        .chain(["\0concat"])
+    {
+        let id = symbols.hidden_builtin(target, flux_diagnostics::Span::DUMMY);
+        builtin_ids.insert(target.to_string(), id);
+    }
+    for name in flux_std::methods::CHANGING_METHODS {
+        symbols.mut_method_names.insert(name.to_string());
+    }
     let reassigned_sources = collect_reassigned_sources(program);
 
     // Imported modules are declared and lowered first, each in its own
@@ -535,7 +553,10 @@ fn lower_program_inner(
             const_bindings: symbols.const_bindings.clone(),
             symbols: symbols.export_symbols(),
             mut_methods: symbols.mut_methods.clone(),
+            builtin_ids,
             mut_call_sites: symbols.mut_call_sites.clone(),
+            changing_calls: Default::default(),
+            captured_call_sites: symbols.captured_call_sites.clone(),
             extension_sources: symbols.extension_sources.clone(),
             file_imports: linked.map(file_imports).unwrap_or_default(),
         };

@@ -1216,3 +1216,16 @@ fn rename_of_a_type_function_reaches_self_paths() {
     let edits = rename_ranges(text, 12, 15);
     assert_eq!(edits, [(4, 7, 11), (8, 14, 18), (12, 15, 19)]);
 }
+
+#[test]
+fn completion_after_a_dot_offers_library_methods() {
+    let (client, handle) = start_server();
+    let text = "fn main() {\n    let xs = [3, 1]\n    let n = xs.len()\n}\n";
+    did_open(&client, text);
+    let _ = recv_diagnostics(&client);
+    let result = ask(&client, 2, "textDocument/completion", at(2, 15)).to_string();
+    assert!(result.contains("\"sorted\""), "{result}");
+    assert!(result.contains("\"push\""), "{result}");
+    assert!(!result.contains("\"split\""), "{result}");
+    shutdown(&client, handle);
+}

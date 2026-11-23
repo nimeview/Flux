@@ -2,6 +2,7 @@
 
 mod io;
 mod math;
+pub mod methods;
 mod modules;
 mod str_ext;
 
@@ -104,12 +105,12 @@ pub const SIDE_EFFECT_BUILTINS: &[&str] = &[
 pub const HOF_FNS: &[&str] = &["map", "filter", "reduce"];
 
 pub fn is_hof(name: &str) -> bool {
-    HOF_FNS.contains(&name)
+    HOF_FNS.contains(&name) || methods::METHOD_HOFS.contains(&name)
 }
 
 /// Returns `true` if `name` is a builtin function.
 pub fn is_builtin_fn(name: &str) -> bool {
-    BUILTIN_FNS.contains(&name)
+    BUILTIN_FNS.contains(&name) || methods::METHOD_FNS.contains(&name)
 }
 
 /// Call a builtin function. Returns `None` if `name` is not a builtin.
@@ -119,6 +120,9 @@ pub fn call_builtin_checked(
     name: &str,
     args: &[Value],
 ) -> Option<Result<Value, flux_value::ArithError>> {
+    if name.starts_with('\0') {
+        return methods::call(name, args);
+    }
     match name {
         "assert" => return Some(math::assert(args.first()?)),
         "abs" if matches!(args.first(), Some(Value::Int { .. })) => {
