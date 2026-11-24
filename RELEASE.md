@@ -43,7 +43,7 @@ Deferred and not claimed:
 
 ## Versioning and compatibility
 
-- **One version for the toolchain.** The language, standard library, compiler, and CLI share the workspace version (`Cargo.toml`, currently `0.2.0-dev`). `flux repl` shows it.
+- **One version for the toolchain.** The language, standard library, compiler, and CLI share the workspace version (`Cargo.toml`, currently `0.2.0`). `flux repl` shows it.
 - **Before 1.0**, a minor release (`0.x` → `0.(x+1)`) may change syntax, semantics, the standard library, or CLI behavior. A patch release (`0.x.y`) only fixes defects. A fix can still reject a program that relied on the defect (for example, keywords now end at a word boundary). Every user-visible change, breaking ones included, is listed in `CHANGELOG.md`.
 - **1.0** freezes the stable surface listed above. After that, breaking changes require a major version.
 - **Package `version`** in `flux.toml` is informational. Dependencies are resolved by path, not by version.

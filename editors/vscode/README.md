@@ -26,7 +26,7 @@ cargo build --profile dist -p flux_cli
 cd editors/vscode
 npm install
 npx vsce package
-code --install-extension flux-lang-0.1.0.vsix
+code --install-extension flux-lang-0.2.0.vsix
 ```
 
 The extension finds `flux` in `target/dist`, `target/release`, or `target/debug` of the open folder, and then on your `PATH`. For projects outside this repository, put the binary on your `PATH` or set `flux.path`.
