@@ -37,6 +37,7 @@ use stmt::{check_binding, check_block, check_if, check_return_types};
 pub(crate) use util::types_compatible;
 
 pub use methods::resolve_method_calls;
+pub use util::trait_dispatch_tag;
 
 #[derive(Debug, Clone)]
 pub struct TypedProgram {

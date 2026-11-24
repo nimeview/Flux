@@ -2,6 +2,8 @@
 
 [Introduction](./introduction.md)
 
+[What changed in 0.2](./whats-new.md)
+
 - [Getting started](./getting-started.md)
 - [The basics](./basics.md)
 - [Data](./data.md)

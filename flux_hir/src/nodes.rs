@@ -243,6 +243,11 @@ pub const WITH_FIELDS: &str = "\0with";
 /// this name with fields `"0"`, `"1"`, ….
 pub const TUPLE: &str = "\0tuple";
 
+/// The struct name a struct variant's fields are built under: `Rect { w: 2 }`
+/// of `enum Shape { Rect { w: Int } }` is the variant `Rect` with a struct of
+/// this name as its payload.
+pub const VARIANT_FIELDS: &str = "\0fields";
+
 /// The hidden builtin `(op.f)` lowers to, as `(op.f)`: the value of its
 /// argument, so that a call of it calls the field's function, never a method.
 pub const GROUPED: &str = "\0group";

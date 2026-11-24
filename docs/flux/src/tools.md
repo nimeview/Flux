@@ -72,6 +72,16 @@ flux fmt app.fl --check  # exit 1 if it would change
 
 There are no options, so all Flux code looks the same. A `match` stays on one line when it fits in 100 columns. Number spellings such as `1_000` and `0xff` are kept.
 
+## flux migrate
+
+```bash
+flux migrate app.fl          # print what would change
+flux migrate app.fl --write  # rewrite it
+flux migrate src --write     # every file in a directory
+```
+
+Rewrites older forms to the current syntax. It applies the replacement that each warning E026 names (`rfn` becomes `track fn`, `on Tick { n -> }` becomes `on Tick(n) { }`, `m.name` becomes `m::name`), and turns a `fn` that writes a source (E027) into an `act fn`. It keeps comments and changes nothing else. Like the quick fixes in the editor, it is experimental.
+
 ## flux repl
 
 An interactive shell. `:emit Event [payload]` fires an event, and `:help` lists the rest.

@@ -331,7 +331,7 @@ pub fn member_completions(
         }
     }
 
-    let type_tag = inner.display();
+    let type_tag = flux_types::trait_dispatch_tag(&inner);
     for ((tag, method), sym_id) in &hir.trait_impls {
         if tag != &type_tag || !seen.insert(method.clone()) {
             continue;
@@ -345,16 +345,8 @@ pub fn member_completions(
     }
 
     // The library's methods for this kind of value.
-    use flux_std::methods::{library_method, Receiver, LIBRARY_METHOD_NAMES};
-    let receiver = match &inner {
-        Type::String => Receiver::String,
-        Type::Array(_) => Receiver::Array,
-        Type::Map { .. } => Receiver::Map,
-        Type::Option(_) => Receiver::Option,
-        Type::Result { .. } => Receiver::Result,
-        t if t.is_integer() || t.is_float() => Receiver::Number,
-        _ => Receiver::Other,
-    };
+    use flux_std::methods::{library_method, LIBRARY_METHOD_NAMES};
+    let receiver = library_receiver(&inner);
     for name in LIBRARY_METHOD_NAMES {
         if let Some((_, changes)) = library_method(receiver, name) {
             if seen.insert(name.to_string()) {
@@ -373,6 +365,86 @@ pub fn member_completions(
 
     let _ = ctx;
     items
+}
+
+/// What kind of library value `ty` is, for its methods.
+fn library_receiver(ty: &Type) -> flux_std::methods::Receiver {
+    use flux_std::methods::Receiver;
+    match ty {
+        Type::String => Receiver::String,
+        Type::Array(_) => Receiver::Array,
+        Type::Map { .. } => Receiver::Map,
+        Type::Option(_) => Receiver::Option,
+        Type::Result { .. } => Receiver::Result,
+        t if t.is_integer() || t.is_float() => Receiver::Number,
+        _ => Receiver::Other,
+    }
+}
+
+/// The signature and documentation of the library method `method` called
+/// on the receiver before the `.` at byte `dot`, unless the program gives
+/// the receiver's type its own method of that name.
+pub fn library_method_doc(
+    analysis: &DocAnalysis,
+    contents: &str,
+    dot: usize,
+    method: &str,
+) -> Option<(&'static str, &'static str)> {
+    let hir = analysis.hir.as_ref()?;
+    let inner = unwrap_type(&receiver_type_at(analysis, contents, dot)?);
+    let tag = flux_types::trait_dispatch_tag(&inner);
+    if hir.trait_impls.contains_key(&(tag, method.to_string())) {
+        return None;
+    }
+    crate::method_docs::method_doc(library_receiver(&inner), method)
+}
+
+/// The type of the receiver before the `.` at byte `dot`: a string literal,
+/// or a name followed by fields (`p.items`), the name found by position.
+/// `None` for anything else (a call, a parenthesized expression), rather
+/// than a guess.
+fn receiver_type_at(analysis: &DocAnalysis, contents: &str, dot: usize) -> Option<Type> {
+    let before = contents.get(..dot)?.trim_end();
+    if before.ends_with('"') {
+        return Some(Type::String);
+    }
+    let start = before
+        .char_indices()
+        .rev()
+        .find(|(_, c)| !(c.is_alphanumeric() || *c == '_' || *c == '.'))
+        .map_or(0, |(i, c)| i + c.len_utf8());
+    let chain = &before[start..];
+    let mut parts = chain.split('.');
+    let root = parts.next().filter(|r| !r.is_empty())?;
+    if root.starts_with(|c: char| c.is_ascii_digit()) {
+        return None;
+    }
+    let hir = analysis.hir.as_ref()?;
+    let typed = analysis.typed.as_ref()?;
+    let index = analysis.references.as_ref()?;
+    let source_id = buffer_source_id(analysis)?;
+    let id = symbol_at_offset(hir, index, source_id, start)?;
+    let mut ty = typed
+        .types
+        .get(&id)
+        .or_else(|| typed.local_types.get(&id))?
+        .clone();
+    let ctx = TypeCheckContext::from_program(hir);
+    for field in parts {
+        let inner = unwrap_type(&ty);
+        let inner = match &inner {
+            Type::Struct { name, .. } | Type::Enum { name, .. } => {
+                ctx.user_type(name).cloned().unwrap_or(inner)
+            }
+            _ => inner,
+        };
+        ty = match inner {
+            Type::Struct { fields, .. } => fields.into_iter().find(|(n, _)| n == field)?.1,
+            Type::Tuple(elems) => elems.get(field.parse::<usize>().ok()?)?.clone(),
+            _ => return None,
+        };
+    }
+    Some(ty)
 }
 
 #[derive(Debug, Clone)]

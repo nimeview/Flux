@@ -275,3 +275,71 @@ fn review_findings_stay_fixed() {
         "{stderr}"
     );
 }
+
+#[test]
+fn struct_variants_are_built_with_their_fields() {
+    prints(
+        r#"import io { println }
+struct Rect {
+    w: Int
+}
+enum Shape {
+    Circle(Float),
+    Rect { w: Int, h: Int },
+    Box { side: Int },
+}
+fn area(s: Shape) -> Int {
+    match s {
+        Circle(_) => 0,
+        Rect { w, h } => w * h,
+        Box { side } => side * side,
+    }
+}
+fn main() {
+    let plain = Rect { w: 1 }
+    let r = Shape::Rect { h: 3, w: 2 }
+    let b = Box { side: 4 }
+    println("{plain.w} {area(r)} {area(b)} {r} {r == Shape::Rect { w: 2, h: 3 }}")
+}
+"#,
+        "1 6 16 Shape::Rect { h: 3, w: 2 } true\n",
+    );
+    let shape = "enum Shape {\n    Circle(Float),\n    Rect { w: Int, h: Int },\n    Dot,\n}\n";
+    for (body, needle) in [
+        ("let r = Rect { w: 2 }", "expected `field `h``"),
+        ("let r = Rect { w: 2, h: 3, z: 1 }", "found `z`"),
+        (
+            "let r = Circle { r: 1.0 }",
+            "its payload has no field names",
+        ),
+        ("let r = Dot { x: 1 }", "payload-free variant Dot"),
+        (
+            "let r = Shape::Nope { x: 1 }",
+            "enum `Shape` has no variant `Nope`",
+        ),
+    ] {
+        rejects(&format!("{shape}fn main() {{\n    {body}\n}}\n"), needle);
+    }
+}
+
+#[test]
+fn struct_variant_patterns_and_payloads_are_checked() {
+    let decls = "struct P {\n    x: Int,\n}\nenum E {\n    V { x: Int },\n    W(P),\n}\n";
+    for (body, needle) in [
+        (
+            "let v = V { x: 1 }\n    let n = match v {\n        V { missing } => 0,\n        _ => 1,\n    }",
+            "a field of `V`: x",
+        ),
+        (
+            "let v = V { x: 1 }\n    let n = match v {\n        V(p) => 0,\n        _ => 1,\n    }",
+            "`V { … }` naming its fields",
+        ),
+        ("let w = W { x: 1 }", "`W(…)`: its payload has no field names"),
+        (
+            "let w = W(P { x: 1 })\n    let n = match w {\n        W { y } => y,\n        _ => 0,\n    }",
+            "a field of `W`: x",
+        ),
+    ] {
+        rejects(&format!("{decls}fn main() {{\n    {body}\n}}\n"), needle);
+    }
+}

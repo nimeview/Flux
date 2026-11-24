@@ -354,22 +354,13 @@ pub const LIBRARY_METHOD_NAMES: &[&str] = &[
     "clamp",
 ];
 
-/// Every library function a method can call, for the compiler to give each
-/// a symbol before type checking.
-pub fn library_method_targets() -> Vec<&'static str> {
+/// The library functions a method of this name can call, on any receiver,
+/// for the compiler to give each a symbol before type checking.
+pub fn method_targets(method: &str) -> impl Iterator<Item = &'static str> + '_ {
     use Receiver::*;
-    let mut out = Vec::new();
-    let names = LIBRARY_METHOD_NAMES;
-    for receiver in [String, Array, Map, Option, Result, Number, Other] {
-        for name in names {
-            if let Some((f, _)) = library_method(receiver, name) {
-                if !out.contains(&f) {
-                    out.push(f);
-                }
-            }
-        }
-    }
-    out
+    [String, Array, Map, Option, Result, Number, Other]
+        .into_iter()
+        .filter_map(move |receiver| library_method(receiver, method).map(|(f, _)| f))
 }
 
 /// Names of library methods that change their receiver.

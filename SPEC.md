@@ -25,7 +25,7 @@ Flux is a statically typed language with **built-in reactivity**: module-level b
 | `Result[T, E]` | Success or error (`Ok`, `Err`) |
 | `(A, B, ...)` | Tuple of two or more values |
 | `struct Name { f: T, ... }` | Product type |
-| `enum Name { A, B(T), ... }` | Sum type |
+| `enum Name { A, B(T), C { f: T }, ... }` | Sum type; a variant has no payload, one value, or named fields |
 | `fn(T, ...) -> U` | Function |
 | `Cell<T>` / `Read<T>` | Reactive wrapper (internal; sources/derived) |
 
@@ -238,6 +238,8 @@ An `if … else` expression and a `match` are operands like any other value: `1 
 A `match` arm may take a tuple apart: `(0, name) => …`, `(Some(x), _) => …`, `(true, false) => …`. Each position is any pattern (a literal, a variant, a binding, `_`, or a nested tuple), and the arm matches when every position does; a guard runs after all of them. A tuple pattern also fits inside a variant: `Some((a, 0))`. The arms of a `match` must cover every value: positions whose type has finitely many cases (`Bool`, enums, `Option`, `Result`, tuples of them) are checked case by case, so `(true, _)`, `(false, true)`, and `(false, false)` together cover `(Bool, Bool)`; a position of any other type (numbers, strings) is covered only by a binding or `_`.
 
 ### Nested patterns
+
+A struct variant `C { f: T }` is built like a struct, `C { f: 1 }` or `E::C { f: 1 }`, with every field exactly once, and matched with `C { f }`, naming only its fields; a struct variant is not matched as `C(x)`, as its fields have no type of their own to bind as one value. Braces build only struct variants. In a pattern they also take apart a variant whose one value is a struct (`D { x }` for `D(Point)`). A bare `C { … }` names the variant only when no struct or other name `C` is in scope; `E::C { … }` always names it. It prints as `E::C { f: 1 }`.
 
 A variant's payload may itself be a pattern: `Some(Num(n))`, `Some(LParen)`, `Ok(0)`, `Some(Some(_))`, to any depth. A name inside is a payload-free variant if one with that name exists (including `None`), and otherwise a binding. Bindings from every level are visible in the guard and the arm. Nested arms count toward exhaustiveness when, together, they cover the payload's type: `Some(A)`, `Some(B)`, `None` is exhaustive for `Option[AB]` with `enum AB { A, B }`. A nested arm with a guard does not count, just like a top-level one. `None` in a pattern is always `Option`'s variant, never a binding.
 

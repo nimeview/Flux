@@ -7,13 +7,15 @@
               │                │               │             │              │              │
            pest AST        import graph     scopes/HIR    mono+check     bytecode     graph + VM
               │                │               │             │              │              │
-              └──────────────── flux_diagnostics (Span, miette E000–E025) ─────────────────┘
+              └──────────────── flux_diagnostics (Span, miette E000–E030) ─────────────────┘
                                                                                        │
                                                                                flux_jit (--jit)
 ```
 
 **`flux_driver`** is the single compile orchestrator used by CLI, LSP, REPL and tests:
-parse → HIR → monomorphize → typecheck → IR → executor, with optional IR cache validation (`<project>/.flux/cache/`).
+parse → HIR → monomorphize → typecheck → resolve method calls → IR → executor, with optional IR cache validation (`<project>/.flux/cache/`).
+
+**Methods.** `x.m(args)` stays a field call in the HIR, because which `m` it is depends on the receiver's type. The type checker records, per call span, the function it resolved: a method of an `impl` (`trait_impls`) or a library function (`flux_std::methods::library_method`, given a hidden symbol in `HirProgram.builtin_ids`). `flux_types::resolve_method_calls` then rewrites each call to a direct call with the receiver first. A statement `place.m(…)` whose name could be a changing method is lowered as `place = place.m(…)` and recorded in `mut_call_sites`; it stores the result back only if the call resolved to a `mut self` method or a changing library method (`changing_calls`), and is otherwise just the call. Places (`p.x`, `xs[i].done`) are one `IrStmt::AssignPlace`, whose indices are evaluated once; the runtime updates them copy-on-write (`exec/place.rs`).
 
 **IR cache contract.** The key is a SHA-256 over every resolved module's path and contents, so editing a dependency changes it. The file name is also scoped by `COMPILER_FINGERPRINT`, a hash `flux_driver/build.rs` computes over the sources of every crate that shapes the IR, so a rebuilt compiler never reads another build's entries. A blob holds magic, layout version, the fingerprint, a SHA-256 of the payload, and the payload. A wrong magic, version, fingerprint, or checksum, a truncated blob, a decode failure, or decoded IR that fails `flux_runtime::validate_program` all count as a miss: the entry is recompiled from source and overwritten. Write failures are ignored, because the freshly compiled IR is used either way. `--no-cache` neither reads nor writes entries. `flux_cli/tests/cache_recovery.rs` covers each case.
 
@@ -36,7 +38,7 @@ parse → HIR → monomorphize → typecheck → IR → executor, with optional 
 | `flux_fmt` | Source formatter (AST → source) | `lib.rs` |
 | `flux_lsp` | LSP server (diagnostics, hover, completion, format, symbols, rename) | `server.rs`, `analysis.rs` |
 | `flux_wasm` | WASM backend (stub) | `lib.rs` |
-| `flux_diagnostics` | Spans, miette error types E000–E025 | `error.rs`, `lib.rs` |
+| `flux_diagnostics` | Spans, miette error types E000–E030 | `error.rs`, `lib.rs` |
 | `flux_driver` | Unified compile pipeline + IR cache | `pipeline.rs`, `cache.rs`, `options.rs` |
 | `flux_cli` | CLI binary, REPL, project init | `main.rs`, `repl.rs`, `manifest.rs` |
 
@@ -50,7 +52,9 @@ Module-level bindings form a **dataflow graph**:
 - **Derived nodes** — read-only, recomputed when dependencies change (`let doubled = count * 2`)
 - **Watch blocks** — side-effect code that reruns on dependency changes
 - **Event handlers** — `on Event { ... }` triggered by `emit Event`
-- **Reactive functions** — `rfn` reads are tracked; rfn calls participate in derived graph
+- **Function kinds** — a `track fn` (formerly `rfn`) is tracked like a derived value; an `act fn` may write sources and opens a batch when called
+
+Writes settle in **batches**: the outermost `emit` or `act fn` call opens one, nested ones join it, and when it ends each derived value is brought up to date and each watch runs at most once. Reads are current: a write marks dependents dirty, and every global load brings its node up to date first, so a handler that writes a source and then reads a derived value sees the new value. A watch keeps the last values it saw (its memory, separate from derived caches) and runs only when one differs by `==` from what it remembers; `watch x(prev)` binds the remembered value.
 
 The runtime (`flux-runtime`) keeps the graph in `graph.rs` and runs programs in `exec.rs`. Event dispatch and settling use node ids and reused buffers in `ReactiveState`, kept behind a `Box` so that it does not spread the fields calls use over more cache lines. A derived value with a conditional reads its dependencies as it runs (`tracking_scope`), so it depends only on the branch it took.
 

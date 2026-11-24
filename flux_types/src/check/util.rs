@@ -18,7 +18,7 @@ pub(crate) fn unwrap_value_type(ty: &Type) -> Type {
 }
 
 /// Normalize primitive aliases for trait impl lookup (`Int64` → `Int`, etc.).
-pub(crate) fn trait_dispatch_tag(ty: &Type) -> String {
+pub fn trait_dispatch_tag(ty: &Type) -> String {
     match unwrap_value_type(ty) {
         Type::Int | Type::Int64 => "Int".into(),
         Type::Float | Type::Float64 => "Float".into(),

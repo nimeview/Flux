@@ -85,10 +85,21 @@
   },
   "Impl": {
     "prefix": "impl",
+    "description": "Methods of a type",
+    "body": [
+      "impl ${1:Type} {",
+      "\tfn ${2:method}(self) -> ${3:Int} {",
+      "\t\t$0",
+      "\t}",
+      "}"
+    ]
+  },
+  "Trait impl": {
+    "prefix": "implt",
     "description": "Trait implementation",
     "body": [
       "impl ${1:Trait} for ${2:Type} {",
-      "\tfn ${3:method}(self: ${2:Type}) -> ${4:Int} {",
+      "\tfn ${3:method}(self) -> ${4:Int} {",
       "\t\t$0",
       "\t}",
       "}"
@@ -226,21 +237,21 @@
     "prefix": "map",
     "description": "Transform each element",
     "body": [
-      "map(${1:items}, |${2:x}| ${3:x})"
+      "${1:items}.map(|${2:x}| ${3:x})"
     ]
   },
   "Filter call": {
     "prefix": "filter",
     "description": "Keep matching elements",
     "body": [
-      "filter(${1:items}, |${2:x}| ${3:true})"
+      "${1:items}.filter(|${2:x}| ${3:true})"
     ]
   },
   "Reduce call": {
     "prefix": "reduce",
     "description": "Fold to one value",
     "body": [
-      "reduce(${1:items}, ${2:0}, |${3:sum}, ${4:x}| ${3:sum} + ${4:x})"
+      "${1:items}.reduce(${2:0}, |${3:sum}, ${4:x}| ${3:sum} + ${4:x})"
     ]
   },
   "Import": {

@@ -400,7 +400,14 @@ pub fn names_in_scope(src: &str, offset: usize) -> (Vec<String>, std::ops::Range
 }
 
 /// The call around `offset`: its function's name and which argument the cursor is in.
+#[cfg(test)]
 pub fn enclosing_call(src: &str, offset: usize) -> Option<(String, usize)> {
+    enclosing_call_at(src, offset).map(|(name, argument, _)| (name, argument))
+}
+
+/// [`enclosing_call`], with the byte offset of the `.` before the callee
+/// when it is a method call (`xs.slice(`).
+pub fn enclosing_call_at(src: &str, offset: usize) -> Option<(String, usize, Option<usize>)> {
     let offset = offset.min(src.len());
     let start = item_start(src, offset);
     let text = src.get(start..offset)?;
@@ -452,7 +459,10 @@ pub fn enclosing_call(src: &str, offset: usize) -> Option<(String, usize)> {
         let callee = toks[paren - 1];
         if callee.kind == TokKind::Ident && !matches!(callee.text, "if" | "while" | "match" | "in")
         {
-            return Some((callee.text.to_string(), open.commas));
+            // Tokens are slices of `text`, which starts at `start` in `src`.
+            let dot = (paren >= 2 && toks[paren - 2].text == ".")
+                .then(|| start + (toks[paren - 2].text.as_ptr() as usize - text.as_ptr() as usize));
+            return Some((callee.text.to_string(), open.commas, dot));
         }
     }
     None

@@ -9,6 +9,7 @@
 mod analysis;
 mod assist;
 pub mod documents;
+mod method_docs;
 pub mod position;
 pub mod server;
 

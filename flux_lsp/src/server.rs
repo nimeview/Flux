@@ -40,8 +40,8 @@ use crate::analysis::{
     user_signature, word_at_offset, MemberKind, OutlineKind,
 };
 use crate::assist::{
-    enclosing_call, import_edit, imports, is_imported, names_in_scope, signature_params, std_doc,
-    PRELUDE, STD_DOCS, TYPE_NAMES,
+    enclosing_call_at, import_edit, imports, is_imported, names_in_scope, signature_params,
+    std_doc, PRELUDE, STD_DOCS, TYPE_NAMES,
 };
 use crate::documents::DocumentStore;
 use crate::position::offset_to_position;
@@ -429,6 +429,31 @@ fn compute_hover(store: &mut DocumentStore, params: HoverParams) -> Option<Hover
     let word = word_at_offset(&text, offset)?;
     let analysis = store.analyze(&uri);
 
+    // A library method: `xs.sorted()` with the cursor on `sorted`.
+    let mut at = offset.min(text.len());
+    while !text.is_char_boundary(at) {
+        at -= 1;
+    }
+    let start = text[..at]
+        .char_indices()
+        .rev()
+        .find(|(_, c)| !(c.is_alphanumeric() || *c == '_'))
+        .map_or(0, |(i, c)| i + c.len_utf8());
+    if let Some(dot) = text[..start].strip_suffix('.').map(str::len) {
+        let doc = analysis
+            .as_ref()
+            .and_then(|a| crate::analysis::library_method_doc(a, &text, dot, word));
+        if let Some((signature, doc)) = doc {
+            return Some(Hover {
+                contents: HoverContents::Markup(MarkupContent {
+                    kind: MarkupKind::Markdown,
+                    value: format!("```flux\n{signature}\n```\n{doc}\n\nLibrary method."),
+                }),
+                range: None,
+            });
+        }
+    }
+
     // A method or type function: found by position, as its internal name is
     // not the word under the cursor.
     let method = analysis.as_ref().and_then(|a| {
@@ -670,32 +695,46 @@ fn compute_signature_help(
     let position = params.text_document_position_params.position;
     let text = store.text(&uri)?.to_string();
     let offset = position_to_offset(&text, position.line, position.character);
-    let (name, argument) = enclosing_call(&text, offset)?;
+    let (name, argument, dot) = enclosing_call_at(&text, offset)?;
     let analysis = store.analyze(&uri);
-    let user = analysis.as_ref().and_then(|a| user_signature(a, &name));
-    let (label, parameters, documentation) = match user {
-        Some((parameters, ret)) => {
-            let ret = ret.map(|r| format!(" -> {r}")).unwrap_or_default();
-            (
-                format!("{name}({}){ret}", parameters.join(", ")),
-                parameters,
-                None,
-            )
-        }
-        None => {
-            let (signature, doc) =
-                std_doc(&name).map(|entry| (entry.2, entry.3)).or_else(|| {
-                    PRELUDE
-                        .iter()
-                        .find(|entry| entry.0 == name)
-                        .map(|entry| (entry.1, entry.2))
-                })?;
-            (
-                signature.to_string(),
-                signature_params(signature),
-                Some(doc),
-            )
-        }
+    // `xs.slice(` : the library method, when the call is on a library value.
+    let method = dot
+        .and_then(|dot| crate::analysis::library_method_doc(analysis.as_ref()?, &text, dot, &name));
+    let user = if method.is_some() {
+        None
+    } else {
+        analysis.as_ref().and_then(|a| user_signature(a, &name))
+    };
+    let (label, parameters, documentation) = match (method, user) {
+        (Some((signature, doc)), _) => (
+            signature.to_string(),
+            signature_params(signature),
+            Some(doc),
+        ),
+        (None, user) => match user {
+            Some((parameters, ret)) => {
+                let ret = ret.map(|r| format!(" -> {r}")).unwrap_or_default();
+                (
+                    format!("{name}({}){ret}", parameters.join(", ")),
+                    parameters,
+                    None,
+                )
+            }
+            None => {
+                let (signature, doc) =
+                    std_doc(&name).map(|entry| (entry.2, entry.3)).or_else(|| {
+                        PRELUDE
+                            .iter()
+                            .find(|entry| entry.0 == name)
+                            .map(|entry| (entry.1, entry.2))
+                    })?;
+                (
+                    signature.to_string(),
+                    signature_params(signature),
+                    Some(doc),
+                )
+            }
+        },
     };
     let active = argument.min(parameters.len().saturating_sub(1)) as u32;
     Some(SignatureHelp {

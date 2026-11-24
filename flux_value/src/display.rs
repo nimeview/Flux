@@ -68,6 +68,16 @@ fn write_value(out: &mut String, value: &Value) {
             out.push_str(&e.type_name);
             out.push_str("::");
             out.push_str(&e.variant);
+            // A struct variant: `Shape::Rect { h: 3, w: 2 }`.
+            if let Some(p @ Value::UserStruct(s)) = &e.payload {
+                if s.type_name == VARIANT_FIELDS_TYPE {
+                    let mut text = String::new();
+                    write_value(&mut text, p);
+                    out.push(' ');
+                    out.push_str(text.trim_start_matches(VARIANT_FIELDS_TYPE).trim_start());
+                    return;
+                }
+            }
             if let Some(p) = &e.payload {
                 out.push('(');
                 write_value(out, p);
@@ -114,3 +124,7 @@ fn float_text(f: f64) -> String {
 
 /// The type name a tuple value carries (the compiler's `flux_hir::TUPLE`).
 pub const TUPLE_TYPE: &str = "\0tuple";
+
+/// The struct name a struct variant's fields carry (the compiler's
+/// `flux_hir::VARIANT_FIELDS`).
+pub const VARIANT_FIELDS_TYPE: &str = "\0fields";

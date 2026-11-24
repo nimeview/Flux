@@ -309,6 +309,36 @@ Same code, same session, one run each of the workloads repeated until they take 
 
 Compare timings only between builds of the same profile.
 
+## 0.2 against 0.1 (2026-11-24)
+
+Intel Core i9-9880H, macOS, release build. `cargo bench -p flux_cli --bench workloads` on v0.1.0 (`d26fd24`, built in a separate worktree) and on 0.2, run alternately in one session; the table gives the second, quieter round. The workloads are the same, except that `reactive_events` writes its handler `on Tick(n) { }` in 0.2 (the 0.1 form still runs, with a warning).
+
+| Workload | 0.1 VM | 0.2 VM | 0.1 JIT | 0.2 JIT |
+|----------|--------|--------|---------|---------|
+| compute_loop | 68.9 ms | 63.0 ms | 2.39 ms | 2.29 ms |
+| recursion | 14.2 ms | 14.0 ms | 261 µs | 246 µs |
+| strings | 21.3 ms | 20.7 ms | 21.1 ms | 20.2 ms |
+| collections | 16.6 ms | 16.9 ms | 14.5 ms | 15.7 ms |
+| structs_match | 13.2 ms | 13.4 ms | 14.4 ms | 14.4 ms |
+| enum_match | 307 ms | 298 ms | 136 ms | 137 ms |
+| reactive_events_1000 | 1.89 ms | 1.86 ms | 3.33 ms | 3.19 ms |
+| compile_inventory_totals | 1.20–1.24 ms | 1.35–1.49 ms | | |
+
+Running programs is as fast as in 0.1 or faster, although reads are now always current and changes settle in batches. `collections` on the JIT (+8%) is the largest slowdown, within the spread of the first round (17.4 ms against 18.8 ms, in 0.2's favor).
+
+Compiling is 12–20% slower. Timing each stage of `examples/general/inventory_totals.fl` (3,000 runs, alternating builds) located it:
+
+| Stage | 0.1 | 0.2 |
+|-------|-----|-----|
+| parse | 697 µs | 791 µs |
+| HIR | 174 µs | 201 µs |
+| type checking | 211 µs | 229 µs |
+| IR | 65 µs | 66 µs |
+
+- HIR lowering first took 88% longer (143 against 268 µs in an earlier pair of runs): it gave every library method's function a hidden symbol, about a hundred, on every compile, and dropped them again. Symbols are now created only for method names the program uses (`SymbolTable::note_member`), which brings HIR to +15%.
+- Parsing is 14% slower, spread over the grammar's new forms (paths, tuples, trailing commas) with no single hot spot; it is left as is.
+- In absolute terms a compile of this 46-line program takes about 1.3 ms.
+
 ## Findings
 
 1. **Arrays were copied quadratically (fixed).** `Value::Array(Vec<Value>)` has full value semantics, so every read of a local array (`len(xs)`, `get(xs, i)`, passing it to a function) deep-clones it, nested structs included. `xs = push(xs, v)` copies it as well, because the old value is still held by `xs` during the call. Doubling the size roughly quadruples the time, for building (`push`: 500 → 0.3 s, 1,000 → 0.9 s, 2,000 → 3.6 s) and for indexed scanning (1,000 → 1.1 s, 2,000 → 4.2 s). Fix:

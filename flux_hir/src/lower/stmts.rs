@@ -961,6 +961,7 @@ fn lower_stmt(
                 .map(|a| lower_expr(a, symbols, scope, diagnostics, &mut reads_reactive))
                 .collect::<Option<Vec<_>>>()?;
             symbols.mut_call_sites.insert(*span);
+            symbols.note_member(&method);
             let call = HirExpr::Call {
                 callee: Box::new(HirExpr::Field {
                     base: Box::new(receiver),

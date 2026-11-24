@@ -23,7 +23,7 @@ fn bind_match_arm_locals(
     arm: &HirMatchArm,
     scope: &mut Scope<'_>,
     _source: SourceId,
-    _diagnostics: &mut DiagnosticBag,
+    diagnostics: &mut DiagnosticBag,
 ) {
     if arm.bindings.is_empty() {
         return;
@@ -44,16 +44,59 @@ fn bind_match_arm_locals(
         }
         Type::Enum { name, .. } => {
             if let Some(payload_ty) = ctx.enum_payload(&name, &arm.variant).cloned() {
+                let at = |sym: &SymbolId| ctx.symbol_spans.get(sym).copied();
+                let variant = &arm.variant;
+                let mut report = |expected: String, found: String, sym: &SymbolId| {
+                    if let Some(span) = at(sym) {
+                        diagnostics.push(FluxError::TypeMismatch {
+                            expected,
+                            found,
+                            span: span_to_miette(span),
+                            source_id: span.source,
+                        });
+                    }
+                };
+                let named_fields =
+                    matches!(&payload_ty, Type::Struct { name, .. } if name.is_empty());
                 if arm.binding_fields.is_empty() {
-                    if let Some(&sym) = arm.bindings.first() {
-                        scope.insert(sym, payload_ty);
+                    if let Some(sym) = arm.bindings.first() {
+                        // A struct variant's fields have no type of their own
+                        // to bind as one value.
+                        if named_fields {
+                            report(
+                                format!("`{variant} {{ … }}` naming its fields"),
+                                format!("`{variant}(…)`"),
+                                sym,
+                            );
+                        }
+                        scope.insert(*sym, payload_ty);
                     }
                 } else if let Type::Struct { fields, .. } = &payload_ty {
                     for (sym, field) in arm.bindings.iter().zip(arm.binding_fields.iter()) {
-                        if let Some((_, ft)) = fields.iter().find(|(n, _)| n == field) {
-                            scope.insert(*sym, ft.clone());
+                        match fields.iter().find(|(n, _)| n == field) {
+                            Some((_, ft)) => {
+                                scope.insert(*sym, ft.clone());
+                            }
+                            None => report(
+                                format!(
+                                    "a field of `{variant}`: {}",
+                                    fields
+                                        .iter()
+                                        .map(|(n, _)| n.as_str())
+                                        .collect::<Vec<_>>()
+                                        .join(", ")
+                                ),
+                                format!("`{field}`"),
+                                sym,
+                            ),
                         }
                     }
+                } else if let Some(sym) = arm.bindings.first() {
+                    report(
+                        format!("`{variant}(…)`: its payload has no field names"),
+                        format!("`{variant} {{ … }}`"),
+                        sym,
+                    );
                 }
             }
         }
@@ -907,7 +950,33 @@ pub(crate) fn infer_expr(
                 unreachable!()
             };
             match variants.iter().find(|(name, _)| name == variant) {
-                Some((_, Some(expected))) => match payload {
+                Some((_, Some(expected))) => match payload.as_deref() {
+                    // `Rect { w: 2 }`: the fields of a struct variant.
+                    Some(HirExpr::StructLit {
+                        name,
+                        fields,
+                        span: at,
+                    }) if name == flux_hir::VARIANT_FIELDS => match expected {
+                        Type::Struct {
+                            name,
+                            fields: declared,
+                        } if name.is_empty() => check_struct_fields(
+                            ctx,
+                            declared,
+                            fields,
+                            *at,
+                            types,
+                            names,
+                            source,
+                            diagnostics,
+                        ),
+                        _ => diagnostics.push(FluxError::TypeMismatch {
+                            expected: format!("`{variant}(…)`: its payload has no field names"),
+                            found: format!("`{variant} {{ … }}`"),
+                            span: span_to_miette(*at),
+                            source_id: at.source,
+                        }),
+                    },
                     Some(payload) => {
                         let got = infer_expr(ctx, payload, types, names, source, diagnostics)
                             .unwrap_or(Type::Error);
@@ -972,57 +1041,16 @@ pub(crate) fn infer_expr(
             else {
                 unreachable!()
             };
-            let mut seen = std::collections::HashSet::new();
-            for (field_name, expr) in fields {
-                let got =
-                    infer_expr(ctx, expr, types, names, source, diagnostics).unwrap_or(Type::Error);
-                let Some((_, expected)) = declared_fields
-                    .iter()
-                    .find(|(declared, _)| declared == field_name)
-                else {
-                    diagnostics.push(FluxError::TypeMismatch {
-                        expected: format!(
-                            "field from {}",
-                            declared_fields
-                                .iter()
-                                .map(|(field, _)| field.as_str())
-                                .collect::<Vec<_>>()
-                                .join(", ")
-                        ),
-                        found: field_name.clone(),
-                        span: span_to_miette(expr.span()),
-                        source_id: expr.span().source,
-                    });
-                    continue;
-                };
-                if !seen.insert(field_name.clone()) {
-                    diagnostics.push(FluxError::TypeMismatch {
-                        expected: "each struct field exactly once".into(),
-                        found: format!("duplicate field `{field_name}`"),
-                        span: span_to_miette(expr.span()),
-                        source_id: expr.span().source,
-                    });
-                }
-                let got = unwrap_value_type(&got);
-                if !expected.is_error() && !got.is_error() && !types_compatible(expected, &got) {
-                    diagnostics.push(FluxError::TypeMismatch {
-                        expected: expected.display(),
-                        found: got.display(),
-                        span: span_to_miette(expr.span()),
-                        source_id: expr.span().source,
-                    });
-                }
-            }
-            for (expected_name, _) in declared_fields {
-                if !seen.contains(expected_name) {
-                    diagnostics.push(FluxError::TypeMismatch {
-                        expected: format!("field `{expected_name}`"),
-                        found: "missing field".into(),
-                        span: span_to_miette(*span),
-                        source_id: span.source,
-                    });
-                }
-            }
+            check_struct_fields(
+                ctx,
+                declared_fields,
+                fields,
+                *span,
+                types,
+                names,
+                source,
+                diagnostics,
+            );
             Some(struct_ty)
         }
         HirExpr::Field { base, field, span } => {
@@ -1395,4 +1423,69 @@ fn captured_change(
         span: span_to_miette(span),
         source_id: span.source,
     });
+}
+
+/// Checks a struct literal's fields against the declared ones: each exactly
+/// once, none unknown, none missing, each of its type.
+#[allow(clippy::too_many_arguments)]
+fn check_struct_fields(
+    ctx: &TypeCheckContext,
+    declared_fields: &[(String, Type)],
+    fields: &[(String, HirExpr)],
+    span: flux_diagnostics::Span,
+    types: &Scope<'_>,
+    names: &HashMap<SymbolId, String>,
+    source: SourceId,
+    diagnostics: &mut DiagnosticBag,
+) {
+    let mut seen = std::collections::HashSet::new();
+    for (field_name, expr) in fields {
+        let got = infer_expr(ctx, expr, types, names, source, diagnostics).unwrap_or(Type::Error);
+        let Some((_, expected)) = declared_fields
+            .iter()
+            .find(|(declared, _)| declared == field_name)
+        else {
+            diagnostics.push(FluxError::TypeMismatch {
+                expected: format!(
+                    "field from {}",
+                    declared_fields
+                        .iter()
+                        .map(|(field, _)| field.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ),
+                found: field_name.clone(),
+                span: span_to_miette(expr.span()),
+                source_id: expr.span().source,
+            });
+            continue;
+        };
+        if !seen.insert(field_name.clone()) {
+            diagnostics.push(FluxError::TypeMismatch {
+                expected: "each struct field exactly once".into(),
+                found: format!("duplicate field `{field_name}`"),
+                span: span_to_miette(expr.span()),
+                source_id: expr.span().source,
+            });
+        }
+        let got = unwrap_value_type(&got);
+        if !expected.is_error() && !got.is_error() && !types_compatible(expected, &got) {
+            diagnostics.push(FluxError::TypeMismatch {
+                expected: expected.display(),
+                found: got.display(),
+                span: span_to_miette(expr.span()),
+                source_id: expr.span().source,
+            });
+        }
+    }
+    for (expected_name, _) in declared_fields {
+        if !seen.contains(expected_name) {
+            diagnostics.push(FluxError::TypeMismatch {
+                expected: format!("field `{expected_name}`"),
+                found: "missing field".into(),
+                span: span_to_miette(span),
+                source_id: span.source,
+            });
+        }
+    }
 }

@@ -1229,3 +1229,47 @@ fn completion_after_a_dot_offers_library_methods() {
     assert!(!result.contains("\"split\""), "{result}");
     shutdown(&client, handle);
 }
+
+#[test]
+fn hover_and_signature_help_know_library_methods() {
+    let (client, handle) = start_server();
+    let text = "fn main() {\n    let xs = [3, 1]\n    let s = \"a,b\"\n    let ys = xs.slice(0, 1)\n    let n = s.len()\n}\n";
+    did_open(&client, text);
+    let _ = recv_diagnostics(&client);
+    // `slice` and `len` on an array and on a string.
+    let slice = ask(&client, 2, "textDocument/hover", at(3, 17)).to_string();
+    assert!(
+        slice.contains("xs.slice(start: Int, end: Int) -> [T]"),
+        "{slice}"
+    );
+    let len = ask(&client, 3, "textDocument/hover", at(4, 15)).to_string();
+    assert!(len.contains("s.len() -> Int"), "{len}");
+    assert!(len.contains("number of characters"), "{len}");
+    // Inside `xs.slice(0, |1)`: the second parameter.
+    let help = ask(&client, 4, "textDocument/signatureHelp", at(3, 25)).to_string();
+    assert!(help.contains("xs.slice(start: Int, end: Int)"), "{help}");
+    assert!(help.contains("\"activeParameter\":1"), "{help}");
+    shutdown(&client, handle);
+}
+
+#[test]
+fn library_method_help_follows_the_receiver_and_the_open_call() {
+    let (client, handle) = start_server();
+    let text = "struct P {\n    xs: [Int],\n}\nimpl Int {\n    fn abs(self) -> String {\n        \"custom\"\n    }\n}\nfn total(a: Int, b: Int) -> Int {\n    a + b\n}\nfn main() {\n    let s = \"💡hello\"\n    let p = P { xs: [1] }\n    let xs = \"abc\"\n    let n = p.xs.len()\n    let m = 1\n    let c = m.abs()\n    let t = total(xs.len(), 2)\n}\n";
+    did_open(&client, text);
+    let _ = recv_diagnostics(&client);
+    // Inside a string after an emoji: no crash.
+    let _ = ask(&client, 2, "textDocument/hover", at(12, 17));
+    // `p.xs` is the field, an array, not the local string `xs`.
+    let field = ask(&client, 3, "textDocument/hover", at(15, 18)).to_string();
+    assert!(field.contains("xs.len() -> Int"), "{field}");
+    assert!(field.contains("number of elements"), "{field}");
+    // The program's own `Int.abs` hides the library's.
+    let own = ask(&client, 4, "textDocument/hover", at(17, 15)).to_string();
+    assert!(!own.contains("n.abs() -> N"), "{own}");
+    // After the finished inner `xs.len()`: the outer `total`.
+    let help = ask(&client, 5, "textDocument/signatureHelp", at(18, 28)).to_string();
+    assert!(help.contains("total("), "{help}");
+    assert!(help.contains("\"activeParameter\":1"), "{help}");
+    shutdown(&client, handle);
+}

@@ -1,6 +1,6 @@
 # Status and limits
 
-Flux is at version 0.1. This page says what you can rely on.
+Flux is at version 0.2. This page says what you can rely on.
 
 ## Stable
 
@@ -20,14 +20,15 @@ These may change or disappear, with no compatibility promise:
 
 - **`--jit`**, the Cranelift backend. It gives the same results as the VM, and falls back to the VM for what it cannot compile. It is much faster in numeric loops and recursion. It does not compile structs, maps, `Option`, `Result`, closures, or functions that print, and it is slower than the VM on small event handlers. `flux run --jit --verbose` shows what fell back and why.
 - **`flux wasm`**, a stub that always fails and writes nothing.
-- **`flux migrate`**, which converts an old binding syntax.
+- **`flux migrate`**, which rewrites older forms to the current syntax (see [Tools](./tools.md#flux-migrate)).
 
 ## Not there yet
 
 - A package registry, and dependencies by version.
 - Windows support.
 - Rerunning a cycle of watches until values stop changing.
-- Functions that accept "any type with this trait".
+- Functions that accept "any type with this trait", generic structs, and generic `impl` blocks.
+- Private fields, and type names scoped to a module.
 - Catching a runtime error from inside the language.
 
 ## Known limits

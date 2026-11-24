@@ -406,7 +406,20 @@ pub(super) fn lower_expr(
         }
         Expr::StructLit { name, fields, span } if name.name.contains("::") => {
             let plain = match resolve_path(&name.name, name.span, symbols, diagnostics)? {
-                PathTarget::Name(plain) | PathTarget::Variant(_, plain) => plain,
+                // `Shape::Rect { w: 2 }`: that enum's struct variant.
+                PathTarget::Variant(enum_name, variant) => {
+                    return variant_fields(
+                        enum_name,
+                        variant,
+                        fields,
+                        *span,
+                        symbols,
+                        scope,
+                        diagnostics,
+                        reads_reactive,
+                    );
+                }
+                PathTarget::Name(plain) => plain,
                 // A type is program-wide; the module must still export it.
                 PathTarget::Module(alias, plain) => {
                     if !symbols
@@ -441,6 +454,23 @@ pub(super) fn lower_expr(
                 span: *span,
             };
             lower_expr(&lit, symbols, scope, diagnostics, reads_reactive)
+        }
+        // `Rect { w: 2 }` where `Rect` is a variant and not a struct.
+        Expr::StructLit { name, fields, span }
+            if symbols.lookup(&name.name).is_none()
+                && symbols.enum_variants.contains_key(&name.name) =>
+        {
+            let enum_name = symbols.enum_variants[&name.name].clone();
+            variant_fields(
+                enum_name,
+                name.name.clone(),
+                fields,
+                *span,
+                symbols,
+                scope,
+                diagnostics,
+                reads_reactive,
+            )
         }
         Expr::StructLit { name, fields, span } => {
             let fields = fields
@@ -495,6 +525,7 @@ pub(super) fn lower_expr(
                 }
             }
             let base_expr = lower_expr(base, symbols, scope, diagnostics, reads_reactive)?;
+            symbols.note_member(field);
             Some(HirExpr::Field {
                 base: Box::new(base_expr),
                 field: field.clone(),
@@ -861,5 +892,37 @@ fn normalize_pattern(
                 .collect::<Option<Vec<_>>>()?,
             span: *span,
         },
+    })
+}
+
+/// A struct variant built with its fields: the variant, with the fields as a
+/// struct named [`crate::VARIANT_FIELDS`] for its payload.
+#[allow(clippy::too_many_arguments)]
+fn variant_fields(
+    enum_name: String,
+    variant: String,
+    fields: &[flux_syntax::FieldInit],
+    span: flux_diagnostics::Span,
+    symbols: &mut SymbolTable,
+    scope: ScopeKind,
+    diagnostics: &mut DiagnosticBag,
+    reads_reactive: &mut bool,
+) -> Option<HirExpr> {
+    let fields = fields
+        .iter()
+        .filter_map(|f| {
+            let value = lower_expr(&f.value, symbols, scope, diagnostics, reads_reactive)?;
+            Some((f.name.name.clone(), value))
+        })
+        .collect();
+    Some(HirExpr::EnumVariant {
+        enum_name,
+        variant,
+        payload: Some(Box::new(HirExpr::StructLit {
+            name: crate::VARIANT_FIELDS.to_string(),
+            fields,
+            span,
+        })),
+        span,
     })
 }

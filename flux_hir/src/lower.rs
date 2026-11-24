@@ -387,16 +387,12 @@ fn lower_program_inner(
 ) -> Option<HirProgram> {
     let mut symbols = SymbolTable::new();
     // Methods on library values (`xs.sorted()`) call library functions the
-    // type checker picks: each gets a symbol now. Changing ones (`xs.push(v)`)
-    // store their result back, like `mut self` methods.
-    let mut builtin_ids = HashMap::new();
-    for target in flux_std::methods::library_method_targets()
-        .into_iter()
-        .chain(["\0concat"])
-    {
-        let id = symbols.hidden_builtin(target, flux_diagnostics::Span::DUMMY);
-        builtin_ids.insert(target.to_string(), id);
-    }
+    // type checker picks: each gets a symbol when its name is first lowered
+    // (`SymbolTable::note_member`), and `a + b` on arrays calls `concat`.
+    // Changing ones (`xs.push(v)`) store their result back, like `mut self`
+    // methods.
+    let concat = symbols.hidden_builtin("\0concat", flux_diagnostics::Span::DUMMY);
+    symbols.builtin_ids.insert("\0concat".to_string(), concat);
     for name in flux_std::methods::CHANGING_METHODS {
         symbols.mut_method_names.insert(name.to_string());
     }
@@ -553,7 +549,7 @@ fn lower_program_inner(
             const_bindings: symbols.const_bindings.clone(),
             symbols: symbols.export_symbols(),
             mut_methods: symbols.mut_methods.clone(),
-            builtin_ids,
+            builtin_ids: std::mem::take(&mut symbols.builtin_ids),
             mut_call_sites: symbols.mut_call_sites.clone(),
             changing_calls: Default::default(),
             captured_call_sites: symbols.captured_call_sites.clone(),

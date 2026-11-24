@@ -153,6 +153,30 @@ fn main() {
 12.0 9.0 0.0
 ```
 
+A variant can also name its fields. Build it like a struct, with the variant's name or with `Enum::Variant`, and take it apart the same way:
+
+```flux
+import io { println }
+
+enum Shape {
+    Circle(Float),
+    Rect { w: Float, h: Float }
+}
+
+fn area(s: Shape) -> Float {
+    match s { Circle(r) => 3.0 * r * r, Rect { w, h } => w * h }
+}
+
+fn main() {
+    let r = Rect { w: 2.0, h: 3.0 }
+    println("{area(r)} {area(Shape::Rect { w: 1.0, h: 1.0 })} {r}")
+}
+```
+
+```output
+6.0 1.0 Shape::Rect { h: 3.0, w: 2.0 }
+```
+
 Leaving a variant out is a compile error:
 
 ```flux,error=E005

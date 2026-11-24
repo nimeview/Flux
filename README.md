@@ -49,6 +49,7 @@ cd my_app
 | `flux test [filter]` | run every `fn test_*()` in the project |
 | `flux fmt file --write` | format a file |
 | `flux lock [--check]` | manage `flux.lock` for path dependencies |
+| `flux migrate path --write` | rewrite older forms to the current syntax |
 | `flux repl` | interactive shell |
 | `flux lsp-server` | language server for editors; see [the VS Code extension](editors/vscode/README.md) |
 
@@ -63,7 +64,7 @@ cd my_app
 
 ## Status
 
-Version 0.1. The language surface is stable on Linux and macOS, while the JIT, `flux wasm`, and `flux migrate` are experimental. There is no package registry yet, only local path dependencies. See [Status and limits](docs/flux/src/status.md).
+Version 0.2 ([what changed](docs/flux/src/whats-new.md)). The language surface is stable on Linux and macOS, while the JIT, `flux wasm`, and `flux migrate` are experimental. There is no package registry yet, only local path dependencies. See [Status and limits](docs/flux/src/status.md).
 
 ## Working on Flux
 

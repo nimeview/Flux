@@ -71,6 +71,8 @@ pub struct TypeCheckContext {
     pub(crate) mut_methods: std::collections::HashSet<SymbolId>,
     pub(crate) mut_call_sites: std::collections::HashSet<flux_diagnostics::Span>,
     pub(crate) captured_call_sites: std::collections::HashSet<flux_diagnostics::Span>,
+    /// Where each symbol is declared, for diagnostics about pattern bindings.
+    pub(crate) symbol_spans: HashMap<SymbolId, flux_diagnostics::Span>,
     pub(crate) extension_sources: HashMap<SymbolId, flux_diagnostics::SourceId>,
     pub(crate) builtin_ids: HashMap<String, SymbolId>,
     pub(crate) file_imports:
@@ -189,6 +191,11 @@ impl TypeCheckContext {
         ctx.mut_methods = program.mut_methods.clone();
         ctx.mut_call_sites = program.mut_call_sites.clone();
         ctx.captured_call_sites = program.captured_call_sites.clone();
+        ctx.symbol_spans = program
+            .symbols
+            .iter()
+            .map(|(id, s)| (*id, s.span))
+            .collect();
         ctx.extension_sources = program.extension_sources.clone();
         ctx.builtin_ids = program.builtin_ids.clone();
         ctx.file_imports = program.file_imports.clone();

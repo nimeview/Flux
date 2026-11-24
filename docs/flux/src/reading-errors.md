@@ -21,7 +21,7 @@ flux::E002
 | You wrote | You get | What to do |
 |---|---|---|
 | `println("x")` with no import | E001, undefined name | `import io { println }` |
-| `len(xs)` with no import | E001, undefined name | `import collections { len }` |
+| `len(xs)` with no import | E001, undefined name | `xs.len()`, or `import collections { len }` |
 | `let limit = 10` at the top, read in `fn` | E002 | `const limit = 10`, a parameter, `track fn`, or `snap` |
 | `let c = 0` at the top, assigned in `on` | E016 | `let mut c = 0` |
 | `let d = x * 2`, then `d = 1` | E003 | `d` is derived; assign `x` instead |

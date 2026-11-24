@@ -87,6 +87,10 @@ pub struct SymbolTable {
     /// Trait impl methods keyed by `(receiver type tag, method name)`, populated as
     /// `impl Trait for Type` blocks are lowered. Used for exact `x.method(...)` dispatch.
     pub trait_impl_index: HashMap<(String, String), SymbolId>,
+    /// The library functions that methods on library values may call
+    /// (`xs.sorted()`), each with a hidden symbol; filled as method names
+    /// are seen, see [`Self::note_member`].
+    pub builtin_ids: HashMap<String, SymbolId>,
     /// Module alias → true (e.g. `m` in `import math as m`).
     pub module_aliases: HashMap<String, ()>,
     /// Qualified import lookup: `(alias, export_name)` → symbol.
@@ -166,6 +170,7 @@ impl SymbolTable {
                 symbols: HashMap::new(),
             }],
             all_names: HashMap::new(),
+            builtin_ids: HashMap::new(),
             all_symbols: HashMap::new(),
             enum_variants: HashMap::new(),
             enum_variant_sets: HashMap::new(),
@@ -278,6 +283,17 @@ impl SymbolTable {
         self.all_symbols.insert(id, symbol);
         self.hidden_builtins.insert(name.to_string(), id);
         id
+    }
+
+    /// `x.name`: if `name` is a library method, gives each library function
+    /// it may call a symbol, for the type checker to resolve the call to.
+    pub fn note_member(&mut self, name: &str) {
+        for target in flux_std::methods::method_targets(name) {
+            if !self.builtin_ids.contains_key(target) {
+                let id = self.hidden_builtin(target, Span::DUMMY);
+                self.builtin_ids.insert(target.to_string(), id);
+            }
+        }
     }
 
     pub fn open_closure(&mut self) {
