@@ -23,6 +23,13 @@ version = "0.2.1"
 edition = "2021"
 license = "Apache-2.0"
 
+# No debug info in dev and test builds. On macOS it is kept in one `.o` file
+# per compiled unit next to the binaries, which cargo never removes: after
+# many rebuilds `target/debug/deps` held ~900,000 of them, and starting each
+# test binary from there took ~20 s. Panics still report file and line.
+[profile.dev]
+debug = false
+
 # Release builds for distribution and final measurements; `release` stays quick
 # to build for everyday work.
 [profile.dist]
