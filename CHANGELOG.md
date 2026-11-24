@@ -4,6 +4,8 @@ Notable changes to Flux. The versioning policy is in [`RELEASE.md`](RELEASE.md).
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-11-24
+
 ### Changes that can alter programs
 
 - `reduce` takes exactly three arguments, `reduce(xs, init, f)`. An undocumented two-argument form summed the elements as integers, so `reduce([1.5, 2.5], 0.0)` gave `3` and a large sum overflowed silently. Migration: pass the function, `xs.reduce(0, |a, x| a + x)`.
