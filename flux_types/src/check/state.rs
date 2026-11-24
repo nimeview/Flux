@@ -65,7 +65,7 @@ pub struct TypeCheckContext {
     enum_payloads: HashMap<(String, String), Type>,
     user_types: HashMap<String, Type>,
     type_aliases: HashMap<String, flux_hir::HirType>,
-    trait_impls: HashMap<(String, String), SymbolId>,
+    pub(crate) trait_impls: HashMap<(String, String), SymbolId>,
     /// `mut self` methods, and the call sites written as statements on a
     /// place (see `flux_hir::HirProgram::mut_call_sites`).
     pub(crate) mut_methods: std::collections::HashSet<SymbolId>,
@@ -78,7 +78,6 @@ pub struct TypeCheckContext {
     pub(crate) file_imports:
         HashMap<flux_diagnostics::SourceId, std::collections::HashSet<flux_diagnostics::SourceId>>,
     builtin_symbols: std::collections::HashSet<SymbolId>,
-    effectful_functions: std::collections::HashSet<SymbolId>,
     /// Closure bodies are checked where created, with contextual parameter
     /// types and the creation scope's capture types.
     capturing_closures: HashMap<SymbolId, flux_hir::HirFn>,
@@ -100,6 +99,9 @@ pub struct TypeCheckContext {
     /// its receiver (`xs.push(1)`, `xs.sort()`): they store the result back.
     pub(crate) changing_sites:
         std::cell::RefCell<std::collections::HashSet<flux_diagnostics::Span>>,
+    /// `op.f(x)` calls of the function in field `f`, by enclosing function and span.
+    pub(crate) field_calls:
+        std::cell::RefCell<std::collections::HashSet<(Option<SymbolId>, flux_diagnostics::Span)>>,
     /// Declared return type of the function being checked, if it has one;
     /// checks a `return` wherever it appears, including inside match arms.
     pub(crate) fn_return: std::cell::RefCell<Option<Type>>,
@@ -220,8 +222,6 @@ impl TypeCheckContext {
                 _ => None,
             })
             .collect();
-        ctx.effectful_functions =
-            super::effects::effectful_functions(program, &ctx.builtin_symbols);
         ctx
     }
 
@@ -264,8 +264,9 @@ impl TypeCheckContext {
         self.capturing_closures.get(&id)
     }
 
-    pub fn is_effectful_function(&self, id: SymbolId) -> bool {
-        self.effectful_functions.contains(&id)
+    /// The symbols of library functions, for the purity check.
+    pub(crate) fn builtin_symbols(&self) -> &std::collections::HashSet<SymbolId> {
+        &self.builtin_symbols
     }
 }
 

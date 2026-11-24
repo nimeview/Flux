@@ -327,6 +327,16 @@ pub(crate) fn infer_expr(
         HirExpr::Bool { .. } => Some(Type::Bool),
         HirExpr::String { .. } => Some(Type::String),
         HirExpr::Ident { symbol, span } => types.get(symbol).cloned().or_else(|| {
+            if ctx.is_builtin_symbol(*symbol) {
+                let name = lookup_name(names, *symbol).cloned().unwrap_or_default();
+                diagnostics.push(FluxError::TypeMismatch {
+                    expected: format!("a function value: wrap it, as in `|x| {name}(x)`"),
+                    found: format!("`{name}`, a library function that can only be called"),
+                    span: span_to_miette(*span),
+                    source_id: span.source,
+                });
+                return Some(Type::Error);
+            }
             diagnostics.push(FluxError::UndefinedName {
                 name: lookup_name(names, *symbol)
                     .cloned()
@@ -460,6 +470,9 @@ pub(crate) fn infer_expr(
                 }
                 // `op.f(3)` calls the function in field `f`; `(op.f)(3)` says so.
                 if is_field {
+                    ctx.field_calls
+                        .borrow_mut()
+                        .insert((ctx.current_function.get(), *span));
                     let callee_span = callee.span();
                     let message = format!(
                         "calling the function in field `{field}` is now written with parentheses: `(….{field})(…)`"

@@ -44,6 +44,7 @@ fn error_codes_are_stable() {
             "E017",
             FluxError::SideEffectInDerived {
                 name: "x".into(),
+                place: "a derived expression".into(),
                 span: s,
                 source_id: sid,
             },

@@ -113,7 +113,11 @@ fn run_one(
     }
     match executor.call(name, &[]) {
         Ok(RuntimeValue::Bool(false)) => Err("returned false".into()),
-        Ok(_) => Ok(()),
+        Ok(RuntimeValue::Unit | RuntimeValue::Bool(true)) => Ok(()),
+        Ok(other) => Err(format!(
+            "returned {}; a test returns nothing, `true`, or `false`",
+            other.display_string()
+        )),
         Err(err) => Err(format!("{err:#}")),
     }
 }

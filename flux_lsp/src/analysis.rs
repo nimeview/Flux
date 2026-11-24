@@ -210,7 +210,19 @@ pub fn definition_at_position(
         return member_definition(analysis, contents, offset, word);
     }
 
-    analysis.symbols.by_name.get(word).cloned()
+    // The symbol the name resolves to where it stands, so that a local
+    // shadowing a module item leads to the local.
+    let resolved = (|| {
+        let hir = analysis.hir.as_ref()?;
+        let index = analysis.references.as_ref()?;
+        let id = symbol_at_offset(hir, index, buffer_source_id(analysis)?, offset)?;
+        let symbol = hir.symbols.get(&id)?;
+        if symbol.kind == SymbolKind::Builtin || symbol.span == Span::DUMMY {
+            return None;
+        }
+        location_for_span(&analysis.source_paths, symbol.span, "<buffer>")
+    })();
+    resolved.or_else(|| analysis.symbols.by_name.get(word).cloned())
 }
 
 fn dot_member_access(contents: &str, offset: usize) -> bool {
@@ -930,6 +942,10 @@ pub fn rename_edits_for_symbol(
 }
 
 fn buffer_source_id(analysis: &DocAnalysis) -> Option<SourceId> {
+    // The analyzed document is the root, which comes first.
+    if let Some(root) = analysis.sources.first() {
+        return Some(root.id);
+    }
     if analysis.source_paths.is_empty() {
         return Some(SourceId(0));
     }

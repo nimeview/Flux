@@ -48,6 +48,9 @@ pub struct TypedProgram {
     /// `place.m(…)` statements calling a library method that changes its
     /// receiver; [`resolve_method_calls`] copies them to the program.
     pub changing_sites: std::collections::HashSet<flux_diagnostics::Span>,
+    /// `op.f(x)` calls of the function in field `f`; [`resolve_method_calls`]
+    /// writes them `(op.f)(x)`.
+    pub field_calls: std::collections::HashSet<(Option<SymbolId>, flux_diagnostics::Span)>,
     /// The types of locals and parameters, for hover and inlay hints.
     pub local_types: HashMap<SymbolId, Type>,
 }
@@ -106,16 +109,10 @@ fn typecheck_with_context(
         if !ctx.is_builtin_symbol(*id) {
             continue;
         }
+        // A builtin with no single function type (`sqrt` takes any number)
+        // can only be called; using it as a value is an error (see `Ident`).
         if let Some(ty) = builtin_fn_type(name) {
             types.insert(*id, ty);
-        } else if flux_std::is_builtin_fn(name) {
-            types.insert(
-                *id,
-                Type::Func {
-                    params: vec![],
-                    ret: Box::new(Type::Unit),
-                },
-            );
         }
     }
 
@@ -576,6 +573,9 @@ fn typecheck_with_context(
         }
     }
 
+    if !ctx.preparing_closures {
+        stmt::check_purity(ctx, program, diagnostics);
+    }
     types.extend(ctx.closure_types.borrow().clone());
     check_main_signature(program, diagnostics);
     let local_types = state::take_local_types();
@@ -587,6 +587,7 @@ fn typecheck_with_context(
             types,
             method_calls: ctx.method_calls.borrow().clone(),
             changing_sites: ctx.changing_sites.borrow().clone(),
+            field_calls: ctx.field_calls.borrow().clone(),
             local_types,
         })
     }

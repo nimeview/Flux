@@ -198,13 +198,15 @@ pub enum FluxError {
         source_id: SourceId,
     },
 
-    #[error("side effect `{name}` is not allowed in a derived expression")]
+    #[error("side effect `{name}` is not allowed in {place}")]
     #[diagnostic(
         code(flux::E017),
-        help("move I/O and printing into `watch`, `on`, or a function body")
+        help("move I/O and printing into `watch`, `on`, or a function body such as `main`")
     )]
     SideEffectInDerived {
         name: String,
+        /// "a derived expression" or "a `const` initializer".
+        place: String,
         #[label("side effect")]
         span: miette::SourceSpan,
         source_id: SourceId,

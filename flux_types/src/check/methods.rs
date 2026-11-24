@@ -16,10 +16,14 @@ pub fn resolve_method_calls(program: &mut HirProgram, typed: &TypedProgram) {
     program
         .changing_calls
         .extend(typed.changing_sites.iter().copied());
-    if typed.method_calls.is_empty() {
+    if typed.method_calls.is_empty() && typed.field_calls.is_empty() {
         return;
     }
-    let calls = &typed.method_calls;
+    let calls = &Calls {
+        methods: &typed.method_calls,
+        fields: &typed.field_calls,
+        grouped: program.builtin_ids.get(flux_hir::GROUPED).copied(),
+    };
     for item in &mut program.items {
         match item {
             HirItem::Fn(f) => block(&mut f.body, calls, Some(f.name)),
@@ -37,9 +41,20 @@ pub fn resolve_method_calls(program: &mut HirProgram, typed: &TypedProgram) {
     }
 }
 
-type Calls = HashMap<(Option<SymbolId>, Span), SymbolId>;
+/// What the checker resolved: method calls, and calls of a function in a field.
+struct Calls<'a> {
+    methods: &'a HashMap<(Option<SymbolId>, Span), SymbolId>,
+    fields: &'a std::collections::HashSet<(Option<SymbolId>, Span)>,
+    grouped: Option<SymbolId>,
+}
 
-fn block(b: &mut HirBlock, calls: &Calls, owner: Option<SymbolId>) {
+impl Calls<'_> {
+    fn get(&self, key: &(Option<SymbolId>, Span)) -> Option<&SymbolId> {
+        self.methods.get(key)
+    }
+}
+
+fn block(b: &mut HirBlock, calls: &Calls<'_>, owner: Option<SymbolId>) {
     for stmt in &mut b.stmts {
         match stmt {
             HirStmt::Let(binding) => expr(&mut binding.value, calls, owner),
@@ -72,7 +87,7 @@ fn block(b: &mut HirBlock, calls: &Calls, owner: Option<SymbolId>) {
     }
 }
 
-fn if_stmt(i: &mut HirIf, calls: &Calls, owner: Option<SymbolId>) {
+fn if_stmt(i: &mut HirIf, calls: &Calls<'_>, owner: Option<SymbolId>) {
     expr(&mut i.cond, calls, owner);
     block(&mut i.then_branch, calls, owner);
     match &mut i.else_branch {
@@ -82,11 +97,30 @@ fn if_stmt(i: &mut HirIf, calls: &Calls, owner: Option<SymbolId>) {
     }
 }
 
-fn expr(e: &mut HirExpr, calls: &Calls, owner: Option<SymbolId>) {
+fn expr(e: &mut HirExpr, calls: &Calls<'_>, owner: Option<SymbolId>) {
     match e {
         HirExpr::Call { callee, args, span } => {
             expr(callee, calls, owner);
             args.iter_mut().for_each(|a| expr(a, calls, owner));
+            // `op.f(x)`: the function in field `f`, as `(op.f)(x)`.
+            let field_call =
+                calls.fields.contains(&(owner, *span)) || calls.fields.contains(&(None, *span));
+            if let (true, Some(grouped)) = (field_call, calls.grouped) {
+                if matches!(callee.as_ref(), HirExpr::Field { .. }) {
+                    let span = *span;
+                    let field =
+                        std::mem::replace(callee.as_mut(), HirExpr::Bool { value: false, span });
+                    **callee = HirExpr::Call {
+                        callee: Box::new(HirExpr::Ident {
+                            symbol: grouped,
+                            span,
+                        }),
+                        args: vec![field],
+                        span,
+                    };
+                }
+                return;
+            }
             let Some(&impl_fn) = calls
                 .get(&(owner, *span))
                 .or_else(|| calls.get(&(None, *span)))

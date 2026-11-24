@@ -58,7 +58,7 @@ flux::E002
 | E014 | import of a missing name |
 | E015 | warning: unused binding |
 | E016 | a top-level `let` that needs `mut` |
-| E017 | side effect in a derived value |
+| E017 | side effect in a derived value or a `const` |
 | E018 | runtime error |
 | E019 | no such method for the type |
 | E020 | `impl` does not match its trait |

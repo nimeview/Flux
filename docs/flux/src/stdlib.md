@@ -64,7 +64,7 @@ best: ann
 | `print(s)`, `println(s)` | `Unit` | to standard output |
 | `eprint(s)`, `eprintln(s)` | `Unit` | to standard error |
 | `args()` | `[String]` | arguments after `--` |
-| `read_line()` | `Result[String, String]` | one line, without the newline |
+| `read_line()` | `Result[String, String]` | one line, without the newline; `Err("end of input")` at the end |
 | `read_file(path)` | `Result[String, String]` | a UTF-8 file |
 | `write_file(path, s)` | `Result[Unit, String]` | create or replace |
 | `append_file(path, s)` | `Result[Unit, String]` | add to the end |

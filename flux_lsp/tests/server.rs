@@ -1273,3 +1273,16 @@ fn library_method_help_follows_the_receiver_and_the_open_call() {
     assert!(help.contains("\"activeParameter\":1"), "{help}");
     shutdown(&client, handle);
 }
+
+#[test]
+fn definition_of_a_shadowing_local_is_the_local() {
+    let (client, handle) = start_server();
+    let text = "const limit = 10\nfn f() -> Int {\n    let limit = 3\n    limit + 1\n}\nfn main() {\n    let n = f() + limit\n}\n";
+    did_open(&client, text);
+    let _ = recv_diagnostics(&client);
+    let local = ask(&client, 2, "textDocument/definition", at(3, 5));
+    assert_eq!(local["range"]["start"]["line"], 2, "{local}");
+    let module = ask(&client, 3, "textDocument/definition", at(6, 19));
+    assert_eq!(module["range"]["start"]["line"], 0, "{module}");
+    shutdown(&client, handle);
+}

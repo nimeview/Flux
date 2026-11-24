@@ -5,9 +5,12 @@ use std::io::{self, Write};
 
 use flux_value::Value;
 
+/// One line from stdin, without its line ending; `Err("end of input")` when
+/// there are no more lines (an empty line is `Ok("")`).
 pub fn read_line() -> Value {
     let mut line = String::new();
     match io::stdin().read_line(&mut line) {
+        Ok(0) => err_string("end of input".to_string()),
         Ok(_) => {
             let trimmed = line.strip_suffix('\n').unwrap_or(&line).to_string();
             let trimmed = trimmed.strip_suffix('\r').unwrap_or(&trimmed).to_string();

@@ -70,6 +70,20 @@ pub fn parse_program(
     })
 }
 
+/// Whether `before` (the text up to a parse error) ends inside the braces of
+/// a `trait`, whose body holds only signatures.
+fn in_trait_body(before: &str) -> bool {
+    let Some(start) = before
+        .rmatch_indices("trait ")
+        .map(|(i, _)| i)
+        .find(|&i| i == 0 || !before.as_bytes()[i - 1].is_ascii_alphanumeric())
+    else {
+        return false;
+    };
+    let body = &before[start..];
+    body.matches('{').count() == 1 && !body.contains('}')
+}
+
 fn parse_program_unbounded(
     source_id: SourceId,
     input: &str,
@@ -83,6 +97,9 @@ fn parse_program_unbounded(
                 Some(c) if !c.is_ascii() => format!(
                     "unexpected `{c}`: outside strings and comments, Flux code is ASCII only"
                 ),
+                _ if in_trait_body(&input[..span.start]) => "a trait method is only a \
+                    signature and ends with `;`, as in `fn area(self) -> Float;`"
+                    .into(),
                 // The span already carries the location; pest's `Display` would
                 // render a second snippet inside the diagnostic.
                 _ => err.variant.message().into_owned(),

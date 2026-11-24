@@ -47,10 +47,6 @@ pub(super) fn check_binding(
     source: SourceId,
     diagnostics: &mut DiagnosticBag,
 ) {
-    if matches!(binding.kind, BindingKind::Derived) {
-        check_derived_expr(ctx, &binding.value, names, diagnostics);
-    }
-
     let expected_inner = types
         .get(&binding.name)
         .and_then(|t| t.unwrap_reactive().cloned())
@@ -77,119 +73,239 @@ pub(super) fn check_binding(
     }
 }
 
-/// Derived bindings must be pure expressions — no control-flow constructs.
-fn check_derived_expr(
+/// Derived values must be pure: no control flow (E008), no side effects
+/// (E017), and no `snap` (E008), which the value would not follow, however a
+/// function reaches them. A `const` initializer must have no side effects
+/// (E017). Runs after inference, which resolves method calls.
+pub(super) fn check_purity(
     ctx: &TypeCheckContext,
-    expr: &HirExpr,
-    names: &HashMap<SymbolId, String>,
+    program: &flux_hir::HirProgram,
     diagnostics: &mut DiagnosticBag,
 ) {
-    match expr {
-        HirExpr::Snap { span, .. } => {
-            diagnostics.push(FluxError::InvalidControlFlowInDerived {
-                construct: "snap()".into(),
-                span: span_to_miette(*span),
+    let method_calls = ctx.method_calls.borrow();
+    let purity = super::effects::analyze(program, ctx.builtin_symbols(), &method_calls);
+    for item in &program.items {
+        let flux_hir::HirItem::Binding(binding) = item else {
+            continue;
+        };
+        let derived = matches!(binding.kind, BindingKind::Derived);
+        let is_const = program
+            .names
+            .get(&binding.name)
+            .is_some_and(|n| ctx.const_bindings.contains(n));
+        if !derived && !is_const {
+            continue;
+        }
+        let mut check = PureCheck {
+            purity: &purity,
+            method_calls: &method_calls,
+            program,
+            builtins: ctx.builtin_symbols(),
+            names: &program.names,
+            aliases: HashMap::new(),
+            derived,
+            diagnostics,
+        };
+        check.expr(&binding.value, false);
+    }
+}
+
+struct PureCheck<'a> {
+    purity: &'a super::effects::Purity,
+    method_calls: &'a super::effects::MethodCalls,
+    program: &'a flux_hir::HirProgram,
+    builtins: &'a HashSet<SymbolId>,
+    names: &'a HashMap<SymbolId, String>,
+    /// The functions each local (an arm binding or an arm block's `let`) holds.
+    aliases: HashMap<SymbolId, super::effects::Held>,
+    /// A derived value, or else a `const` initializer.
+    derived: bool,
+    diagnostics: &'a mut DiagnosticBag,
+}
+
+impl PureCheck<'_> {
+    fn held(&self, expr: &HirExpr) -> super::effects::Held {
+        super::effects::held(
+            expr,
+            &self.aliases,
+            self.program,
+            self.builtins,
+            self.method_calls,
+            None,
+        )
+    }
+
+    /// `runs`: whether a function that is `expr`'s value is called here (as
+    /// a callee or an argument), rather than only held.
+    fn expr(&mut self, expr: &HirExpr, runs: bool) {
+        use super::effects::{returned, targets, Node};
+        match expr {
+            HirExpr::Snap { span, expr } => {
+                if self.derived {
+                    self.diagnostics
+                        .push(FluxError::InvalidControlFlowInDerived {
+                            construct: "snap()".into(),
+                            span: span_to_miette(*span),
+                            source_id: span.source,
+                        });
+                } else {
+                    self.expr(expr, runs);
+                }
+            }
+            HirExpr::Call { callee, args, span } => {
+                if let HirExpr::Ident { symbol, .. } = callee.as_ref() {
+                    if super::effects::is_constructor(*symbol, self.program, self.builtins) {
+                        for arg in args {
+                            self.expr(arg, runs);
+                        }
+                        return;
+                    }
+                }
+                let (ran, name) = match callee.as_ref() {
+                    HirExpr::Ident { symbol, .. } => (
+                        targets(*symbol, &self.aliases),
+                        self.names.get(symbol).cloned().unwrap_or_default(),
+                    ),
+                    HirExpr::Field { base, field, .. } => {
+                        match self.method_calls.get(&(None, *span)) {
+                            Some(method) => {
+                                let method = *method;
+                                self.expr(base, false);
+                                (
+                                    std::collections::HashSet::from([Node::Sym(method)]),
+                                    field.clone(),
+                                )
+                            }
+                            // Not a method: the function in field `field`.
+                            None => {
+                                self.expr(callee, true);
+                                (Default::default(), String::new())
+                            }
+                        }
+                    }
+                    other => {
+                        self.expr(other, true);
+                        (Default::default(), String::new())
+                    }
+                };
+                let mut nodes = ran.clone();
+                if runs {
+                    nodes.extend(returned(&ran));
+                }
+                self.report(&nodes, name, *span);
+                // A function passed along may be called by whatever receives it.
+                for arg in args {
+                    self.expr(arg, true);
+                }
+            }
+            HirExpr::Ident { symbol, span } => {
+                if runs {
+                    let name = self.names.get(symbol).cloned().unwrap_or_default();
+                    self.report(&targets(*symbol, &self.aliases), name, *span);
+                }
+            }
+            HirExpr::Closure {
+                fn_symbol, span, ..
+            } => {
+                if runs {
+                    let name = self.names.get(fn_symbol).cloned().unwrap_or_default();
+                    self.report(
+                        &std::collections::HashSet::from([Node::Sym(*fn_symbol)]),
+                        name,
+                        *span,
+                    );
+                }
+            }
+            HirExpr::Unary { expr, .. }
+            | HirExpr::Cast { expr, .. }
+            | HirExpr::ToText { expr, .. } => self.expr(expr, false),
+            HirExpr::Try { expr, .. } | HirExpr::Field { base: expr, .. } => self.expr(expr, runs),
+            HirExpr::Binary { left, right, .. } => {
+                self.expr(left, false);
+                self.expr(right, false);
+            }
+            HirExpr::Index { base, index, .. } => {
+                self.expr(base, runs);
+                self.expr(index, false);
+            }
+            HirExpr::If {
+                cond,
+                then_expr,
+                else_expr,
+                ..
+            } => {
+                self.expr(cond, false);
+                self.expr(then_expr, runs);
+                self.expr(else_expr, runs);
+            }
+            HirExpr::Array { elems, .. } => elems.iter().for_each(|e| self.expr(e, runs)),
+            HirExpr::StructLit { fields, .. } => {
+                fields.iter().for_each(|(_, e)| self.expr(e, runs))
+            }
+            HirExpr::EnumVariant { payload, .. } => {
+                if let Some(value) = payload {
+                    self.expr(value, runs);
+                }
+            }
+            HirExpr::Match {
+                scrutinee, arms, ..
+            } => {
+                self.expr(scrutinee, false);
+                let parts = self.held(scrutinee);
+                for arm in arms {
+                    for binding in &arm.bindings {
+                        self.aliases.insert(*binding, parts.clone());
+                    }
+                    if let Some(guard) = &arm.guard {
+                        self.expr(guard, false);
+                    }
+                    for stmt in &arm.body.stmts {
+                        match stmt {
+                            HirStmt::Let(local) => {
+                                self.expr(&local.value, false);
+                                let held = self.held(&local.value);
+                                self.aliases.insert(local.name, held);
+                            }
+                            HirStmt::Assign(assign) => {
+                                self.expr(&assign.value, false);
+                                let held = self.held(&assign.value);
+                                self.aliases.entry(assign.name).or_default().extend(held);
+                            }
+                            HirStmt::Expr(e) => self.expr(e, false),
+                            _ => {}
+                        }
+                    }
+                    self.expr(&arm.expr, runs);
+                }
+            }
+            HirExpr::Int { .. }
+            | HirExpr::Float { .. }
+            | HirExpr::Bool { .. }
+            | HirExpr::String { .. } => {}
+        }
+    }
+
+    /// Reports running `nodes` here if one has side effects or, in a derived
+    /// value, reads a value with `snap`.
+    fn report(&mut self, nodes: &super::effects::Held, name: String, span: flux_diagnostics::Span) {
+        if nodes.iter().any(|n| self.purity.effectful.contains(n)) {
+            self.diagnostics.push(FluxError::SideEffectInDerived {
+                name,
+                place: if self.derived {
+                    "a derived expression".into()
+                } else {
+                    "a `const` initializer".into()
+                },
+                span: span_to_miette(span),
                 source_id: span.source,
             });
-        }
-        HirExpr::Call { callee, args, span } => {
-            if let HirExpr::Ident { symbol, .. } = callee.as_ref() {
-                let direct_builtin = ctx.is_builtin_symbol(*symbol)
-                    && names.get(symbol).is_some_and(|name| {
-                        flux_std::SIDE_EFFECT_BUILTINS.contains(&name.as_str())
-                    });
-                if direct_builtin || ctx.is_effectful_function(*symbol) {
-                    diagnostics.push(FluxError::SideEffectInDerived {
-                        name: names.get(symbol).cloned().unwrap_or_default(),
-                        span: span_to_miette(*span),
-                        source_id: span.source,
-                    });
-                }
-            }
-            for arg in args {
-                check_derived_expr(ctx, arg, names, diagnostics);
-            }
-            if !matches!(callee.as_ref(), HirExpr::Ident { .. }) {
-                check_derived_expr(ctx, callee, names, diagnostics);
-            }
-        }
-        // A function with effects passed as a value would run them here too.
-        HirExpr::Ident { symbol, span } => {
-            if ctx.is_effectful_function(*symbol) {
-                diagnostics.push(FluxError::SideEffectInDerived {
-                    name: names.get(symbol).cloned().unwrap_or_default(),
-                    span: span_to_miette(*span),
+        } else if self.derived && nodes.iter().any(|n| self.purity.snapshotting.contains(n)) {
+            self.diagnostics
+                .push(FluxError::InvalidControlFlowInDerived {
+                    construct: format!("snap()` read inside `{name}"),
+                    span: span_to_miette(span),
                     source_id: span.source,
                 });
-            }
-        }
-        HirExpr::Unary { expr, .. } => check_derived_expr(ctx, expr, names, diagnostics),
-        HirExpr::Binary { left, right, .. }
-        | HirExpr::Index {
-            base: left,
-            index: right,
-            ..
-        } => {
-            check_derived_expr(ctx, left, names, diagnostics);
-            check_derived_expr(ctx, right, names, diagnostics);
-        }
-        HirExpr::If {
-            cond,
-            then_expr,
-            else_expr,
-            ..
-        } => {
-            check_derived_expr(ctx, cond, names, diagnostics);
-            check_derived_expr(ctx, then_expr, names, diagnostics);
-            check_derived_expr(ctx, else_expr, names, diagnostics);
-        }
-        HirExpr::Array { elems, .. } => {
-            for elem in elems {
-                check_derived_expr(ctx, elem, names, diagnostics);
-            }
-        }
-        HirExpr::Int { .. }
-        | HirExpr::Float { .. }
-        | HirExpr::Bool { .. }
-        | HirExpr::String { .. } => {}
-        HirExpr::EnumVariant { payload, .. } => {
-            if let Some(value) = payload {
-                check_derived_expr(ctx, value, names, diagnostics);
-            }
-        }
-        HirExpr::StructLit { fields, .. } => {
-            for (_, e) in fields {
-                check_derived_expr(ctx, e, names, diagnostics);
-            }
-        }
-        HirExpr::Match {
-            scrutinee, arms, ..
-        } => {
-            check_derived_expr(ctx, scrutinee, names, diagnostics);
-            for arm in arms {
-                if let Some(guard) = &arm.guard {
-                    check_derived_expr(ctx, guard, names, diagnostics);
-                }
-                for e in arm.body_exprs() {
-                    check_derived_expr(ctx, e, names, diagnostics);
-                }
-                check_derived_expr(ctx, &arm.expr, names, diagnostics);
-            }
-        }
-        HirExpr::Field { base, .. } => check_derived_expr(ctx, base, names, diagnostics),
-        HirExpr::Cast { expr, .. } | HirExpr::ToText { expr, .. } | HirExpr::Try { expr, .. } => {
-            check_derived_expr(ctx, expr, names, diagnostics)
-        }
-        HirExpr::Closure {
-            fn_symbol, span, ..
-        } => {
-            if ctx.is_effectful_function(*fn_symbol) {
-                diagnostics.push(FluxError::SideEffectInDerived {
-                    name: names.get(fn_symbol).cloned().unwrap_or_default(),
-                    span: span_to_miette(*span),
-                    source_id: span.source,
-                });
-            }
         }
     }
 }

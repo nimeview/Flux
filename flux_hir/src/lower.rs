@@ -393,6 +393,11 @@ fn lower_program_inner(
     // methods.
     let concat = symbols.hidden_builtin("\0concat", flux_diagnostics::Span::DUMMY);
     symbols.builtin_ids.insert("\0concat".to_string(), concat);
+    // `op.f(x)` calling the function in field `f` becomes `(op.f)(x)`.
+    let grouped = symbols.hidden_builtin(crate::GROUPED, flux_diagnostics::Span::DUMMY);
+    symbols
+        .builtin_ids
+        .insert(crate::GROUPED.to_string(), grouped);
     for name in flux_std::methods::CHANGING_METHODS {
         symbols.mut_method_names.insert(name.to_string());
     }

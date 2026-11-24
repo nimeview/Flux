@@ -545,18 +545,9 @@ impl Executor {
                             return RuntimeValue::Unit;
                         }
                     };
-                    let callback = match args.get(2).and_then(Callback::of) {
-                        Some(callback) => callback,
-                        None => {
-                            let init = match args.get(1) {
-                                Some(v) => v.as_int().unwrap_or(0),
-                                _ => 0,
-                            };
-                            let sum = arr
-                                .iter()
-                                .fold(init, |acc, v| acc + v.as_int().unwrap_or(0));
-                            return RuntimeValue::int_i64(sum);
-                        }
+                    let Some(callback) = args.get(2).and_then(Callback::of) else {
+                        debug_assert_vm(false, "reduce: expected a function as third argument");
+                        return RuntimeValue::Unit;
                     };
                     let init = args.get(1).cloned().unwrap_or(RuntimeValue::Unit);
                     let mut acc = init;

@@ -52,7 +52,7 @@ pub(super) fn infer_builtin_call(
     let arity = match name {
         "range" => Some((0, 3)),
         "filter" => Some((1, 2)),
-        "reduce" => Some((2, 3)),
+        "reduce" => Some((3, 3)),
         "print" | "println" | "eprint" | "eprintln" => Some((0, 1)),
         "assert" => Some((1, 1)),
         "assert_eq" | "min" | "max" | "pow" | "str_split" | "str_contains" | "str_starts_with"

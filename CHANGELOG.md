@@ -4,6 +4,22 @@ Notable changes to Flux. The versioning policy is in [`RELEASE.md`](RELEASE.md).
 
 ## [Unreleased]
 
+### Changes that can alter programs
+
+- `reduce` takes exactly three arguments, `reduce(xs, init, f)`. An undocumented two-argument form summed the elements as integers, so `reduce([1.5, 2.5], 0.0)` gave `3` and a large sum overflowed silently. Migration: pass the function, `xs.reduce(0, |a, x| a + x)`.
+- A library function that has no single function type, such as `sqrt`, can no longer be used as a value: `let f = sqrt` is an error, as `f()` used to return `()`. Migration: wrap it, `|x| sqrt(x)`.
+- A derived value may not reach a side effect through a function passed as a value (`xs.map(println)`), a method, or a binding or tuple holding a function, including one assigned later, nor read a value with `snap` through a function it calls (E017, E008). Such values printed during initialization or went stale. Migration: move the effect to a `watch`; make a function that reads a source a `track fn` instead of using `snap`.
+- A `const` initializer may not have side effects such as reading a file (E017). It is computed once when the program starts. Migration: read the file in `main` or an `act fn`.
+- `read_line()` returns `Err("end of input")` when there are no more lines; it returned `Ok("")`, the same as an empty line.
+- `flux test` fails a test that returns a value other than nothing, `true`, or `false`; it used to pass it.
+
+### Fixed
+
+- `op.f(x)`, the older way to call the function in field `f`, could run a method `f` of another type when exactly one type had one. It now calls the field's function, like `(op.f)(x)`.
+- Go to definition on a local that shadows a module item now goes to the local.
+- A trait method written without its closing `;` reports that, instead of listing types.
+- SPEC: an integer mixed with a `Float32` becomes `Float32` (the implementation's behavior); SPEC said `Float64`. The book's reactive limits now describe how a failing batch behaves.
+
 ## [0.2.0] - 2026-11-24
 
 ### Changes that can alter programs

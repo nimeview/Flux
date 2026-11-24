@@ -321,5 +321,5 @@ chosen=20
 ## Limits
 
 - `watch`, `on`, and top-level `if` must be in the root module of a program.
-- A failure while recomputing stops the event: later handlers do not start.
+- A failure while settling a batch stops it, and no watch runs. The event's handlers have all run by then, since a batch settles after them.
 - `emit` chains count toward the 10,000 call depth limit.

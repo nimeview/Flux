@@ -41,6 +41,7 @@ fn test_div() -> Int {
   let z = 0
   1 / z
 }
+fn test_number() -> Int { 42 }
 fn main() -> Int { 9 }
 ";
 
@@ -74,7 +75,8 @@ fn reports_each_test_and_fails_the_run_on_any_failure() {
             "test src/calc_test.fl::test_false ... FAILED: returned false",
             "test src/calc_test.fl::test_fail ... FAILED: runtime error: assertion failed: 4 != 5 in `test_fail`",
             "test src/calc_test.fl::test_div ... FAILED: runtime error: integer division by zero in `test_div`",
-            "test result: FAILED. 2 passed; 3 failed",
+            "test src/calc_test.fl::test_number ... FAILED: returned 42; a test returns nothing, `true`, or `false`",
+            "test result: FAILED. 2 passed; 4 failed",
         ] {
             assert!(stdout.lines().any(|l| l == line), "{engine}: missing `{line}` in\n{stdout}");
         }

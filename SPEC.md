@@ -51,7 +51,7 @@ The VM is the reference; the JIT must produce the same value or error, or fall b
 | unary `-` | `-MIN` → `integer overflow` | IEEE 754 |
 | `== < …` | Exact (no conversion through `Float`) | IEEE 754 (`NaN != NaN`) |
 
-- Mixed `Int`/`Float` arithmetic and comparison promote the integer to `Float64`. Operators on two integers keep the integer type, so `Int / Int` is `Int`: division by zero is a runtime error rather than a value of another type.
+- Mixed integer and float arithmetic and comparison convert the integer to the float operand's type: `Float32` with a `Float32` operand (which may round a large integer: `16777217 + 0.0f32` is `16777216.0`), and `Float64` otherwise. Operators on two integers keep the integer type, so `Int / Int` is `Int`: division by zero is a runtime error rather than a value of another type.
 - `<`, `<=`, `>`, `>=` also order two strings, by Unicode code point: `"a" < "b"`, and `"Z" < "a"`. A string and a number cannot be compared.
 - Casts are checked: an integer out of the target range, a negative value cast to an unsigned type, or a `NaN`/infinite/out-of-range float cast to an integer is the runtime error `numeric cast out of range`. Float → integer casts truncate toward zero.
 - A runtime error stops the current evaluation and is reported as `runtime error: <message> in <context>`, where the context names the binding, `watch`, or `on` handler, followed by what was running, innermost first: `  at <name> (<path>:<line>:<column>)`. The location is the failing statement in that frame, or the declaration of a derived binding; a statement directly in a `match` arm reports the `match`, and a module-level `if` has no location. A trace longer than 12 frames shows its 10 innermost and 2 outermost. Both engines report the same text: an error in compiled code replays on the VM, and the rest of the run stays there. Statements after the failing one do not run, and when settling a batch fails, no watch runs. If the error happens during module initialization, `flux run` exits non-zero. Out-of-range integer *literals* are rejected at parse time.
@@ -136,7 +136,7 @@ Each `.fl` file is a module with its own namespace. Inside a module, all of its 
 
 **Statement boundaries.** A newline does not end an expression that can continue: a binary operator at the end of a line, or a line starting with `+`, continues it. A line that starts with a binary `-` is a compile error rather than a silent subtraction from the line above (`f()` followed by a line `-1` used to mean `f() - 1`). To subtract, end the previous line with `-`; for a negative value on its own line, write `0 - 1` or bind it with `let`. Unary minus elsewhere (`let d = -a`, `2 * -3`) is unaffected.
 
-**Derived expressions** (right-hand side of derived bindings) must be pure: no `snap()`, loops, control flow (**E008**), or side-effect builtins such as `print` / I/O (**E017**), including effects reached through user function calls. `snap()` is available in ordinary `fn` bodies for explicit snapshot reads.
+**Derived expressions** (right-hand side of derived bindings) must be pure: no `snap()`, loops, control flow (**E008**), or side-effect builtins such as `print` / I/O (**E017**), including those reached through a function or method it calls, a function it passes to a call, or a function it calls through something holding it: a binding (which holds what its initializer and every assignment give it), a field, a tuple, a local, a closure's captured local, an event's value received by a handler, or a call's result (which holds what the function returns). A struct or tuple counts all its parts. Only holding a function is not running it, so `const out = println` is allowed. A function that reads a value with `snap()`, directly or through a call, cannot run there either (**E008**): the derived value would not follow that value. `snap()` is available in ordinary `fn` bodies for explicit snapshot reads.
 
 ## 5. Expressions
 
@@ -193,7 +193,7 @@ A **`mut self` method** changes the value it is called on and returns nothing: `
 
 ### Const bindings
 
-`const N = 42` at module level declares an immutable source binding whose value is fixed at compile time.
+`const N = 42` at module level declares an immutable binding, computed once when the program starts and never changed. Its initializer may call functions, but nothing with a side effect: printing, reading input or files, or a function that does (**E017**). Reading a `const` is not a reactive read, so plain functions may use it.
 
 ### Indexing
 
@@ -373,7 +373,7 @@ Values of library types have methods, which need no import: `text.split(",")` is
 | `parse_float` | `fn(String) -> Result[Float, String]` | Decimal or exponent notation (`-2.5`, `1e3`); `inf`/`NaN` and non-finite results are `Err`; no trimming |
 | `eprint` / `eprintln` | `fn(String?) -> Unit` | Like `print`/`println`, but to stderr |
 | `args` | `fn() -> [String]` | Program arguments given after `--` (`flux run app.fl -- a b`); empty otherwise |
-| `read_line` | `fn() -> Result[String, String]` | One line from stdin (no trailing newline) |
+| `read_line` | `fn() -> Result[String, String]` | One line from stdin (no trailing newline); `Err("end of input")` when there are no more lines |
 | `read_file` | `fn(String) -> Result[String, String]` | Read UTF-8 file contents |
 | `write_file` | `fn(String, String) -> Result[Unit, String]` | Write UTF-8 (create/truncate) |
 | `append_file` | `fn(String, String) -> Result[Unit, String]` | Append UTF-8 to file |
@@ -425,7 +425,7 @@ These limits keep extreme programs a language error rather than a native stack o
 | E029 | Warning: watches that wake each other, or one that wakes itself, in a cycle |
 | E030 | Warning: a collection function's result is not used (`push(xs, 3)` alone) |
 | E016 | `let` without `mut` cannot be reassigned (use `let mut`) |
-| E017 | Side effect (`print`, I/O) in derived expression |
+| E017 | Side effect (`print`, I/O) in a derived expression or a `const` initializer |
 | E018 | Runtime error (overflow, division by zero, failed assertion, …) |
 | E019 | No method with that name for the receiver's type |
 | E020 | `impl` does not match its trait (unknown trait, missing, extra, or mismatched method) |
@@ -454,7 +454,7 @@ A UTF-8 byte-order mark at the start of a file is ignored, like whitespace.
 | `flux lsp-server` | Stdio LSP: diagnostics, hover, completion, go-to-def, format, document symbols, rename |
 | `flux wasm file.fl` | Experimental stub: always fails, writes nothing |
 
-**`flux test`.** Every `.fl` file under the project root (the nearest `flux.toml`, or the current directory) that defines `fn test_*()` is compiled as its own program. Hidden directories and `target/` are skipped. Each test function takes no parameters and runs in a fresh executor after module initialization; the file's `main` is not run. A test passes if it returns `Unit` or `true`. It fails if it returns `false`, raises any runtime error (including a failed `assert(cond)` or `assert_eq(a, b)`, which report `assertion failed[: a != b]`), or if its file does not compile. Each test is reported as `test <file>::<name> ... ok | FAILED: <reason>`, then a `test result` summary line; the exit status is 1 if anything failed. `filter` keeps tests whose `file::name` contains it. With no tests, it prints `no tests found` and exits 0.
+**`flux test`.** Every `.fl` file under the project root (the nearest `flux.toml`, or the current directory) that defines `fn test_*()` is compiled as its own program. Hidden directories and `target/` are skipped. Each test function takes no parameters and runs in a fresh executor after module initialization; the file's `main` is not run. A test passes if it returns `Unit` or `true`. It fails if it returns `false` or any other value, raises any runtime error (including a failed `assert(cond)` or `assert_eq(a, b)`, which report `assertion failed[: a != b]`), or if its file does not compile. Each test is reported as `test <file>::<name> ... ok | FAILED: <reason>`, then a `test result` summary line; the exit status is 1 if anything failed. `filter` keeps tests whose `file::name` contains it. With no tests, it prints `no tests found` and exits 0.
 
 ## 9. Package manifest (`flux.toml`)
 

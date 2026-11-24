@@ -5,7 +5,7 @@ let items = [1, 2, 3, 0, 5]
 let doubled = push(items, 7)
 let popped = pop(doubled)
 let filtered = filter(items)
-let total = reduce(items, 0)
+let total = reduce(items, 0, |a, x| a + x)
 
 let hello = "  hello world  "
 let trimmed = str_trim(hello)
