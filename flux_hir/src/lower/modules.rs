@@ -35,8 +35,8 @@ fn item_span(item: &Item) -> flux_diagnostics::Span {
 }
 
 /// Pass 1 for imported modules: declare every item of every non-root module.
-/// Values and functions get module-unique names (private ones too); type
-/// names stay program-global. Runs before any root name exists.
+/// Values and functions get module-unique names (private ones too), and
+/// types already have theirs (`type_scope`). Runs before any root name exists.
 pub(super) fn declare_module_items(
     linked: &LinkedProgram,
     symbols: &mut SymbolTable,
@@ -64,11 +64,11 @@ pub(super) fn declare_module_items(
                     if let Some(err) = super::declare_item(item, symbols) {
                         push_duplicate(diagnostics, item, err);
                     }
+                    // Which bare variants a module can use is set per module
+                    // when it is lowered (`type_scope::Scoped::variants`);
+                    // `Enum::Variant` works through these sets.
                     if let Item::Enum(e) = item {
                         for v in &e.variants {
-                            symbols
-                                .enum_variants
-                                .insert(v.name.name.clone(), e.name.name.clone());
                             symbols
                                 .enum_variant_sets
                                 .entry(e.name.name.clone())
@@ -142,6 +142,7 @@ pub(super) fn bind_root_imports(linked: &LinkedProgram, symbols: &mut SymbolTabl
 /// imports (each module also has its own `alias.name` view).
 pub(super) fn lower_module_items(
     linked: &LinkedProgram,
+    variants: &[std::collections::HashMap<String, String>],
     symbols: &mut SymbolTable,
     diagnostics: &mut DiagnosticBag,
     reassigned_sources: &std::collections::HashSet<String>,
@@ -153,6 +154,10 @@ pub(super) fn lower_module_items(
         }
         let saved_aliases = std::mem::take(&mut symbols.module_aliases);
         let saved_qualified = std::mem::take(&mut symbols.qualified_symbols);
+        let saved_variants = std::mem::replace(
+            &mut symbols.enum_variants,
+            variants.get(index).cloned().unwrap_or_default(),
+        );
         symbols.push(ScopeKind::Module);
 
         for (import, target) in module.imports.iter().zip(&module.import_targets) {
@@ -213,6 +218,7 @@ pub(super) fn lower_module_items(
         symbols.pop();
         symbols.module_aliases = saved_aliases;
         symbols.qualified_symbols = saved_qualified;
+        symbols.enum_variants = saved_variants;
     }
     items
 }

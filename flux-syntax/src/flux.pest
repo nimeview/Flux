@@ -64,7 +64,7 @@ trait_method = { "fn" ~ ident ~ fn_sig ~ ";" }
 
 // `impl Trait for Type { }`, or `impl Type { }` for the type's own methods
 // and type functions.
-impl_decl = { "impl" ~ (ident ~ kw_for)? ~ type_name ~ impl_body }
+impl_decl = { "impl" ~ ((path_ident | ident) ~ kw_for)? ~ type_name ~ impl_body }
 kw_for = @{ "for" ~ kw_end }
 impl_body = { "{" ~ impl_method* ~ "}" }
 impl_method = { "fn" ~ ident ~ fn_sig ~ block }
@@ -232,11 +232,11 @@ type_name = { function_type | tuple_type | generic_type | result_type | option_t
 tuple_type = { "(" ~ type_name ~ ("," ~ type_name)+ ~ ","? ~ ")" }
 function_type = { "fn" ~ "(" ~ (type_name ~ ("," ~ type_name)* ~ ","?)? ~ ")" ~ ("->" ~ function_ret)? }
 function_ret = { type_name }
-generic_type = { ident ~ "[" ~ type_name ~ ("," ~ type_name)* ~ ","? ~ "]" }
+generic_type = { (path_ident | ident) ~ "[" ~ type_name ~ ("," ~ type_name)* ~ ","? ~ "]" }
 option_type = { "Option" ~ "[" ~ type_name ~ ","? ~ "]" }
 result_type = { "Result" ~ "[" ~ type_name ~ "," ~ type_name ~ ","? ~ "]" }
 array_type = { "[" ~ type_name ~ "]" }
-simple_type = { ident }
+simple_type = { path_ident | ident }
 
 ident = @{ (ASCII_ALPHA | "_") ~ (ASCII_ALPHANUMERIC | "_")* }
 // `math::sqrt`, `Point::new`, `Shape::Circle`: a name known at compile time,

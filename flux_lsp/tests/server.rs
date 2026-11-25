@@ -1286,3 +1286,74 @@ fn definition_of_a_shadowing_local_is_the_local() {
     assert_eq!(module["range"]["start"]["line"], 0, "{module}");
     shutdown(&client, handle);
 }
+
+#[test]
+fn an_imported_type_is_found_in_its_own_module_not_a_same_named_one() {
+    // `util` and `other` both declare `Point`; the root imports `util`'s.
+    let (dir, main, util) = import_project("pub struct Point {\n    x: Int\n}\n");
+    let root = dir.path().canonicalize().unwrap();
+    std::fs::write(
+        root.join("other.fl"),
+        "\n\npub struct Point {\n    y: Int\n}\npub fn n() -> Int {\n    1\n}\n",
+    )
+    .unwrap();
+    let text = "import util { Point }\nimport other { n }\nstruct Holder {\n    p: Point\n}\nfn main() {}\n";
+    std::fs::write(root.join("main.fl"), text).unwrap();
+    let (client, handle) = start_server();
+    did_open_uri(&client, main.clone(), text);
+    let _ = recv_diagnostics(&client);
+    let position = |id: i32, method: &str| {
+        ask(
+            &client,
+            id,
+            method,
+            serde_json::json!({
+                "textDocument": { "uri": main.clone() },
+                "position": { "line": 3, "character": 8 },
+            }),
+        )
+    };
+    let location = position(2, "textDocument/definition");
+    assert_eq!(location["uri"], util.to_string(), "{location}");
+    let completion = ask(
+        &client,
+        3,
+        "textDocument/completion",
+        serde_json::json!({
+            "textDocument": { "uri": main.clone() },
+            "position": { "line": 3, "character": 7 },
+        }),
+    );
+    assert!(completion.to_string().contains("\"Point\""), "{completion}");
+    shutdown(&client, handle);
+}
+
+#[test]
+fn a_local_named_like_an_imported_type_and_a_qualified_type_resolve_right() {
+    let (dir, main, util) = import_project("pub struct Point {\n    x: Int\n}\n");
+    let root = dir.path().canonicalize().unwrap();
+    std::fs::write(
+        root.join("other.fl"),
+        "\n\npub struct Point {\n    y: Int\n}\npub fn n() -> Int {\n    1\n}\n",
+    )
+    .unwrap();
+    let other = Url::from_file_path(root.join("other.fl")).unwrap();
+    let text = "import util { Point }\nimport other\nstruct Holder {\n    p: other::Point\n}\nfn f(Point: Int) -> Int {\n    Point\n}\nfn main() {}\n";
+    std::fs::write(root.join("main.fl"), text).unwrap();
+    let (client, handle) = start_server();
+    did_open_uri(&client, main.clone(), text);
+    let _ = recv_diagnostics(&client);
+    let at_main = |line: u32, character: u32| {
+        serde_json::json!({
+            "textDocument": { "uri": main.clone() },
+            "position": { "line": line, "character": character },
+        })
+    };
+    let location = ask(&client, 2, "textDocument/definition", at_main(3, 15));
+    assert_eq!(location["uri"], other.to_string(), "{location}");
+    assert_eq!(location["range"]["start"]["line"], 2, "{location}");
+    let hover = ask(&client, 3, "textDocument/hover", at_main(6, 5)).to_string();
+    assert!(hover.contains("Point: Int64"), "{hover}");
+    let _ = util;
+    shutdown(&client, handle);
+}

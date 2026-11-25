@@ -11,7 +11,7 @@ pub use arith::{
     values_equal, ArithError, NumOp,
 };
 pub use convert::{is_tag_representable, tagged_to_value, value_to_tagged};
-pub use display::render;
+pub use display::{render, type_display_name};
 pub use heap::{
     array_finish, array_get, array_len, array_push, clear_for_tests, concat_strings, enum_payload,
     enum_variant_is, get_array, get_enum, get_string, heap_scope, heap_stats, int_range,

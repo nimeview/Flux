@@ -717,6 +717,7 @@ dependencies = [
  "flux_std",
  "flux_syntax",
  "flux_types",
+ "flux_value",
  "lsp-server",
  "lsp-types",
  "miette",
@@ -780,6 +781,7 @@ dependencies = [
  "flux_hir",
  "flux_std",
  "flux_syntax",
+ "flux_value",
  "miette",
 ]
 

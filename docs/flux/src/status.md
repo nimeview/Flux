@@ -28,7 +28,7 @@ These may change or disappear, with no compatibility promise:
 - Windows support.
 - Rerunning a cycle of watches until values stop changing.
 - Functions that accept "any type with this trait", generic structs, and generic `impl` blocks.
-- Private fields, and type names scoped to a module.
+- Private fields.
 - Catching a runtime error from inside the language.
 
 ## Known limits
@@ -36,7 +36,6 @@ These may change or disappear, with no compatibility promise:
 - In a trace, a statement written directly in a `match` arm reports the line of the `match`. A top-level `if` has no location.
 - When compiled code fails, it is run again on the VM to report the error, so a failure after long native work can take a while.
 - Strings order by Unicode code point, not alphabetically.
-- Type names are global to a program.
 
 ## Versions
 

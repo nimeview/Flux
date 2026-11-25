@@ -24,7 +24,7 @@ pub fn trait_dispatch_tag(ty: &Type) -> String {
         Type::Float | Type::Float64 => "Float".into(),
         // Impls are indexed by the type's name, not its structural display.
         Type::Struct { name, .. } | Type::Enum { name, .. } => name,
-        other => other.display(),
+        other => other.key(),
     }
 }
 

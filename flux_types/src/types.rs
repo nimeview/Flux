@@ -86,7 +86,20 @@ impl Type {
         matches!(self, Type::Float | Type::Float32 | Type::Float64)
     }
 
+    /// The type as a person reads it: a type of an imported module by its
+    /// declared name (`Point`).
     pub fn display(&self) -> String {
+        self.render(false)
+    }
+
+    /// The type's identity, for keys: like [`Self::display`], but a type of
+    /// an imported module keeps its internal name (`__mod_1__Point`), so two
+    /// modules' `Point` types differ.
+    pub fn key(&self) -> String {
+        self.render(true)
+    }
+
+    fn render(&self, internal: bool) -> String {
         match self {
             Type::Int => "Int".into(),
             Type::Int8 => "Int8".into(),
@@ -105,28 +118,36 @@ impl Type {
             Type::String => "String".into(),
             Type::Unit => "Unit".into(),
             Type::Event(values) => {
-                let values: Vec<String> = values.iter().map(Type::display).collect();
+                let values: Vec<String> = values.iter().map(|v| v.render(internal)).collect();
                 format!("Event<{}>", values.join(", "))
             }
-            Type::Cell(inner) => format!("Cell<{}>", inner.display()),
-            Type::Read(inner) => format!("Read<{}>", inner.display()),
-            Type::Array(inner) => format!("[{}]", inner.display()),
-            Type::Option(inner) => format!("Option<{}>", inner.display()),
-            Type::Map { key, value } => format!("Map<{}, {}>", key.display(), value.display()),
+            Type::Cell(inner) => format!("Cell<{}>", inner.render(internal)),
+            Type::Read(inner) => format!("Read<{}>", inner.render(internal)),
+            Type::Array(inner) => format!("[{}]", inner.render(internal)),
+            Type::Option(inner) => format!("Option<{}>", inner.render(internal)),
+            Type::Map { key, value } => {
+                format!("Map<{}, {}>", key.render(internal), value.render(internal))
+            }
             Type::Tuple(elems) => {
-                let elems: Vec<String> = elems.iter().map(Type::display).collect();
+                let elems: Vec<String> = elems.iter().map(|e| e.render(internal)).collect();
                 format!("({})", elems.join(", "))
             }
             Type::Result { ok, err } => {
-                format!("Result<{}, {}>", ok.display(), err.display())
+                format!("Result<{}, {}>", ok.render(internal), err.render(internal))
             }
             // A user type is known by its name, which also keeps recursive
             // types readable. Only a struct-variant payload has no name.
-            Type::Struct { name, .. } | Type::Enum { name, .. } if !name.is_empty() => name.clone(),
+            Type::Struct { name, .. } | Type::Enum { name, .. } if !name.is_empty() => {
+                if internal {
+                    name.clone()
+                } else {
+                    flux_value::type_display_name(name).to_string()
+                }
+            }
             Type::Struct { fields, .. } => {
                 let fs = fields
                     .iter()
-                    .map(|(n, t)| format!("{n}: {}", t.display()))
+                    .map(|(n, t)| format!("{n}: {}", t.render(internal)))
                     .collect::<Vec<_>>()
                     .join(", ");
                 format!("{{ {fs} }}")
@@ -136,10 +157,10 @@ impl Type {
             Type::Func { params, ret } => {
                 let ps = params
                     .iter()
-                    .map(|p| p.display())
+                    .map(|p| p.render(internal))
                     .collect::<Vec<_>>()
                     .join(", ");
-                format!("fn({ps}) -> {}", ret.display())
+                format!("fn({ps}) -> {}", ret.render(internal))
             }
             Type::Error => "<error>".into(),
             Type::Empty => "_".into(),

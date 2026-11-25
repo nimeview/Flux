@@ -52,7 +52,7 @@ fn write_value(out: &mut String, value: &Value) {
         Value::UserStruct(s) => deep_recursion(|| {
             let mut names: Vec<&String> = s.fields.keys().collect();
             names.sort();
-            out.push_str(&s.type_name);
+            out.push_str(type_display_name(&s.type_name));
             out.push_str(" { ");
             for (i, name) in names.iter().enumerate() {
                 if i > 0 {
@@ -65,7 +65,7 @@ fn write_value(out: &mut String, value: &Value) {
             out.push_str(" }");
         }),
         Value::UserEnum(e) => deep_recursion(|| {
-            out.push_str(&e.type_name);
+            out.push_str(type_display_name(&e.type_name));
             out.push_str("::");
             out.push_str(&e.variant);
             // A struct variant: `Shape::Rect { h: 3, w: 2 }`.
@@ -128,3 +128,12 @@ pub const TUPLE_TYPE: &str = "\0tuple";
 /// The struct name a struct variant's fields carry (the compiler's
 /// `flux_hir::VARIANT_FIELDS`).
 pub const VARIANT_FIELDS_TYPE: &str = "\0fields";
+
+/// The name a type is declared with: a type of an imported module is kept
+/// as `__mod_<index>__<Name>`, which prints as `Name`.
+pub fn type_display_name(name: &str) -> &str {
+    name.strip_prefix("__mod_")
+        .and_then(|rest| rest.split_once("__"))
+        .filter(|(index, _)| !index.is_empty() && index.bytes().all(|b| b.is_ascii_digit()))
+        .map_or(name, |(_, declared)| declared)
+}

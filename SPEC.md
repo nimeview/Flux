@@ -117,7 +117,8 @@ Each `.fl` file is a module with its own namespace. Inside a module, all of its 
 - **Resolution.** `import a.b` is resolved relative to the importing file's directory, or through the `[dependencies]` of the package that contains the importing file (the nearest `flux.toml` above it). A package can import its own dependencies but not its dependencies' dependencies.
 - **One instance.** A module imported along several paths (a diamond) is loaded and initialized once. Cyclic imports are an error (**E013**).
 - **Reactivity.** Importing a `pub let mut` binding gives the importer the same reactive source: assignments in the root's `on`/`watch` update it, and derived values that read it recompute.
-- **Limits.** `watch`, `on`, and top-level `if` must live in the root module (an error elsewhere). Type names (`struct`, `enum`, `trait`) are program-global for now: two modules that define the same type name are a duplicate-definition error.
+- **Types.** Type names (`struct`, `enum`, `trait`) belong to their module, like functions: two modules may each declare `Point`, and they are different types. Another module's type is used through an import, `import geo { Point }` or `import geo`, or as `geo::Point` (also in annotations such as `Option[geo::Point]`, in `impl geo::Area for Local`, and as `geo::Point::new(…)`), and only if it is `pub`; a type that is not imported is unknown (**E007**), and `geo::Hidden` for a private one is **E022**. Importing an enum makes its variants usable bare as well (`Circle(1.0)` beside `Shape::Circle(1.0)`), unless the importing file declares a variant of that name; `geo::Shape::Circle` always works. A value prints with its type's declared name (`Point { x: 1 }`), whichever module it comes from. Names starting with `__mod_` are reserved for the compiler's internal names (**E000**).
+- **Limits.** `watch`, `on`, and top-level `if` must live in the root module (an error elsewhere).
 
 ## 4. Statements
 

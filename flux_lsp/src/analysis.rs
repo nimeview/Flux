@@ -142,7 +142,12 @@ pub fn build_symbol_index(
                     if !name.starts_with("__") {
                         index.by_name.insert(name.clone(), loc);
                     } else if let Some(bare) = demangle_mod_name(name) {
-                        index.by_name.insert(bare, loc);
+                        // Another module's name: the one the root file
+                        // imports wins over a same-named one it does not.
+                        let imported = hir.root_types.get(&bare) == Some(name);
+                        if imported || !index.by_name.contains_key(&bare) {
+                            index.by_name.insert(bare, loc);
+                        }
                     }
                 }
             }
@@ -210,6 +215,11 @@ pub fn definition_at_position(
         return member_definition(analysis, contents, offset, word);
     }
 
+    // `other::Point`: that module's type, as the root file imports it.
+    if let Some(location) = qualified_type_definition(analysis, contents, offset, word) {
+        return Some(location);
+    }
+
     // The symbol the name resolves to where it stands, so that a local
     // shadowing a module item leads to the local.
     let resolved = (|| {
@@ -223,6 +233,38 @@ pub fn definition_at_position(
         location_for_span(&analysis.source_paths, symbol.span, "<buffer>")
     })();
     resolved.or_else(|| analysis.symbols.by_name.get(word).cloned())
+}
+
+/// The definition of `word` written as `alias::word` for an imported type.
+fn qualified_type_definition(
+    analysis: &DocAnalysis,
+    contents: &str,
+    offset: usize,
+    word: &str,
+) -> Option<SymbolLocation> {
+    let hir = analysis.hir.as_ref()?;
+    let offset = offset.min(contents.len());
+    let start = contents[..offset]
+        .char_indices()
+        .rev()
+        .find(|(_, c)| !(c.is_alphanumeric() || *c == '_'))
+        .map_or(0, |(i, c)| i + c.len_utf8());
+    let alias_end = contents[..start].strip_suffix("::")?;
+    let alias_start = alias_end
+        .char_indices()
+        .rev()
+        .find(|(_, c)| !(c.is_alphanumeric() || *c == '_'))
+        .map_or(0, |(i, c)| i + c.len_utf8());
+    let alias = &alias_end[alias_start..];
+    let internal = hir
+        .root_qualified_types
+        .get(&(alias.to_string(), word.to_string()))?;
+    let id = hir
+        .names
+        .iter()
+        .find(|(_, name)| *name == internal)
+        .map(|(id, _)| *id)?;
+    analysis.symbols.by_id.get(&id).cloned()
 }
 
 fn dot_member_access(contents: &str, offset: usize) -> bool {
@@ -617,7 +659,17 @@ pub fn hover_for_name(
         })
         .collect();
 
-    let mut candidates = hir.names.iter().filter(|(_, name)| name.as_str() == word);
+    // A name the program declares here; else a type the root file imports,
+    // known by its internal name.
+    let declared = hir.names.values().any(|name| name == word);
+    let word_name = match hir.root_types.get(word) {
+        Some(internal) if !declared => internal.as_str(),
+        _ => word,
+    };
+    let mut candidates = hir
+        .names
+        .iter()
+        .filter(|(_, name)| name.as_str() == word_name);
     let symbol_id = candidates
         .clone()
         .find(|(_, name)| module_level.contains(name.as_str()))

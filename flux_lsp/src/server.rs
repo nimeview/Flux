@@ -569,14 +569,22 @@ fn compute_completion(store: &mut DocumentStore, params: CompletionParams) -> Ve
         return filter_completions(items, &prefix);
     };
 
-    for (variant, owner) in &hir.enum_variants {
-        if !variant.starts_with("__") && seen.insert(variant.clone()) {
-            items.push(CompletionItem {
-                label: variant.clone(),
-                kind: Some(CompletionItemKind::ENUM_MEMBER),
-                detail: Some(owner.clone()),
-                ..Default::default()
-            });
+    // Variants of every enum, the imported modules' included.
+    for item in &hir.items {
+        let HirItem::Enum(e) = item else { continue };
+        let owner = hir
+            .names
+            .get(&e.name)
+            .map_or("", |n| flux_value::type_display_name(n));
+        for (variant, _) in &e.variants {
+            if !variant.starts_with("__") && seen.insert(variant.clone()) {
+                items.push(CompletionItem {
+                    label: variant.clone(),
+                    kind: Some(CompletionItemKind::ENUM_MEMBER),
+                    detail: Some(owner.to_string()),
+                    ..Default::default()
+                });
+            }
         }
     }
     for item in &hir.items {
@@ -591,7 +599,18 @@ fn compute_completion(store: &mut DocumentStore, params: CompletionParams) -> Ve
         let Some(name) = hir.names.get(&symbol) else {
             continue;
         };
-        if name.starts_with("__") || !seen.insert(name.clone()) {
+        // An imported module's type, by the bare name the file uses.
+        let imported = hir
+            .root_types
+            .iter()
+            .find(|(_, internal)| *internal == name)
+            .map(|(bare, _)| bare);
+        let name = match imported {
+            Some(bare) => bare,
+            None if name.starts_with("__") => continue,
+            None => name,
+        };
+        if !seen.insert(name.clone()) {
             continue;
         }
         let detail = analysis

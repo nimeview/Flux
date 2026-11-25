@@ -239,7 +239,7 @@ fn imported_reactive_binding_drives_root_derived_values() {
 }
 
 #[test]
-fn imported_struct_type_is_usable_and_type_names_are_global() {
+fn imported_struct_type_is_usable_and_type_names_are_per_module() {
     let out = run_ok(
         &[
             (
@@ -251,11 +251,12 @@ fn imported_struct_type_is_usable_and_type_names_are_global() {
         ".",
     );
     assert_eq!(out, "7\n");
-    check_fails(
+    // Two modules may each declare `Pt`; each is its own type.
+    let out = run_ok(
         &[
             (
                 "main.fl",
-                "import a { mk }\nimport b { mk2 }\nlet p = mk()\nlet q = mk2()\n",
+                "import io { println }\nimport a { mk }\nimport b { mk2 }\nfn main() -> Int {\n  println(\"{mk()} {mk2()}\")\n  0\n}\n",
             ),
             (
                 "a.fl",
@@ -263,10 +264,157 @@ fn imported_struct_type_is_usable_and_type_names_are_global() {
             ),
             (
                 "b.fl",
-                "pub struct Pt { y: Int }\npub fn mk2() -> Int { 2 }\n",
+                "pub struct Pt { y: Int }\npub fn mk2() -> Pt { Pt { y: 2 } }\n",
             ),
         ],
         ".",
-        "duplicate definition of `Pt`",
     );
+    assert_eq!(out, "Pt { x: 1 } Pt { y: 2 }\n");
+    // A type of another module needs an import, and `pub`.
+    check_fails(
+        &[
+            ("main.fl", "import a { mk }\nlet p: Pt = mk()\n"),
+            (
+                "a.fl",
+                "pub struct Pt { x: Int }\npub fn mk() -> Pt { Pt { x: 1 } }\n",
+            ),
+        ],
+        ".",
+        "unknown type `Pt`",
+    );
+    check_fails(
+        &[
+            ("main.fl", "import a\nlet p = a::Pt { x: 1 }\n"),
+            ("a.fl", "struct Pt { x: Int }\n"),
+        ],
+        ".",
+        "`Pt` in module `a` is private",
+    );
+}
+
+#[test]
+fn enums_traits_and_type_functions_of_modules_keep_their_own_names() {
+    // `shapes` and `other` both have a variant `Circle`, and the root a third:
+    // the root's own wins bare, imported ones are bare once their enum is
+    // imported, and every one is reachable qualified.
+    let out = run_ok(
+        &[
+            ("shapes.fl", "pub enum Shape {\n    Circle(Float),\n    Rect { w: Float, h: Float },\n    Dot\n}\n\npub trait Area {\n    fn area(self) -> Float;\n}\n\nimpl Area for Shape {\n    fn area(self) -> Float {\n        match self {\n            Circle(r) => 3.0 * r * r,\n            Rect { w, h } => w * h,\n            Dot => 0.0\n        }\n    }\n}\n\npub struct Point {\n    x: Int\n}\n\nimpl Point {\n    fn new(x: Int) -> Self {\n        Point { x: x }\n    }\n\n    fn twice(self) -> Int {\n        self.x * 2\n    }\n}\n\npub fn unit() -> Shape {\n    Circle(1.0)\n}\n\nstruct Hidden {\n    n: Int\n}\n"),
+            ("other.fl", "pub enum Light {\n    Circle,\n    Off\n}\n"),
+            ("main.fl", "import io { println }\nimport shapes { Shape, Point, Area, unit }\nimport other\n\nenum Local {\n    Circle,\n    Square\n}\n\nfn describe(s: Shape) -> String {\n    match s {\n        Circle(r) => \"circle {r}\",\n        Shape::Rect { w, h } => \"rect {w}x{h}\",\n        shapes::Shape::Dot => \"dot\"\n    }\n}\n\nfn main() {\n    let a = Circle\n    let b = Shape::Circle(2.0)\n    let c = Rect { w: 2.0, h: 3.0 }\n    let l = other::Light::Circle\n    println(\"{a} {b} {c} {l}\")\n    println(\"{describe(b)} {describe(c)} {describe(Dot)} {describe(unit())}\")\n    println(\"{c.area()} {Point::new(4).twice()} {shapes::Point::new(1)}\")\n    println(\"{b == Shape::Circle(2.0)} {a == Local::Circle}\")\n}\n"),
+        ],
+        ".",
+    );
+    assert_eq!(
+        out,
+        "Local::Circle Shape::Circle(2.0) Shape::Rect { h: 3.0, w: 2.0 } Light::Circle\n\
+         circle 2.0 rect 2.0x3.0 dot circle 1.0\n\
+         6.0 8 Point { x: 1 }\n\
+         true true\n"
+    );
+    // Messages name types as declared.
+    check_fails(
+        &[
+            ("shapes.fl", "pub enum Shape {\n    Circle(Float),\n    Rect { w: Float, h: Float },\n    Dot\n}\n\npub trait Area {\n    fn area(self) -> Float;\n}\n\nimpl Area for Shape {\n    fn area(self) -> Float {\n        match self {\n            Circle(r) => 3.0 * r * r,\n            Rect { w, h } => w * h,\n            Dot => 0.0\n        }\n    }\n}\n\npub struct Point {\n    x: Int\n}\n\nimpl Point {\n    fn new(x: Int) -> Self {\n        Point { x: x }\n    }\n\n    fn twice(self) -> Int {\n        self.x * 2\n    }\n}\n\npub fn unit() -> Shape {\n    Circle(1.0)\n}\n\nstruct Hidden {\n    n: Int\n}\n"),
+            ("main.fl", "import shapes { Shape }\nfn main() {\n    let s = Shape::Nope\n}\n"),
+        ],
+        ".",
+        "enum `Shape` has no variant `Nope`",
+    );
+}
+
+#[test]
+fn review_findings_for_module_types_stay_fixed() {
+    let geo = "pub struct Point {\n    x: Int\n}\npub enum Color {\n    Red,\n    Green\n}\npub trait Area {\n    fn area(self) -> Int;\n}\nstruct Hidden {\n    x: Int\n}\n";
+    let other = "pub struct Point {\n    y: Int\n}\npub fn n() -> Int {\n    1\n}\n";
+    // An imported unit variant in a pattern is the variant, not a binding.
+    check_fails(
+        &[
+            ("geo.fl", geo),
+            (
+                "main.fl",
+                "import geo { Color }\nfn f(c: Color) -> Int {\n    match c {\n        Red => 1\n    }\n}\nfn main() {}\n",
+            ),
+        ],
+        ".",
+        "missing Green",
+    );
+    // Two modules' `Point` types specialize a generic function apart; a type
+    // parameter named like an imported type is the parameter; qualified type
+    // names work in annotations and `impl` heads.
+    let out = run_ok(
+        &[
+            ("geo.fl", geo),
+            ("other.fl", other),
+            (
+                "main.fl",
+                "import io { println }\nimport geo\nimport other { n }\nstruct Local {\n    w: Int\n}\nimpl geo::Area for Local {\n    fn area(self) -> Int {\n        self.w\n    }\n}\nimpl Area for other::Point {\n    fn area(self) -> Int {\n        self.y\n    }\n}\nfn id[T](x: T) -> T {\n    x\n}\nfn same[Point](x: Point) -> Point {\n    x\n}\nfn pick(c: geo::Color) -> Int {\n    match c {\n        Red => 1,\n        Green => 2\n    }\n}\nfn first(o: Option[geo::Point]) -> Int {\n    match o {\n        Some(p) => p.x,\n        None => 0\n    }\n}\nfn main() {\n    let p = id(geo::Point { x: 1 })\n    let q = id(other::Point { y: 2 })\n    println(\"{p} {q} {same(3)} {pick(Green)} {first(Some(p))} {Local { w: 4 }.area()} {q.area()} {n()}\")\n}\n",
+            ),
+        ],
+        ".",
+    );
+    assert_eq!(out, "Point { x: 1 } Point { y: 2 } 3 2 1 4 2 1\n");
+    // Internal names cannot be written, and messages show declared names.
+    check_fails(
+        &[
+            ("geo.fl", geo),
+            (
+                "main.fl",
+                "import geo { Point }\nfn main() {\n    let h = __mod_1__Hidden { x: 1 }\n}\n",
+            ),
+        ],
+        ".",
+        "names starting with `__mod_` are reserved",
+    );
+    check_fails(
+        &[
+            ("geo.fl", geo),
+            (
+                "main.fl",
+                "import geo { Area, Point }\nimpl Area for Point {}\nfn main() {}\n",
+            ),
+        ],
+        ".",
+        "impl of `Area` for `Point` is missing method `area`",
+    );
+}
+
+#[test]
+fn each_module_sees_only_the_variants_of_enums_it_declares_or_imports() {
+    let geo = "pub enum Color {\n    Red,\n    Green\n}\nenum Hidden {\n    Secret\n}\npub fn n() -> Int {\n    1\n}\n";
+    // A nested unit variant of an imported enum is the variant.
+    check_fails(
+        &[
+            ("geo.fl", geo),
+            (
+                "main.fl",
+                "import geo { Color }\nfn f(c: Option[Color]) -> Int {\n    match c {\n        Some(Red) => 1,\n        None => 0\n    }\n}\nfn main() {}\n",
+            ),
+        ],
+        ".",
+        "missing",
+    );
+    // A private enum's variant is not visible, and its name is free.
+    check_fails(
+        &[
+            ("geo.fl", geo),
+            (
+                "main.fl",
+                "import geo { n }\nfn main() {\n    let h = Secret\n}\n",
+            ),
+        ],
+        ".",
+        "undefined name `Secret`",
+    );
+    let out = run_ok(
+        &[
+            ("geo.fl", geo),
+            (
+                "main.fl",
+                "import io { println }\nimport geo { n, Color }\nfn f(Secret: Int) -> Int {\n    Secret + n()\n}\nfn g(c: Option[Color]) -> Int {\n    match c {\n        Some(Red) => 1,\n        Some(Green) => 2,\n        None => 0\n    }\n}\nfn main() {\n    println(\"{f(1)} {g(Some(Green))}\")\n}\n",
+            ),
+        ],
+        ".",
+    );
+    assert_eq!(out, "2 2\n");
 }

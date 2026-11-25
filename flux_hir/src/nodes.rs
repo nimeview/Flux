@@ -37,6 +37,11 @@ pub struct HirProgram {
     /// E027 for `place.m(…)` statements whose `m` may change the place; the
     /// type checker reports it if `m` does.
     pub deferred_writes: std::collections::HashMap<Span, flux_diagnostics::FluxError>,
+    /// The types the root file can name bare, imported ones included: bare
+    /// name → internal name (`Point` → `__mod_1__Point`). For editor help.
+    pub root_types: std::collections::HashMap<String, String>,
+    /// The root file's `alias::Type` → internal name. For editor help.
+    pub root_qualified_types: std::collections::HashMap<(String, String), String>,
     /// Methods of `impl Type { }` for a library type (`String`, `Int`, …),
     /// with the file that declares them: visible there and in files that
     /// import it.

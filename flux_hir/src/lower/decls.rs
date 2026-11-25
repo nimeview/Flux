@@ -265,7 +265,7 @@ pub(super) fn validate_impls(
         .collect();
     let mut push = |message: String, span: flux_diagnostics::Span| {
         diagnostics.push(FluxError::InvalidImpl {
-            message,
+            message: crate::display_text(&message),
             span: span_to_miette(span),
             source_id: span.source,
         });

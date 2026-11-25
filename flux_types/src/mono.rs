@@ -115,7 +115,7 @@ pub fn monomorphize_program(
                     .collect();
                 let suffix = generic_types
                     .iter()
-                    .map(|ty| ty.display())
+                    .map(|ty| ty.key())
                     .collect::<Vec<_>>()
                     .join("_");
                 let specialization_key = (base_name.clone(), suffix.clone());
@@ -263,7 +263,7 @@ pub(crate) fn type_to_hir_type(ty: &Type, span: flux_diagnostics::Span) -> HirTy
             span,
         },
         other => HirType::Named {
-            name: other.display(),
+            name: other.key(),
             span,
         },
     }

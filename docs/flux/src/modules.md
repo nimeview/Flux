@@ -49,7 +49,7 @@ Importing a name that is not `pub` is an error. A module never sees its importer
 
 Importing a `pub let mut` gives you the same reactive source, not a copy.
 
-Struct, enum, and trait names are currently global to the program, so two modules cannot define the same type name.
+Types belong to their module too: two files may each declare a `Point`, and they are different types. Use another module's type through an import, as `Point` above, or as `geometry::Point`. Importing an enum makes its variants usable on their own, as in `Circle(1.0)`.
 
 ## Packages
 

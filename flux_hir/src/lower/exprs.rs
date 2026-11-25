@@ -726,7 +726,7 @@ pub(super) fn resolve_name(
         }
         None => {
             diagnostics.push(FluxError::UndefinedName {
-                name: name.to_string(),
+                name: crate::display_path(name),
                 span: span_to_miette(span),
                 source_id: span.source,
             });
@@ -791,7 +791,10 @@ fn resolve_path(
             return Some(PathTarget::Name(name.to_string()));
         }
         fail(
-            format!("enum `{first}` has no variant `{rest}`"),
+            format!(
+                "enum `{}` has no variant `{rest}`",
+                crate::display_path(first)
+            ),
             diagnostics,
         );
         return None;

@@ -6,10 +6,12 @@ Notable changes to Flux. The versioning policy is in [`RELEASE.md`](RELEASE.md).
 
 ### Added
 
+- Type names belong to their module: two modules may each declare `Point`. Another module's type is `geo::Point` or imported by name, and an imported enum's variants can be written bare.
 - Modules for command-line programs: `env` (`env_var`, `current_dir`), `fs` (`list_dir`, `is_dir`, `create_dir`, `remove_file`, `remove_dir`), `path` (`path_join`, `file_name`, `extension`, `parent`), and `process` (`exit`, `run`), and `read_stdin` in `io`. Expected failures are `Err` with a message, like `read_file`.
 
 ### Changes that can alter programs
 
+- A type from another module is visible only through an import or as `geo::Point`, and only if it is `pub`; it used to be visible everywhere by its bare name. Migration: add the type to the import (`import geo { origin, Point }`) or write `geo::Point`, and mark it `pub`. Names starting with `__mod_` are reserved for the compiler.
 - An integer and a float compare by exact value: `9007199254740993 == 9007199254740992.0` is now `false`; the integer used to be rounded to a float first.
 - A `fn`, `track fn`, or method that changes a source is an error (E027), as announced in 0.2; it was a warning. This includes `fn main`. Migration: `flux migrate --write` turns such a `fn` into an `act fn` (for `main`, the whole body becomes one batch, so watches run once at its end); a method can call an `act fn`.
 

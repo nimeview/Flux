@@ -11,6 +11,7 @@ flux_diagnostics = { path = "../flux_diagnostics" }
 flux_hir = { path = "../flux_hir" }
 flux_types = { path = "../flux_types" }
 flux_std = { path = "../flux_std" }
+flux_value = { path = "../flux_value" }
 flux_fmt = { path = "../flux_fmt" }
 miette = "7"
 serde = { version = "1", features = ["derive"] }

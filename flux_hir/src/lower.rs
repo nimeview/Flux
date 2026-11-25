@@ -17,6 +17,7 @@ mod funcs;
 mod modules;
 mod stdlib;
 mod stmts;
+mod type_scope;
 
 use std::collections::{HashMap, HashSet};
 
@@ -46,14 +47,26 @@ pub fn lower_program(program: &Program, diagnostics: &mut DiagnosticBag) -> Opti
     lower_program_inner(program, diagnostics, None)
 }
 
+/// Bare variant → internal enum name, for the enums each module can name.
+type ModuleVariants = [HashMap<String, String>];
+
 /// Lower a multi-module [`ResolvedProgram`] with qualified import names.
 pub fn lower_linked_program(
     resolved: &ResolvedProgram,
     diagnostics: &mut DiagnosticBag,
 ) -> Option<HirProgram> {
-    let linked = link_modules(resolved, diagnostics)?;
+    let mut linked = link_modules(resolved, diagnostics)?;
+    // Type names are scoped to their module: rewrite each module's to the
+    // internal names (`__mod_1__Point`) before anything is declared.
+    let scoped = type_scope::scope_type_names(&mut linked, diagnostics);
+    if diagnostics.has_errors() {
+        return None;
+    }
     let program = root_program(&linked);
-    lower_program_inner(&program, diagnostics, Some(&linked))
+    let mut hir = lower_program_inner(&program, diagnostics, Some((&linked, &scoped.variants)))?;
+    hir.root_types = scoped.root_types;
+    hir.root_qualified_types = scoped.root_qualified;
+    Some(hir)
 }
 
 /// Module bindings assigned from a `watch`/`on`/fn body, which makes them
@@ -383,8 +396,10 @@ impl AssignmentCollector {
 fn lower_program_inner(
     program: &Program,
     diagnostics: &mut DiagnosticBag,
-    linked: Option<&LinkedProgram>,
+    linked: Option<(&LinkedProgram, &ModuleVariants)>,
 ) -> Option<HirProgram> {
+    let variants = linked.map(|(_, v)| v);
+    let linked = linked.map(|(l, _)| l);
     let mut symbols = SymbolTable::new();
     // Methods on library values (`xs.sorted()`) call library functions the
     // type checker picks: each gets a symbol when its name is first lowered
@@ -413,10 +428,15 @@ fn lower_program_inner(
         }
         items.extend(lower_module_items(
             linked,
+            variants.unwrap_or_default(),
             &mut symbols,
             diagnostics,
             &reassigned_sources,
         ));
+    }
+    // The root sees the variants of the enums it declares or imports.
+    if let Some(root) = variants.and_then(|v| v.first()) {
+        symbols.enum_variants = root.clone();
     }
 
     // Standard-library imports (`import io`, `import math`, …) register host intrinsics.
@@ -559,6 +579,8 @@ fn lower_program_inner(
             changing_calls: Default::default(),
             captured_call_sites: symbols.captured_call_sites.clone(),
             deferred_writes: std::mem::take(&mut symbols.deferred_writes),
+            root_types: HashMap::new(),
+            root_qualified_types: HashMap::new(),
             extension_sources: symbols.extension_sources.clone(),
             file_imports: linked.map(file_imports).unwrap_or_default(),
         };
