@@ -106,6 +106,104 @@ pub(crate) fn refine_unknown(a: &Type, b: &Type) -> Type {
             ok: Box::new(refine_unknown(ao, bo)),
             err: Box::new(refine_unknown(ae, be)),
         },
+        // `[|| N, || S(1)]`: closures' unknown parts.
+        (
+            Type::Func {
+                params: ap,
+                ret: ar,
+            },
+            Type::Func {
+                params: bp,
+                ret: br,
+            },
+        ) if ap.len() == bp.len() => Type::Func {
+            params: ap
+                .iter()
+                .zip(bp)
+                .map(|(x, y)| refine_unknown(x, y))
+                .collect(),
+            ret: Box::new(refine_unknown(ar, br)),
+        },
+        // A generic type's unknown arguments (`Tree[_]` with `Tree[Int]`).
+        (
+            Type::Struct {
+                name,
+                args: aa,
+                fields: af,
+            },
+            Type::Struct {
+                name: bn,
+                args: ba,
+                fields: bf,
+            },
+        ) if name == bn && aa.len() == ba.len() && af.len() == bf.len() && mentions_empty(a) => {
+            Type::Struct {
+                name: name.clone(),
+                args: aa
+                    .iter()
+                    .zip(ba)
+                    .map(|(x, y)| refine_unknown(x, y))
+                    .collect(),
+                fields: af
+                    .iter()
+                    .zip(bf)
+                    .map(|((n, x), (_, y))| (n.clone(), refine_unknown(x, y)))
+                    .collect(),
+            }
+        }
+        (
+            Type::Enum {
+                name,
+                args: aa,
+                variants: av,
+            },
+            Type::Enum {
+                name: bn,
+                args: ba,
+                variants: bv,
+            },
+        ) if name == bn && aa.len() == ba.len() && av.len() == bv.len() && mentions_empty(a) => {
+            Type::Enum {
+                name: name.clone(),
+                args: aa
+                    .iter()
+                    .zip(ba)
+                    .map(|(x, y)| refine_unknown(x, y))
+                    .collect(),
+                variants: av
+                    .iter()
+                    .zip(bv)
+                    .map(|((n, x), (_, y))| {
+                        let p = match (x, y) {
+                            (Some(x), Some(y)) => Some(refine_unknown(x, y)),
+                            (x, _) => x.clone(),
+                        };
+                        (n.clone(), p)
+                    })
+                    .collect(),
+            }
+        }
+        // One side is a placeholder: refine the arguments; `expand` gives
+        // the rest.
+        (
+            Type::Struct { name, args: aa, .. } | Type::Enum { name, args: aa, .. },
+            Type::Struct {
+                name: bn, args: ba, ..
+            }
+            | Type::Enum {
+                name: bn, args: ba, ..
+            },
+        ) if !name.is_empty() && name == bn && aa.len() == ba.len() && mentions_empty(a) => {
+            Type::Enum {
+                name: name.clone(),
+                args: aa
+                    .iter()
+                    .zip(ba)
+                    .map(|(x, y)| refine_unknown(x, y))
+                    .collect(),
+                variants: vec![],
+            }
+        }
         _ => a.clone(),
     }
 }
@@ -142,6 +240,13 @@ pub(crate) fn mentions_empty(ty: &Type) -> bool {
         Type::Result { ok, err } => mentions_empty(ok) || mentions_empty(err),
         Type::Map { key, value } => mentions_empty(key) || mentions_empty(value),
         Type::Tuple(elems) => elems.iter().any(mentions_empty),
+        Type::Struct { args, .. } | Type::Enum { args, .. } if args.iter().any(mentions_empty) => {
+            true
+        }
+        // A struct variant's fields.
+        Type::Struct { name, fields, .. } if name.is_empty() => {
+            fields.iter().any(|(_, t)| mentions_empty(t))
+        }
         _ => false,
     }
 }
@@ -162,10 +267,23 @@ pub(crate) fn types_compatible(expected: &Type, found: &Type) -> bool {
         (Type::Int, Type::Int64) | (Type::Int64, Type::Int) => true,
         // A named type is itself at any depth: a recursive type's expansion
         // ends in a placeholder (see `TypeCheckContext::expand`).
+        // A generic type's arguments must agree; an unknown one fits.
         (
-            Type::Struct { name: e, .. } | Type::Enum { name: e, .. },
-            Type::Struct { name: f, .. } | Type::Enum { name: f, .. },
-        ) if !e.is_empty() && e == f => true,
+            Type::Struct {
+                name: e, args: ea, ..
+            }
+            | Type::Enum {
+                name: e, args: ea, ..
+            },
+            Type::Struct {
+                name: f, args: fa, ..
+            }
+            | Type::Enum {
+                name: f, args: fa, ..
+            },
+        ) if !e.is_empty() && e == f => {
+            ea.len() != fa.len() || ea.iter().zip(fa).all(|(e, f)| types_compatible(e, f))
+        }
         (Type::Float, Type::Float64) | (Type::Float64, Type::Float) => true,
         // Compatibility is used for assignments, arguments, and returns. The
         // runtime does not insert implicit casts, so accepting a numeric type

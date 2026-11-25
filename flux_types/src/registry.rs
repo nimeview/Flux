@@ -15,16 +15,28 @@ impl TypeRegistry {
     }
 
     pub fn register_struct(&mut self, name: String, fields: Vec<(String, Type)>) {
-        self.structs
-            .insert(name.clone(), Type::Struct { name, fields });
+        self.structs.insert(
+            name.clone(),
+            Type::Struct {
+                name,
+                args: vec![],
+                fields,
+            },
+        );
     }
 
     pub fn register_enum(&mut self, name: String, variants: Vec<(String, Option<Type>)>) {
         for (v, _) in &variants {
             self.variant_to_enum.insert(v.clone(), name.clone());
         }
-        self.enums
-            .insert(name.clone(), Type::Enum { name, variants });
+        self.enums.insert(
+            name.clone(),
+            Type::Enum {
+                name,
+                args: vec![],
+                variants,
+            },
+        );
     }
 
     pub fn resolve_name(&self, name: &str) -> Option<Type> {

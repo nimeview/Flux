@@ -16,6 +16,7 @@ pub(super) fn resolve_hir_enum_payload(
         HirEnumPayload::Tuple(ty) => resolve_hir_type(ctx, ty, diagnostics),
         HirEnumPayload::Struct(fields) => Some(Type::Struct {
             name: String::new(),
+            args: vec![],
             fields: fields
                 .iter()
                 .filter_map(|(n, t)| {
@@ -37,6 +38,20 @@ pub(super) fn resolve_hir_type(
                 return Some(Type::Error);
             }
             if let Some(ty) = ctx.user_type(name) {
+                let params = crate::generic::template_params(ty);
+                if !params.is_empty() {
+                    diagnostics.push(FluxError::TypeMismatch {
+                        expected: format!(
+                            "{}[{}]",
+                            flux_hir::display_path(name),
+                            params.join(", ")
+                        ),
+                        found: format!("{} without type arguments", flux_hir::display_path(name)),
+                        span: span_to_miette(*span),
+                        source_id: span.source,
+                    });
+                    return Some(Type::Error);
+                }
                 return Some(ty.clone());
             }
             if let Some(alias) = ctx.type_alias(name) {
@@ -110,8 +125,46 @@ pub(super) fn resolve_hir_type(
                     key: Box::new(key),
                     value: Box::new(resolve_hir_type(ctx, &args[1], diagnostics)?),
                 })
+            } else if let Some(template) = ctx.user_type(name) {
+                let params = crate::generic::template_params(template);
+                if params.len() != args.len() {
+                    diagnostics.push(FluxError::TypeMismatch {
+                        expected: if params.is_empty() {
+                            format!(
+                                "{}, which takes no type arguments",
+                                flux_hir::display_path(name)
+                            )
+                        } else {
+                            format!("{}[{}]", flux_hir::display_path(name), params.join(", "))
+                        },
+                        found: format!(
+                            "{} with {} type argument{}",
+                            flux_hir::display_path(name),
+                            args.len(),
+                            if args.len() == 1 { "" } else { "s" }
+                        ),
+                        span: span_to_miette(*span),
+                        source_id: span.source,
+                    });
+                    return Some(Type::Error);
+                }
+                let args = args
+                    .iter()
+                    .map(|a| resolve_hir_type(ctx, a, diagnostics))
+                    .collect::<Option<Vec<_>>>()?;
+                Some(crate::generic::instantiate(template, &args))
             } else {
-                resolve_type_name(name, *span).ok()
+                match resolve_type_name(name, *span) {
+                    Ok(t) => Some(t),
+                    Err((name, span)) => {
+                        diagnostics.push(FluxError::UnknownType {
+                            name,
+                            span: span_to_miette(span),
+                            source_id: span.source,
+                        });
+                        Some(Type::Error)
+                    }
+                }
             }
         }
         HirType::TypeParam { name, .. } => Some(if ctx.generic_parameters.borrow().is_empty() {
@@ -127,6 +180,7 @@ pub(super) fn enum_payload_to_type(payload: &HirEnumPayload) -> Type {
         HirEnumPayload::Tuple(ty) => resolve_hir_type_simple(ty),
         HirEnumPayload::Struct(fields) => Type::Struct {
             name: String::new(),
+            args: vec![],
             fields: fields
                 .iter()
                 .map(|(n, t)| (n.clone(), resolve_hir_type_simple(t)))
@@ -156,6 +210,7 @@ pub(crate) fn resolve_hir_type_simple(ty: &HirType) -> Type {
             "Unit" => Type::Unit,
             other => Type::Enum {
                 name: other.to_string(),
+                args: vec![],
                 variants: vec![],
             },
         },
@@ -188,10 +243,16 @@ pub(crate) fn resolve_hir_type_simple(ty: &HirType) -> Type {
                     value: Box::new(resolve_hir_type_simple(&args[1])),
                 }
             } else {
-                Type::Error
+                // A user type: a placeholder that `fill_user_types` and
+                // `expand` replace with its instance.
+                Type::Enum {
+                    name: name.clone(),
+                    args: args.iter().map(resolve_hir_type_simple).collect(),
+                    variants: vec![],
+                }
             }
         }
-        _ => Type::Error,
+        HirType::TypeParam { name, .. } => Type::Var(name.clone()),
     }
 }
 

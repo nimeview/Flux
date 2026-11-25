@@ -61,11 +61,12 @@ fn resolve_unknown_named_becomes_enum_stub() {
     assert!(matches!(ty, Type::Enum { name, .. } if name == "MyType"));
 }
 
+/// A generic struct's or enum's parameter stays a variable in its template.
 #[test]
 fn resolve_type_param_var() {
     let ty = resolve_hir_type_simple(&HirType::TypeParam {
         name: "T".into(),
         span: dummy_span(),
     });
-    assert_eq!(ty, Type::Error);
+    assert_eq!(ty, Type::Var("T".into()));
 }

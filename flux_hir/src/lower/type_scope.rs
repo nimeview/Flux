@@ -189,6 +189,22 @@ impl Rewrite<'_> {
         }
     }
 
+    /// Brings a declaration's type parameters into scope; each is named
+    /// once (`struct P[T, T]` is an error).
+    fn type_params(&mut self, params: &[String], span: Span) {
+        for (i, param) in params.iter().enumerate() {
+            if params[..i].contains(param) {
+                self.diagnostics.push(FluxError::DuplicateDefinition {
+                    name: param.clone(),
+                    prev_span: span_to_miette(span),
+                    span: span_to_miette(span),
+                    source_id: span.source,
+                });
+            }
+        }
+        self.generics.extend(params.iter().cloned());
+    }
+
     /// A type name as written (`Point`, `geo::Point`) → its internal name.
     fn type_name(&mut self, name: &str, span: Span) -> String {
         self.reserved(name, span);
@@ -295,7 +311,7 @@ impl Rewrite<'_> {
             Item::Struct(s) => {
                 s.name.name = self.type_name(&s.name.name, s.name.span);
                 let outer = self.generics.len();
-                self.generics.extend(s.type_params.iter().cloned());
+                self.type_params(&s.type_params, s.name.span);
                 for field in &mut s.fields {
                     self.ty(&mut field.ty);
                 }
@@ -303,6 +319,8 @@ impl Rewrite<'_> {
             }
             Item::Enum(e) => {
                 e.name.name = self.type_name(&e.name.name, e.name.span);
+                let outer = self.generics.len();
+                self.type_params(&e.type_params, e.name.span);
                 for v in &mut e.variants {
                     match &mut v.payload {
                         Some(EnumPayload::Tuple(ty)) => self.ty(ty),
@@ -312,6 +330,7 @@ impl Rewrite<'_> {
                         None => {}
                     }
                 }
+                self.generics.truncate(outer);
             }
             Item::Trait(t) => {
                 t.name.name = self.type_name(&t.name.name, t.name.span);
@@ -329,7 +348,7 @@ impl Rewrite<'_> {
                 self.ty(&mut imp.target_type);
                 for f in &mut imp.methods {
                     let outer = self.generics.len();
-                    self.generics.extend(f.type_params.iter().cloned());
+                    self.type_params(&f.type_params, f.name.span);
                     self.fn_parts(&mut f.params, &mut f.ret, &mut f.body);
                     self.generics.truncate(outer);
                 }
@@ -338,13 +357,13 @@ impl Rewrite<'_> {
             Item::Fn(f) => {
                 self.reserved(&f.name.name, f.name.span);
                 let outer = self.generics.len();
-                self.generics.extend(f.type_params.iter().cloned());
+                self.type_params(&f.type_params, f.name.span);
                 self.fn_parts(&mut f.params, &mut f.ret, &mut f.body);
                 self.generics.truncate(outer);
             }
             Item::RFn(f) => {
                 let outer = self.generics.len();
-                self.generics.extend(f.type_params.iter().cloned());
+                self.type_params(&f.type_params, f.name.span);
                 self.fn_parts(&mut f.params, &mut f.ret, &mut f.body);
                 self.generics.truncate(outer);
             }

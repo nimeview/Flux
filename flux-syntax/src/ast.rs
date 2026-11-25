@@ -64,6 +64,7 @@ pub struct StructField {
 pub struct EnumDecl {
     pub pub_: bool,
     pub name: Ident,
+    pub type_params: Vec<String>,
     pub variants: Vec<EnumVariant>,
     pub span: Span,
 }

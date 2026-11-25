@@ -34,7 +34,7 @@ use infer::{infer_block_return, infer_expr};
 use resolve::{resolve_hir_enum_payload, resolve_hir_type};
 use state::{Scope, TypeCheckContext};
 use stmt::{check_binding, check_block, check_if, check_return_types};
-pub(crate) use util::types_compatible;
+pub(crate) use util::{mentions_empty, refine_unknown, types_compatible};
 
 pub use methods::resolve_method_calls;
 pub use util::trait_dispatch_tag;
@@ -223,7 +223,8 @@ fn typecheck_with_context(
                     })
                     .collect();
                 let name = program.names.get(&s.name).cloned().unwrap_or_default();
-                types.insert(s.name, Type::Struct { name, fields });
+                let args = s.type_params.iter().cloned().map(Type::Var).collect();
+                types.insert(s.name, Type::Struct { name, args, fields });
             }
             HirItem::Enum(e) => {
                 let variants = e
@@ -238,7 +239,15 @@ fn typecheck_with_context(
                     })
                     .collect();
                 let name = program.names.get(&e.name).cloned().unwrap_or_default();
-                types.insert(e.name, Type::Enum { name, variants });
+                let args = e.type_params.iter().cloned().map(Type::Var).collect();
+                types.insert(
+                    e.name,
+                    Type::Enum {
+                        name,
+                        args,
+                        variants,
+                    },
+                );
             }
             HirItem::Binding(_)
             | HirItem::Watch(_)

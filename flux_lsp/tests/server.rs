@@ -1357,3 +1357,42 @@ fn a_local_named_like_an_imported_type_and_a_qualified_type_resolve_right() {
     let _ = util;
     shutdown(&client, handle);
 }
+
+/// A generic struct's fields have the types of its arguments: `p.` offers
+/// `a: Int64` for a `Pair[Int]`, and hover shows the instance type.
+#[test]
+fn members_and_hover_of_a_generic_type_use_its_arguments() {
+    let (client, handle) = start_server();
+    let text = "struct Pair[T] { a: T, b: T }\nfn main() {\n    let p = Pair { a: 1, b: 2 }\n    let n = p.a\n}\n";
+    did_open(&client, text);
+    let _ = recv_diagnostics(&client);
+    let at = |line: u32, character: u32| {
+        serde_json::json!({
+            "textDocument": { "uri": test_uri() },
+            "position": { "line": line, "character": character },
+        })
+    };
+    let items = ask(&client, 2, "textDocument/completion", at(3, 14)).to_string();
+    assert!(items.contains("\"label\":\"a\""), "{items}");
+    assert!(items.contains("Int64"), "{items}");
+    assert!(!items.contains("\"T\""), "{items}");
+    let hover = ask(&client, 3, "textDocument/hover", at(2, 8)).to_string();
+    assert!(hover.contains("Pair[Int64]"), "{hover}");
+    shutdown(&client, handle);
+}
+
+/// A user-typed field of a generic instance offers its own fields.
+#[test]
+fn a_field_of_a_generic_instance_offers_its_members() {
+    let (client, handle) = start_server();
+    let text = "struct P { n: Int }\nstruct B[T] { x: T }\nfn main() {\n    let b = B { x: P { n: 1 } }\n    let p = b.x\n    let m = p.n\n}\n";
+    did_open(&client, text);
+    let _ = recv_diagnostics(&client);
+    let at = serde_json::json!({
+        "textDocument": { "uri": test_uri() },
+        "position": { "line": 5, "character": 14 },
+    });
+    let items = ask(&client, 2, "textDocument/completion", at).to_string();
+    assert!(items.contains("\"label\":\"n\""), "{items}");
+    shutdown(&client, handle);
+}

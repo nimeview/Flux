@@ -58,6 +58,10 @@ pub fn monomorphize_program(
     for pass in 0..MAX_MONOMORPHIZATION_PASSES {
         crate::check::prepare_closures(program, _source);
         let mut created_specialization = false;
+        // A call that cannot be inferred yet may be once an argument's own
+        // generic call is specialized (`id(apply(1, |x| x + 1))`): its
+        // errors count only if a pass makes no progress.
+        let mut pending = DiagnosticBag::new();
 
         for base_name in &generic_names {
             let Some(template) = generic_fns.get(base_name) else {
@@ -76,16 +80,19 @@ pub fn monomorphize_program(
                     });
                     continue;
                 }
-                let Some(substitutions) = infer_generic_substitutions(
+                let mut call_diagnostics = DiagnosticBag::new();
+                let inferred = infer_generic_substitutions(
                     &template.fn_item,
                     &template.type_params,
                     &args,
                     &symbol_types,
                     program,
                     _source,
-                    diagnostics,
-                ) else {
-                    diagnostics.push(FluxError::TypeMismatch {
+                    &mut call_diagnostics,
+                );
+                let Some(substitutions) = inferred else {
+                    pending.extend(call_diagnostics);
+                    pending.push(FluxError::TypeMismatch {
                         expected: format!(
                             "all generic parameters of `{base_name}` to be inferable from its parameters"
                         ),
@@ -95,12 +102,13 @@ pub fn monomorphize_program(
                     });
                     continue;
                 };
+                diagnostics.extend(call_diagnostics);
                 let Some(concrete) = args
                     .iter()
                     .map(|arg| infer_mono_type(arg, &symbol_types, program))
                     .collect::<Option<Vec<_>>>()
                 else {
-                    diagnostics.push(FluxError::TypeMismatch {
+                    pending.push(FluxError::TypeMismatch {
                         expected: "concrete, inferable generic arguments".into(),
                         found: "an expression whose type cannot be inferred here".into(),
                         span: span_to_miette(span),
@@ -178,6 +186,12 @@ pub fn monomorphize_program(
         }
 
         if !created_specialization {
+            for error in pending.errors {
+                diagnostics.push(error);
+            }
+            for warning in pending.warnings {
+                diagnostics.push_warning(warning);
+            }
             crate::check::prepare_closures(program, _source);
             break;
         }
@@ -200,6 +214,10 @@ fn type_depth(ty: &Type) -> usize {
         Type::Result { ok, err } => 1 + type_depth(ok).max(type_depth(err)),
         Type::Map { key, value } => 1 + type_depth(key).max(type_depth(value)),
         Type::Tuple(elems) => 1 + elems.iter().map(type_depth).max().unwrap_or(0),
+        // A generic type nests through its arguments (`Box[Box[Int]]`).
+        Type::Struct { args, .. } | Type::Enum { args, .. } if !args.is_empty() => {
+            1 + args.iter().map(type_depth).max().unwrap_or(0)
+        }
         Type::Func { params, ret } => {
             1 + params
                 .iter()
@@ -253,6 +271,13 @@ pub(crate) fn type_to_hir_type(ty: &Type, span: flux_diagnostics::Span) -> HirTy
             args: vec![type_to_hir_type(key, span), type_to_hir_type(value, span)],
             span,
         },
+        Type::Struct { name, args, .. } | Type::Enum { name, args, .. } if !args.is_empty() => {
+            HirType::Generic {
+                name: name.clone(),
+                args: args.iter().map(|a| type_to_hir_type(a, span)).collect(),
+                span,
+            }
+        }
         Type::Struct { name, .. } | Type::Enum { name, .. } => HirType::Named {
             name: name.clone(),
             span,
@@ -283,6 +308,31 @@ fn normalize_mono_type(ty: Type) -> Type {
             params: params.into_iter().map(normalize_mono_type).collect(),
             ret: Box::new(normalize_mono_type(*ret)),
         },
+        Type::Tuple(elems) => Type::Tuple(elems.into_iter().map(normalize_mono_type).collect()),
+        Type::Map { key, value } => Type::Map {
+            key: Box::new(normalize_mono_type(*key)),
+            value: Box::new(normalize_mono_type(*value)),
+        },
+        Type::Struct { name, args, fields } => Type::Struct {
+            name,
+            args: args.into_iter().map(normalize_mono_type).collect(),
+            fields: fields
+                .into_iter()
+                .map(|(n, t)| (n, normalize_mono_type(t)))
+                .collect(),
+        },
+        Type::Enum {
+            name,
+            args,
+            variants,
+        } => Type::Enum {
+            name,
+            args: args.into_iter().map(normalize_mono_type).collect(),
+            variants: variants
+                .into_iter()
+                .map(|(n, p)| (n, p.map(normalize_mono_type)))
+                .collect(),
+        },
         other => other,
     }
 }
@@ -304,12 +354,11 @@ fn infer_mono_type(
         HirExpr::Snap { expr, .. } => infer_mono_type(expr, symbols, program),
         HirExpr::Array { elems, .. } => {
             let first = elems.first()?;
-            let elem = infer_mono_type(first, symbols, program)?;
-            elems
-                .iter()
-                .skip(1)
-                .all(|e| infer_mono_type(e, symbols, program).as_ref() == Some(&elem))
-                .then(|| Type::Array(Box::new(elem)))
+            let mut elem = infer_mono_type(first, symbols, program)?;
+            for e in elems.iter().skip(1) {
+                elem = join_mono_types(&elem, &infer_mono_type(e, symbols, program)?)?;
+            }
+            Some(Type::Array(Box::new(elem)))
         }
         HirExpr::Unary { op, expr, .. } => {
             let inner = infer_mono_type(expr, symbols, program)?;
@@ -348,7 +397,7 @@ fn infer_mono_type(
         } => {
             let then_ty = infer_mono_type(then_expr, symbols, program)?;
             let else_ty = infer_mono_type(else_expr, symbols, program)?;
-            (then_ty == else_ty).then_some(then_ty)
+            join_mono_types(&then_ty, &else_ty)
         }
         HirExpr::Cast { ty, .. } => Some(normalize_mono_type(resolve_type_name(ty, program)?)),
         HirExpr::ToText { .. } => Some(Type::String),
@@ -361,12 +410,34 @@ fn infer_mono_type(
             Type::Option(inner) => Some(*inner),
             _ => None,
         },
-        HirExpr::StructLit { name, .. } => resolve_type_name(name, program),
+        HirExpr::StructLit { name, fields, .. } => {
+            let template = resolve_type_name(name, program)?;
+            let mut bound = HashMap::new();
+            if let Type::Struct {
+                fields: declared, ..
+            } = &template
+            {
+                for (field, value) in fields {
+                    let declared = declared.iter().find(|(n, _)| n == field);
+                    if let (Some((_, declared)), Some(got)) =
+                        (declared, infer_mono_type(value, symbols, program))
+                    {
+                        crate::generic::bind(declared, &got, &mut bound);
+                    }
+                }
+            }
+            let args = crate::generic::bound_args(&template, &bound);
+            Some(crate::generic::instantiate(&template, &args))
+        }
         HirExpr::Field { base, field, .. } => {
             let base = match infer_mono_type(base, symbols, program)? {
                 // The end of a recursive type's expansion.
-                Type::Enum { name, variants } if variants.is_empty() => {
-                    resolve_type_name(&name, program)?
+                Type::Enum {
+                    name,
+                    args,
+                    variants,
+                } if variants.is_empty() => {
+                    crate::generic::instantiate(&resolve_type_name(&name, program)?, &args)
                 }
                 other => other,
             };
@@ -381,17 +452,56 @@ fn infer_mono_type(
                 .find_map(|(name, ty)| (name == *field).then_some(ty))
         }
         HirExpr::Match { arms, .. } => {
-            let mut result = None;
+            let mut result: Option<Type> = None;
             for arm in arms {
                 let ty = infer_mono_type(&arm.expr, symbols, program)?;
-                if result.as_ref().is_some_and(|found| found != &ty) {
-                    return None;
-                }
-                result = Some(ty);
+                result = Some(match result {
+                    Some(found) => join_mono_types(&found, &ty)?,
+                    None => ty,
+                });
             }
             result
         }
-        HirExpr::EnumVariant { enum_name, .. } => resolve_type_name(enum_name, program),
+        HirExpr::EnumVariant {
+            enum_name,
+            variant,
+            payload,
+            ..
+        } => {
+            let template = resolve_type_name(enum_name, program)?;
+            let mut bound = HashMap::new();
+            if let (Type::Enum { variants, .. }, Some(payload)) = (&template, payload.as_deref()) {
+                let declared = variants
+                    .iter()
+                    .find(|(n, _)| n == variant)
+                    .and_then(|(_, p)| p.as_ref());
+                match (declared, payload) {
+                    (
+                        Some(Type::Struct {
+                            fields: declared, ..
+                        }),
+                        HirExpr::StructLit { name, fields, .. },
+                    ) if name == flux_hir::VARIANT_FIELDS => {
+                        for (field, value) in fields {
+                            let declared = declared.iter().find(|(n, _)| n == field);
+                            if let (Some((_, declared)), Some(got)) =
+                                (declared, infer_mono_type(value, symbols, program))
+                            {
+                                crate::generic::bind(declared, &got, &mut bound);
+                            }
+                        }
+                    }
+                    (Some(declared), payload) => {
+                        if let Some(got) = infer_mono_type(payload, symbols, program) {
+                            crate::generic::bind(declared, &got, &mut bound);
+                        }
+                    }
+                    (None, _) => {}
+                }
+            }
+            let args = crate::generic::bound_args(&template, &bound);
+            Some(crate::generic::instantiate(&template, &args))
+        }
         HirExpr::Call { callee, args, .. } => {
             if let HirExpr::Field { base, field, .. } = callee.as_ref() {
                 let recv = infer_mono_type(base, symbols, program)?;
@@ -440,6 +550,13 @@ fn infer_mono_type(
                     }
                 }
                 _ => program.items.iter().find_map(|item| match item {
+                    // A generic function's result for these arguments, so
+                    // that `id(id(3))` and `first(twice(3))` infer.
+                    HirItem::Fn(function)
+                        if function.name == *symbol && !function.type_params.is_empty() =>
+                    {
+                        generic_call_type(function, args, symbols, program)
+                    }
                     HirItem::Fn(function)
                         if function.name == *symbol && function.type_params.is_empty() =>
                     {
@@ -464,6 +581,59 @@ fn infer_mono_type(
         }
         HirExpr::Closure { fn_symbol, .. } => function_type(fn_symbol, symbols, program),
     }
+}
+
+/// The type of two values that must agree: equal ones, or one whose unknown
+/// parts the other fixes (`[N, S(1)]`).
+fn join_mono_types(a: &Type, b: &Type) -> Option<Type> {
+    if a == b {
+        return Some(a.clone());
+    }
+    if !crate::check::mentions_empty(a) && !crate::check::mentions_empty(b) {
+        return None;
+    }
+    crate::check::types_compatible(a, b).then(|| crate::check::refine_unknown(a, b))
+}
+
+/// The declared result of a call of the generic `function`, with its type
+/// parameters bound from the arguments (callbacks aside).
+fn generic_call_type(
+    function: &HirFn,
+    args: &[HirExpr],
+    symbols: &HashMap<SymbolId, Type>,
+    program: &HirProgram,
+) -> Option<Type> {
+    let ret = function.ret.as_ref()?;
+    if function.params.len() != args.len() {
+        return None;
+    }
+    let mut substitutions = HashMap::new();
+    for (param, arg) in function.params.iter().zip(args) {
+        if matches!(arg, HirExpr::Closure { .. }) {
+            continue;
+        }
+        let actual = infer_mono_type(arg, symbols, program)?;
+        unify_generic_type(
+            &param.ty,
+            &actual,
+            &function.type_params,
+            program,
+            &mut substitutions,
+        )?;
+    }
+    if !function
+        .type_params
+        .iter()
+        .all(|p| substitutions.contains_key(p))
+    {
+        return None;
+    }
+    let span = function.span;
+    let subst: HashMap<&str, HirType> = substitutions
+        .iter()
+        .map(|(name, ty)| (name.as_str(), type_to_hir_type(ty, span)))
+        .collect();
+    hir_type_to_mono_type(&substitute_hir_type(ret, &subst), program)
 }
 
 /// The result type of the common library methods (`xs.len()`,
@@ -580,6 +750,7 @@ fn resolve_named(name: &str, program: &HirProgram, expanding: &mut Vec<String>) 
     if expanding.iter().any(|open| open == name) {
         return Some(Type::Enum {
             name: name.into(),
+            args: vec![],
             variants: vec![],
         });
     }
@@ -591,6 +762,7 @@ fn resolve_named(name: &str, program: &HirProgram, expanding: &mut Vec<String>) 
             HirItem::Struct(s) if program.names.get(&s.name).map(String::as_str) == Some(name) => {
                 Some(Type::Struct {
                     name: name.into(),
+                    args: s.type_params.iter().cloned().map(Type::Var).collect(),
                     fields: s
                         .fields
                         .iter()
@@ -603,6 +775,7 @@ fn resolve_named(name: &str, program: &HirProgram, expanding: &mut Vec<String>) 
             HirItem::Enum(e) if program.names.get(&e.name).map(String::as_str) == Some(name) => {
                 Some(Type::Enum {
                     name: name.into(),
+                    args: e.type_params.iter().cloned().map(Type::Var).collect(),
                     variants: e
                         .variants
                         .iter()
@@ -616,6 +789,7 @@ fn resolve_named(name: &str, program: &HirProgram, expanding: &mut Vec<String>) 
                                     flux_hir::HirEnumPayload::Struct(fields) => {
                                         Some(Type::Struct {
                                             name: String::new(),
+                                            args: vec![],
                                             fields: fields
                                                 .iter()
                                                 .filter_map(|(name, ty)| {
@@ -648,7 +822,8 @@ fn resolve_named(name: &str, program: &HirProgram, expanding: &mut Vec<String>) 
 fn hir_to_mono(ty: &HirType, program: &HirProgram, expanding: &mut Vec<String>) -> Option<Type> {
     match ty {
         HirType::Named { name, .. } => resolve_named(name, program, expanding),
-        HirType::TypeParam { .. } => None,
+        // A generic struct's or enum's parameter, in its template.
+        HirType::TypeParam { name, .. } => Some(Type::Var(name.clone())),
         HirType::Array { inner, .. } => Some(Type::Array(Box::new(hir_to_mono(
             inner, program, expanding,
         )?))),
@@ -689,7 +864,21 @@ fn hir_to_mono(ty: &HirType, program: &HirProgram, expanding: &mut Vec<String>) 
                 .map(|a| hir_to_mono(a, program, expanding))
                 .collect::<Option<Vec<_>>>()?,
         )),
-        HirType::Generic { name, .. } => resolve_named(name, program, expanding),
+        HirType::Generic { name, args, .. } => {
+            let args = args
+                .iter()
+                .map(|a| hir_to_mono(a, program, expanding))
+                .collect::<Option<Vec<_>>>()?;
+            Some(match resolve_named(name, program, expanding)? {
+                // A recursive reference: keep its arguments.
+                Type::Enum { name, variants, .. } if variants.is_empty() => Type::Enum {
+                    name,
+                    args,
+                    variants,
+                },
+                template => crate::generic::instantiate(&template, &args),
+            })
+        }
     }
 }
 
@@ -758,7 +947,14 @@ fn unify_generic_type(
         if let Some(previous) = substitutions.get(name) {
             // Checker types expand nominal fields and use Int64; the mono
             // collector can retain Int aliases and shallower recursive types.
-            return crate::check::types_compatible(previous, &actual).then_some(());
+            if !crate::check::types_compatible(previous, &actual) {
+                return None;
+            }
+            // `second(N, S(1))`: a later argument fixes what an earlier one
+            // left unknown.
+            let refined = crate::check::refine_unknown(previous, &actual);
+            substitutions.insert(name.clone(), refined);
+            return Some(());
         }
         substitutions.insert(name.clone(), actual);
         return Some(());
@@ -814,6 +1010,25 @@ fn unify_generic_type(
         {
             unify_generic_type(&args[0], ok, type_params, program, substitutions)?;
             unify_generic_type(&args[1], err, type_params, program, substitutions)
+        }
+        // `Pair[T]` against a `Pair[Int]`.
+        (
+            HirType::Generic { name, args, .. },
+            Type::Struct {
+                name: actual_name,
+                args: actual_args,
+                ..
+            }
+            | Type::Enum {
+                name: actual_name,
+                args: actual_args,
+                ..
+            },
+        ) if name == actual_name && args.len() == actual_args.len() => {
+            for (arg, actual) in args.iter().zip(actual_args) {
+                unify_generic_type(arg, actual, type_params, program, substitutions)?;
+            }
+            Some(())
         }
         _ => {
             let declared = hir_type_to_mono_type(declared, program)?;
@@ -1449,11 +1664,16 @@ fn collect_pattern_symbol_types(
         Type::Option(inner) if arm.variant == "Some" => Some((**inner).clone()),
         Type::Result { ok, .. } if arm.variant == "Ok" => Some((**ok).clone()),
         Type::Result { err, .. } if arm.variant == "Err" => Some((**err).clone()),
-        Type::Enum { name, variants } => {
+        Type::Enum {
+            name,
+            args,
+            variants,
+        } => {
             // Resolve the named boundary of a recursive enum when needed.
             let expanded;
             let variants = if variants.is_empty() {
-                expanded = resolve_type_name(name, program);
+                expanded =
+                    resolve_type_name(name, program).map(|t| crate::generic::instantiate(&t, args));
                 match &expanded {
                     Some(Type::Enum { variants, .. }) => variants,
                     _ => return,

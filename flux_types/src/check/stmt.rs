@@ -797,6 +797,81 @@ pub(super) fn check_stmt(
     }
 }
 
+/// The outermost generic user type in `ty` with an unknown argument.
+fn unknown_generic(ty: &Type) -> Option<Type> {
+    match ty {
+        Type::Struct { name, args, .. } | Type::Enum { name, args, .. }
+            if !name.is_empty() && args.iter().any(mentions_empty) =>
+        {
+            Some(ty.clone())
+        }
+        // `B[fn() -> O[_]]`: one hidden in an argument.
+        Type::Struct { args, .. } | Type::Enum { args, .. } => {
+            args.iter().find_map(unknown_generic)
+        }
+        Type::Array(t) | Type::Option(t) | Type::Cell(t) | Type::Read(t) => unknown_generic(t),
+        Type::Result { ok, err } => unknown_generic(ok).or_else(|| unknown_generic(err)),
+        Type::Map { key, value } => unknown_generic(key).or_else(|| unknown_generic(value)),
+        Type::Tuple(elems) => elems.iter().find_map(unknown_generic),
+        Type::Func { params, ret } => params
+            .iter()
+            .find_map(unknown_generic)
+            .or_else(|| unknown_generic(ret)),
+        _ => None,
+    }
+}
+
+/// `ty` with `Int` for its unknown parts, for an example annotation.
+fn example_arguments(ty: &Type) -> Type {
+    replace_unknown(ty, &Type::Int)
+}
+
+fn unknown_to_error(ty: &Type) -> Type {
+    replace_unknown(ty, &Type::Error)
+}
+
+fn replace_unknown(ty: &Type, with: &Type) -> Type {
+    let r = |t: &Type| replace_unknown(t, with);
+    match ty {
+        Type::Empty => with.clone(),
+        Type::Array(t) => Type::Array(Box::new(r(t))),
+        Type::Option(t) => Type::Option(Box::new(r(t))),
+        Type::Cell(t) => Type::Cell(Box::new(r(t))),
+        Type::Read(t) => Type::Read(Box::new(r(t))),
+        Type::Result { ok, err } => Type::Result {
+            ok: Box::new(r(ok)),
+            err: Box::new(r(err)),
+        },
+        Type::Map { key, value } => Type::Map {
+            key: Box::new(r(key)),
+            value: Box::new(r(value)),
+        },
+        Type::Tuple(elems) => Type::Tuple(elems.iter().map(r).collect()),
+        Type::Func { params, ret } => Type::Func {
+            params: params.iter().map(r).collect(),
+            ret: Box::new(r(ret)),
+        },
+        Type::Struct { name, args, fields } => Type::Struct {
+            name: name.clone(),
+            args: args.iter().map(r).collect(),
+            fields: fields.iter().map(|(n, t)| (n.clone(), r(t))).collect(),
+        },
+        Type::Enum {
+            name,
+            args,
+            variants,
+        } => Type::Enum {
+            name: name.clone(),
+            args: args.iter().map(r).collect(),
+            variants: variants
+                .iter()
+                .map(|(n, p)| (n.clone(), p.as_ref().map(r)))
+                .collect(),
+        },
+        other => other.clone(),
+    }
+}
+
 /// A binding cannot take its type from a bare `[]`: there is no element type
 /// to infer. Reports that and returns the type to use instead (elements `Error`).
 pub(super) fn reject_empty_array_binding(
@@ -805,6 +880,24 @@ pub(super) fn reject_empty_array_binding(
     diagnostics: &mut DiagnosticBag,
 ) -> Type {
     let ty = default_unknown_variants(&ty);
+    // Checked first: a closure's type may hide one (`|| Leaf`).
+    if let Some(generic) = unknown_generic(&ty) {
+        let name = match &generic {
+            Type::Struct { name, .. } | Type::Enum { name, .. } => name.clone(),
+            _ => String::new(),
+        };
+        diagnostics.push(FluxError::TypeMismatchWithHelp {
+            expected: format!("known type arguments for {}", flux_hir::display_path(&name)),
+            found: generic.display(),
+            span: span_to_miette(span),
+            source_id: span.source,
+            help: format!(
+                "nothing fixes the type arguments shown as `_`; add a type annotation, such as `: {}`",
+                example_arguments(&ty).display()
+            ),
+        });
+        return unknown_to_error(&ty);
+    }
     if !mentions_empty(&ty) {
         return ty;
     }

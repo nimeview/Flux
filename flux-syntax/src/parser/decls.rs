@@ -142,6 +142,16 @@ pub(super) fn parse_enum(
     let mut inner = pair.into_inner().peekable();
     let pub_ = take_pub(&mut inner);
     let name = parse_ident(source_id, inner.next().expect("enum name"));
+    let mut type_params = Vec::new();
+    if inner.peek().map(|p| p.as_rule()) == Some(Rule::type_params) {
+        type_params = inner
+            .next()
+            .expect("type params")
+            .into_inner()
+            .filter(|p| p.as_rule() == Rule::ident)
+            .map(|p| parse_ident(source_id, p).name)
+            .collect();
+    }
     let variants_pair = inner.next().expect("enum variants");
     let variants = variants_pair
         .into_inner()
@@ -188,6 +198,7 @@ pub(super) fn parse_enum(
     EnumDecl {
         pub_,
         name,
+        type_params,
         variants,
         span,
     }

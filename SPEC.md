@@ -24,12 +24,14 @@ Flux is a statically typed language with **built-in reactivity**: module-level b
 | `Option[T]` | Optional value (`Some`, `None`) |
 | `Result[T, E]` | Success or error (`Ok`, `Err`) |
 | `(A, B, ...)` | Tuple of two or more values |
-| `struct Name { f: T, ... }` | Product type |
-| `enum Name { A, B(T), C { f: T }, ... }` | Sum type; a variant has no payload, one value, or named fields |
+| `struct Name { f: T, ... }` | Product type; `struct Name[T, ...] { ... }` is generic |
+| `enum Name { A, B(T), C { f: T }, ... }` | Sum type; a variant has no payload, one value, or named fields; `enum Name[T, ...] { ... }` is generic |
 | `fn(T, ...) -> U` | Function |
 | `Cell<T>` / `Read<T>` | Reactive wrapper (internal; sources/derived) |
 
-Generics: `fn id[T](x: T) -> T` — monomorphized at compile time per call site.
+Generics: `fn id[T](x: T) -> T` — monomorphized at compile time per call site. A generic call's result can be the argument of another (`id(id(3))`). A declaration names each type parameter once (**E004**).
+
+**Generic structs and enums.** `struct Pair[T] { a: T, b: T }` and `enum Tree[T] { Leaf, Node { v: T, l: Tree[T], r: Tree[T] } }` take type parameters, which their fields and payloads may use at any depth. A generic type is written with all its arguments, `Pair[Int]`; `Pair` alone or `Pair[Int, Int]` is **E005**. Type arguments are never written when a value is built: they come from the values (`Pair { a: 1, b: 2 }` is a `Pair[Int]`) and, for what the values leave unknown, from context, like `None`'s: an annotation (`let t: Tree[Int] = Leaf`), a parameter, a return type, another `if`/`match` branch, or a later array element (`[Leaf, Node(2)]`). Values must agree (`Pair { a: 1, b: "s" }` is **E005**), and `Tree[Int]` and `Tree[String]` are different types. A binding whose type still has an unknown argument (`let t = Leaf`) is **E005**, with a suggested annotation. Patterns, `with`, field reads and assignments, `==`, and display work as for other user types; values display without their arguments (`Pair { a: 1, b: 2 }`). Generic functions take and return generic types (`fn first[T](p: Pair[T]) -> T`). An `impl` for a generic type is not available yet.
 
 **Recursive types.** A struct or enum may refer to itself or to another user type that leads back to it, directly (`enum T { Leaf, Wrap(T) }`), through another type (`enum L { Nil, Cons(Node) }` with `struct Node { value: Int, next: L }`), or through `Option` and arrays (`struct Tree { kids: [Tree] }`). User types are compared by name. A value can be nested as deep as a program builds it; dropping, comparing, and printing it do not overflow the stack. A type that has no finite value, such as `struct S { me: S }`, is **E025**.
 

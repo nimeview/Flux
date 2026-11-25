@@ -109,6 +109,43 @@ fn main() {
 6 a!
 ```
 
+Structs and enums take type parameters too. The values decide the type arguments, so you never write them when building a value; where the values leave one open (`Leaf` has no `T`), the type comes from context, such as an annotation or a return type:
+
+```flux
+import io { println }
+
+struct Pair[T] {
+    a: T,
+    b: T
+}
+
+enum Tree[T] {
+    Leaf,
+    Node { v: T, l: Tree[T], r: Tree[T] }
+}
+
+fn swap[T](p: Pair[T]) -> Pair[T] {
+    Pair { a: p.b, b: p.a }
+}
+
+fn sum(t: Tree[Int]) -> Int {
+    match t { Leaf => 0, Node { v, l, r } => v + sum(l) + sum(r) }
+}
+
+fn main() {
+    let p = Pair { a: 1, b: 2 }
+    let names = Pair { a: "x", b: "y" }
+    let t: Tree[Int] = Node { v: 1, l: Leaf, r: Node { v: 2, l: Leaf, r: Leaf } }
+    println("{swap(p)} {names.a} {sum(t)}")
+}
+```
+
+```output
+Pair { a: 2, b: 1 } x 3
+```
+
+`Pair[Int]` and `Pair[String]` are different types, and `Pair { a: 1, b: "s" }` is an error. `let t = Leaf` is an error too, since nothing says what `T` is; write `let t: Tree[Int] = Leaf`.
+
 ## Methods
 
 `impl Type { }` gives a type its own functions. A method takes `self` and is called on a value; a type function takes no `self` and is called with `::`. Inside the `impl`, `Self` means the type:

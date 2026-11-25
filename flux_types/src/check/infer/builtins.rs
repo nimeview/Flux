@@ -801,6 +801,11 @@ pub(super) fn infer_with(
     let (base, pairs) = args.split_first()?;
     let base_ty = unwrap_value_type(&infer_expr(ctx, base, types, names, source, diagnostics)?);
     let expanded = ctx.expand(base_ty.clone());
+    // The result: the base, with unknown parts that the new values fix
+    // (`B { x: N } with { x: S(1) }` is a `B[O[Int]]`).
+    let mut result = expanded.clone();
+    // Values that fixed unknown parts, checked again against the result.
+    let mut refining: Vec<(String, Type, flux_diagnostics::Span)> = Vec::new();
     let fields = match &expanded {
         Type::Struct { fields, .. } => Some(fields.clone()),
         Type::Error => None,
@@ -843,11 +848,94 @@ pub(super) fn infer_with(
                         span: span_to_miette(value.span()),
                         source_id: value.span().source,
                     });
+                } else if crate::check::mentions_empty(want) {
+                    result = refine_field(&result, name, &got);
+                    refining.push((name.clone(), got.clone(), value.span()));
                 }
             }
         }
     }
-    Some(base_ty)
+    if result == expanded {
+        return Some(base_ty);
+    }
+    // Rebind the arguments from the template's fields.
+    let Type::Struct {
+        name, args, fields, ..
+    } = &result
+    else {
+        return Some(base_ty);
+    };
+    let Some(template) = ctx.user_type(name) else {
+        return Some(base_ty);
+    };
+    let mut bound = HashMap::new();
+    if let Type::Struct {
+        args: params,
+        fields: declared,
+        ..
+    } = template
+    {
+        for (param, arg) in params.iter().zip(args) {
+            crate::generic::bind(param, arg, &mut bound);
+        }
+        for (field, ty) in fields {
+            if let Some((_, want)) = declared.iter().find(|(f, _)| f == field) {
+                crate::generic::bind(want, ty, &mut bound);
+            }
+        }
+    }
+    let args = crate::generic::bound_args(template, &bound);
+    let instance = crate::generic::instantiate(template, &args);
+    // `with { a: S(1), b: S("s") }` on a `Pair[O[_]]`: the values must agree.
+    if let Type::Struct { fields, .. } = &instance {
+        for (field, got, at) in &refining {
+            if let Some((_, want)) = fields.iter().find(|(f, _)| f == field) {
+                if !types_compatible(want, got) {
+                    diagnostics.push(FluxError::TypeMismatch {
+                        expected: want.display(),
+                        found: got.display(),
+                        span: span_to_miette(*at),
+                        source_id: at.source,
+                    });
+                }
+            }
+        }
+    }
+    Some(instance)
+}
+
+/// A generic struct `ty` refined by `got` for its field `name`: the
+/// parameters behind the field's unknown parts take `got`'s.
+fn refine_field(ty: &Type, name: &str, got: &Type) -> Type {
+    let Type::Struct {
+        name: type_name,
+        args,
+        fields,
+    } = ty
+    else {
+        return ty.clone();
+    };
+    let Some((_, current)) = fields.iter().find(|(f, _)| f == name) else {
+        return ty.clone();
+    };
+    let refined = crate::check::refine_unknown(current, got);
+    Type::Struct {
+        name: type_name.clone(),
+        args: args.clone(),
+        fields: fields
+            .iter()
+            .map(|(f, t)| {
+                (
+                    f.clone(),
+                    if f == name {
+                        refined.clone()
+                    } else {
+                        t.clone()
+                    },
+                )
+            })
+            .collect(),
+    }
 }
 
 /// The method-only library functions (`flux_std::methods`); `args[0]` is the

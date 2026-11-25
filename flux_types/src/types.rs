@@ -39,12 +39,19 @@ pub enum Type {
         ok: Box<Type>,
         err: Box<Type>,
     },
+    /// `args` are the type arguments of a generic struct (`Pair[Int]`), and
+    /// `fields` have them substituted; a template's arguments are its
+    /// parameters as [`Type::Var`].
     Struct {
         name: String,
+        args: Vec<Type>,
         fields: Vec<(String, Type)>,
     },
+    /// `variants: []` is a placeholder that names the type without its
+    /// variants (see `TypeCheckContext::expand`).
     Enum {
         name: String,
+        args: Vec<Type>,
         variants: Vec<(String, Option<Type>)>,
     },
     Var(String),
@@ -137,11 +144,17 @@ impl Type {
             }
             // A user type is known by its name, which also keeps recursive
             // types readable. Only a struct-variant payload has no name.
-            Type::Struct { name, .. } | Type::Enum { name, .. } if !name.is_empty() => {
-                if internal {
-                    name.clone()
+            Type::Struct { name, args, .. } | Type::Enum { name, args, .. } if !name.is_empty() => {
+                let name = if internal {
+                    name.as_str()
                 } else {
-                    flux_value::type_display_name(name).to_string()
+                    flux_value::type_display_name(name)
+                };
+                if args.is_empty() {
+                    name.to_string()
+                } else {
+                    let args: Vec<String> = args.iter().map(|a| a.render(internal)).collect();
+                    format!("{name}[{}]", args.join(", "))
                 }
             }
             Type::Struct { fields, .. } => {

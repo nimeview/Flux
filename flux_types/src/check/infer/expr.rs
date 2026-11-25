@@ -42,8 +42,16 @@ fn bind_match_arm_locals(
         Type::Result { err, .. } if arm.variant == "Err" && arm.bindings.len() == 1 => {
             scope.insert(arm.bindings[0], *err);
         }
-        Type::Enum { name, .. } => {
-            if let Some(payload_ty) = ctx.enum_payload(&name, &arm.variant).cloned() {
+        enum_ty @ Type::Enum { .. } => {
+            // The instance's payload: a generic enum's has its arguments.
+            let Type::Enum { variants, .. } = ctx.expand(enum_ty) else {
+                return;
+            };
+            let payload = variants
+                .into_iter()
+                .find(|(n, _)| n == &arm.variant)
+                .and_then(|(_, p)| p);
+            if let Some(payload_ty) = payload {
                 let at = |sym: &SymbolId| ctx.symbol_spans.get(sym).copied();
                 let variant = &arm.variant;
                 let mut report = |expected: String, found: String, sym: &SymbolId| {
@@ -142,7 +150,13 @@ fn infer_arm_body(
                         check_assignable(&declared, &value, l.value.span(), diagnostics);
                         declared
                     }
-                    None => value,
+                    // As for any binding: a bare `[]` or a type argument
+                    // nothing fixes needs an annotation.
+                    None => super::super::stmt::reject_empty_array_binding(
+                        value,
+                        l.value.span(),
+                        diagnostics,
+                    ),
                 };
                 scope.insert(l.name, ty);
             }
@@ -736,7 +750,7 @@ pub(crate) fn infer_expr(
                 return Some(Type::Array(Box::new(Type::Empty)));
             }
             let first = infer_expr(ctx, &elems[0], types, names, source, diagnostics)?;
-            let elem = unwrap_value_type(&first);
+            let mut elem = unwrap_value_type(&first);
             for item in &elems[1..] {
                 let got = infer_expr(ctx, item, types, names, source, diagnostics)?;
                 let got = unwrap_value_type(&got);
@@ -747,6 +761,10 @@ pub(crate) fn infer_expr(
                         span: span_to_miette(item.span()),
                         source_id: item.span().source,
                     });
+                } else {
+                    // `[None, Some(1)]`, `[Leaf, Node(2)]`: later elements
+                    // fix what the first left unknown.
+                    elem = super::super::util::refine_unknown(&elem, &got);
                 }
             }
             Some(Type::Array(Box::new(elem)))
@@ -962,6 +980,9 @@ pub(crate) fn infer_expr(
             let Type::Enum { variants, .. } = &enum_ty else {
                 unreachable!()
             };
+            // A generic enum's arguments come from the payload; the others
+            // are unknown until context fixes them (`let t: Tree[Int] = Leaf`).
+            let mut bound = HashMap::new();
             match variants.iter().find(|(name, _)| name == variant) {
                 Some((_, Some(expected))) => match payload.as_deref() {
                     // `Rect { w: 2 }`: the fields of a struct variant.
@@ -973,16 +994,19 @@ pub(crate) fn infer_expr(
                         Type::Struct {
                             name,
                             fields: declared,
-                        } if name.is_empty() => check_struct_fields(
-                            ctx,
-                            declared,
-                            fields,
-                            *at,
-                            types,
-                            names,
-                            source,
-                            diagnostics,
-                        ),
+                            ..
+                        } if name.is_empty() => {
+                            bound = check_struct_fields(
+                                ctx,
+                                declared,
+                                fields,
+                                *at,
+                                types,
+                                names,
+                                source,
+                                diagnostics,
+                            )
+                        }
                         _ => diagnostics.push(FluxError::TypeMismatch {
                             expected: format!("`{variant}(…)`: its payload has no field names"),
                             found: format!("`{variant} {{ … }}`"),
@@ -994,9 +1018,13 @@ pub(crate) fn infer_expr(
                         let got = infer_expr(ctx, payload, types, names, source, diagnostics)
                             .unwrap_or(Type::Error);
                         let got = unwrap_value_type(&got);
+                        crate::generic::bind(expected, &got, &mut bound);
+                        let params: HashMap<&str, Type> =
+                            bound.iter().map(|(k, v)| (k.as_str(), v.clone())).collect();
+                        let expected = crate::generic::substitute(expected, &params);
                         if !expected.is_error()
                             && !got.is_error()
-                            && !types_compatible(expected, &got)
+                            && !types_compatible(&expected, &got)
                         {
                             diagnostics.push(FluxError::TypeMismatch {
                                 expected: expected.display(),
@@ -1036,7 +1064,8 @@ pub(crate) fn infer_expr(
                     source_id: span.source,
                 }),
             }
-            Some(enum_ty)
+            let args = crate::generic::bound_args(&enum_ty, &bound);
+            Some(crate::generic::instantiate(&enum_ty, &args))
         }
         HirExpr::StructLit { name, fields, span } => {
             let Some(struct_ty @ Type::Struct { .. }) = ctx.user_type(name).cloned() else {
@@ -1054,7 +1083,7 @@ pub(crate) fn infer_expr(
             else {
                 unreachable!()
             };
-            check_struct_fields(
+            let bound = check_struct_fields(
                 ctx,
                 declared_fields,
                 fields,
@@ -1064,7 +1093,9 @@ pub(crate) fn infer_expr(
                 source,
                 diagnostics,
             );
-            Some(struct_ty)
+            // A generic struct's arguments come from its field values.
+            let args = crate::generic::bound_args(&struct_ty, &bound);
+            Some(crate::generic::instantiate(&struct_ty, &args))
         }
         HirExpr::Field { base, field, span } => {
             let base_ty = infer_expr(ctx, base, types, names, source, diagnostics)?;
@@ -1438,8 +1469,10 @@ fn captured_change(
     });
 }
 
-/// Checks a struct literal's fields against the declared ones: each exactly
-/// once, none unknown, none missing, each of its type.
+/// Checks a struct literal's (or struct variant's) fields against
+/// `declared_fields`: each exactly once, none unknown, none missing, each of
+/// its type. A generic template's fields mention its parameters as
+/// [`Type::Var`]; they are bound from the values, and the bindings returned.
 #[allow(clippy::too_many_arguments)]
 fn check_struct_fields(
     ctx: &TypeCheckContext,
@@ -1450,10 +1483,24 @@ fn check_struct_fields(
     names: &HashMap<SymbolId, String>,
     source: SourceId,
     diagnostics: &mut DiagnosticBag,
-) {
+) -> HashMap<String, Type> {
+    let got: Vec<Type> = fields
+        .iter()
+        .map(|(_, expr)| {
+            let ty =
+                infer_expr(ctx, expr, types, names, source, diagnostics).unwrap_or(Type::Error);
+            unwrap_value_type(&ty)
+        })
+        .collect();
+    let mut bound = HashMap::new();
+    for ((field_name, _), got) in fields.iter().zip(&got) {
+        if let Some((_, expected)) = declared_fields.iter().find(|(d, _)| d == field_name) {
+            crate::generic::bind(expected, got, &mut bound);
+        }
+    }
+    let params: HashMap<&str, Type> = bound.iter().map(|(k, v)| (k.as_str(), v.clone())).collect();
     let mut seen = std::collections::HashSet::new();
-    for (field_name, expr) in fields {
-        let got = infer_expr(ctx, expr, types, names, source, diagnostics).unwrap_or(Type::Error);
+    for ((field_name, expr), got) in fields.iter().zip(got) {
         let Some((_, expected)) = declared_fields
             .iter()
             .find(|(declared, _)| declared == field_name)
@@ -1481,8 +1528,8 @@ fn check_struct_fields(
                 source_id: expr.span().source,
             });
         }
-        let got = unwrap_value_type(&got);
-        if !expected.is_error() && !got.is_error() && !types_compatible(expected, &got) {
+        let expected = crate::generic::substitute(expected, &params);
+        if !expected.is_error() && !got.is_error() && !types_compatible(&expected, &got) {
             diagnostics.push(FluxError::TypeMismatch {
                 expected: expected.display(),
                 found: got.display(),
@@ -1501,4 +1548,5 @@ fn check_struct_fields(
             });
         }
     }
+    bound
 }

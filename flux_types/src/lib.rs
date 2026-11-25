@@ -1,5 +1,6 @@
 mod builtins;
 mod check;
+mod generic;
 mod mono;
 #[allow(dead_code)]
 mod registry;

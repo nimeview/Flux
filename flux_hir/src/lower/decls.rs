@@ -406,7 +406,12 @@ pub(super) fn lower_struct(
     let fields = decl
         .fields
         .iter()
-        .map(|f| (f.name.name.clone(), lower_type(&f.ty)))
+        .map(|f| {
+            (
+                f.name.name.clone(),
+                crate::nodes::lower_type_with_params(&f.ty, &decl.type_params),
+            )
+        })
         .collect();
     Some(HirStruct {
         name: sym.id,
@@ -416,13 +421,14 @@ pub(super) fn lower_struct(
     })
 }
 
-fn lower_enum_payload(payload: &flux_syntax::EnumPayload) -> HirEnumPayload {
+fn lower_enum_payload(payload: &flux_syntax::EnumPayload, params: &[String]) -> HirEnumPayload {
+    let lower = |t| crate::nodes::lower_type_with_params(t, params);
     match payload {
-        flux_syntax::EnumPayload::Tuple(ty) => HirEnumPayload::Tuple(lower_type(ty)),
+        flux_syntax::EnumPayload::Tuple(ty) => HirEnumPayload::Tuple(lower(ty)),
         flux_syntax::EnumPayload::Struct(fields) => HirEnumPayload::Struct(
             fields
                 .iter()
-                .map(|(n, t)| (n.name.clone(), lower_type(t)))
+                .map(|(n, t)| (n.name.clone(), lower(t)))
                 .collect(),
         ),
     }
@@ -439,12 +445,15 @@ pub(super) fn lower_enum(
         .map(|v| {
             (
                 v.name.name.clone(),
-                v.payload.as_ref().map(lower_enum_payload),
+                v.payload
+                    .as_ref()
+                    .map(|p| lower_enum_payload(p, &decl.type_params)),
             )
         })
         .collect();
     Some(HirEnum {
         name: sym.id,
+        type_params: decl.type_params.clone(),
         variants,
         span: decl.span,
     })

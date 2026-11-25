@@ -6,6 +6,7 @@ Notable changes to Flux. The versioning policy is in [`RELEASE.md`](RELEASE.md).
 
 ### Added
 
+- Generic structs and enums: `struct Pair[T] { a: T, b: T }`, `enum Tree[T] { Leaf, Node(T) }`, written `Pair[Int]`. Type arguments come from the values and from context (an annotation, a parameter, a return type), never written at construction; `let t = Leaf` alone is an error that suggests an annotation.
 - Type names belong to their module: two modules may each declare `Point`. Another module's type is `geo::Point` or imported by name, and an imported enum's variants can be written bare.
 - Modules for command-line programs: `env` (`env_var`, `current_dir`), `fs` (`list_dir`, `is_dir`, `create_dir`, `remove_file`, `remove_dir`), `path` (`path_join`, `file_name`, `extension`, `parent`), and `process` (`exit`, `run`), and `read_stdin` in `io`. Expected failures are `Err` with a message, like `read_file`.
 
@@ -17,6 +18,9 @@ Notable changes to Flux. The versioning policy is in [`RELEASE.md`](RELEASE.md).
 
 ### Fixed
 
+- A generic call as the argument of another, `id(id(3))`, was an error ("generic type arguments could not be unified").
+- An array literal took its element type from its first element only, so `[None, Some(1)]` was an error; later elements now fix what the first left unknown.
+- A type parameter named twice, `fn f[T, T]`, was accepted; it is an error (E004).
 - When a callback of `map`, `filter`, or `reduce` failed, the remaining elements were still passed to it, so its printing and other effects went on after the error.
 - A method named like a changing library method (`push`, `pop`, `set`, `sort`, `reverse`, `remove`) on a type that defines it without changing its receiver lost its value when written last in a block: `fn f(s: S) -> Int { s.push(1) }` was a type error.
 - After an error in a function body, the function's parameters stayed in scope and hid the same names in the functions after it, so their errors appeared only after the first was fixed.

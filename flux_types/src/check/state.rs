@@ -146,8 +146,9 @@ impl TypeCheckContext {
                         .iter()
                         .map(|(n, t)| (n.clone(), resolve_hir_type_simple(t)))
                         .collect();
+                    let args = s.type_params.iter().cloned().map(Type::Var).collect();
                     ctx.user_types
-                        .insert(name.clone(), Type::Struct { name, fields });
+                        .insert(name.clone(), Type::Struct { name, args, fields });
                 }
                 HirItem::Enum(e) => {
                     let name = program.names.get(&e.name).cloned().unwrap_or_default();
@@ -156,8 +157,15 @@ impl TypeCheckContext {
                         .iter()
                         .map(|(n, p)| (n.clone(), p.as_ref().map(enum_payload_to_type)))
                         .collect();
-                    ctx.user_types
-                        .insert(name.clone(), Type::Enum { name, variants });
+                    let args = e.type_params.iter().cloned().map(Type::Var).collect();
+                    ctx.user_types.insert(
+                        name.clone(),
+                        Type::Enum {
+                            name,
+                            args,
+                            variants,
+                        },
+                    );
                 }
                 _ => {}
             }
@@ -236,6 +244,19 @@ impl TypeCheckContext {
         self.user_types.get(name)
     }
 
+    /// A user type with its fields or variants, for its type arguments
+    /// (`Pair[Int]`'s `a` is `Int`); other types as they are.
+    pub fn instance_of(&self, ty: &Type) -> Type {
+        match ty {
+            Type::Struct { name, args, .. } | Type::Enum { name, args, .. } if !name.is_empty() => {
+                self.user_type(name)
+                    .map(|template| crate::generic::instantiate(template, args))
+                    .unwrap_or_else(|| ty.clone())
+            }
+            _ => ty.clone(),
+        }
+    }
+
     pub fn type_alias(&self, name: &str) -> Option<&flux_hir::HirType> {
         self.type_aliases.get(name)
     }
@@ -251,9 +272,14 @@ impl TypeCheckContext {
     /// placeholder; anything that looks inside a type expands it first.
     pub(crate) fn expand(&self, ty: Type) -> Type {
         match &ty {
-            Type::Enum { name, variants } if variants.is_empty() => {
-                self.user_type(name).cloned().unwrap_or(ty)
-            }
+            Type::Enum {
+                name,
+                args,
+                variants,
+            } if variants.is_empty() => match self.user_type(name) {
+                Some(template) => crate::generic::instantiate(template, args),
+                None => ty,
+            },
             _ => ty,
         }
     }
@@ -280,16 +306,26 @@ fn fill_user_types(ty: &Type, registered: &HashMap<String, Type>, depth: usize) 
     }
     let next = |t: &Type| fill_user_types(t, registered, depth - 1);
     match ty {
-        Type::Enum { name, variants } if variants.is_empty() => match registered.get(name) {
-            Some(real) => next(real),
+        Type::Enum {
+            name,
+            args,
+            variants,
+        } if variants.is_empty() => match registered.get(name) {
+            Some(real) => next(&crate::generic::instantiate(real, args)),
             None => ty.clone(),
         },
-        Type::Struct { name, fields } => Type::Struct {
+        Type::Struct { name, args, fields } => Type::Struct {
             name: name.clone(),
+            args: args.clone(),
             fields: fields.iter().map(|(n, t)| (n.clone(), next(t))).collect(),
         },
-        Type::Enum { name, variants } => Type::Enum {
+        Type::Enum {
+            name,
+            args,
+            variants,
+        } => Type::Enum {
             name: name.clone(),
+            args: args.clone(),
             variants: variants
                 .iter()
                 .map(|(n, p)| (n.clone(), p.as_ref().map(next)))

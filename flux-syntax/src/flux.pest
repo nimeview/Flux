@@ -45,7 +45,7 @@ struct_decl = { pub_modifier? ~ "struct" ~ ident ~ type_params? ~ struct_fields 
 struct_fields = { "{" ~ struct_field ~ ("," ~ struct_field)* ~ ","? ~ "}" }
 struct_field = { ident ~ ":" ~ type_name }
 
-enum_decl = { pub_modifier? ~ "enum" ~ ident ~ enum_variants }
+enum_decl = { pub_modifier? ~ "enum" ~ ident ~ type_params? ~ enum_variants }
 enum_variants = { "{" ~ enum_variant ~ ("," ~ enum_variant)* ~ ","? ~ "}" }
 enum_variant = { ident ~ enum_payload? }
 enum_payload = { tuple_payload | struct_payload }

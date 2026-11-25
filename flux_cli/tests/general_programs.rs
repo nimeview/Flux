@@ -98,6 +98,19 @@ fn shopping_cart_reacts_to_events() {
 }
 
 #[test]
+fn search_tree_orders_numbers_and_words_with_one_generic_tree() {
+    assert_report(
+        "search_tree.fl",
+        &[
+            "[1, 2, 5, 8, 9]",
+            "[\"brown\", \"dog\", \"fox\", \"jumps\", \"lazy\", \"over\", \"quick\", \"the\"]",
+            "Stats { size: 5, smallest: Some(1) }",
+            "8 words, first brown",
+        ],
+    );
+}
+
+#[test]
 fn dir_report_lists_a_directory_and_exits_1_when_it_is_missing() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::create_dir(dir.path().join("notes")).unwrap();

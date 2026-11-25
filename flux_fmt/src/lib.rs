@@ -255,7 +255,12 @@ fn format_item(item: &Item, out: &mut String, level: usize) {
         Item::Enum(e) => {
             indent(out, level);
             let prefix = pub_prefix(e.pub_);
-            out.push_str(&format!("{prefix}enum {} {{\n", e.name.name));
+            let params = if e.type_params.is_empty() {
+                String::new()
+            } else {
+                format!("[{}]", e.type_params.join(", "))
+            };
+            out.push_str(&format!("{prefix}enum {}{} {{\n", e.name.name, params));
             for (i, v) in e.variants.iter().enumerate() {
                 indent(out, level + 1);
                 let comma = if i + 1 < e.variants.len() { "," } else { "" };

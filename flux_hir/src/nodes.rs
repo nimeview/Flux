@@ -87,6 +87,7 @@ pub struct HirStruct {
 #[derive(Debug, Clone)]
 pub struct HirEnum {
     pub name: SymbolId,
+    pub type_params: Vec<String>,
     pub variants: Vec<(String, Option<HirEnumPayload>)>,
     pub span: Span,
 }
@@ -597,37 +598,52 @@ impl HirExpr {
 }
 
 pub fn lower_type(ty: &TypeName) -> HirType {
+    lower_type_with_params(ty, &[])
+}
+
+/// [`lower_type`] where the names in `params` are type parameters, at any
+/// depth (`[T]`, `Tree[T]`, `fn(T) -> U`): a generic struct's or enum's.
+pub fn lower_type_with_params(ty: &TypeName, params: &[String]) -> HirType {
+    let lower = |t: &TypeName| lower_type_with_params(t, params);
     match ty {
+        TypeName::Simple { name, span } if params.contains(name) => HirType::TypeParam {
+            name: name.clone(),
+            span: *span,
+        },
         TypeName::Simple { name, span } => HirType::Named {
             name: name.clone(),
             span: *span,
         },
         TypeName::Tuple { elems, span } => HirType::Generic {
             name: TUPLE.to_string(),
-            args: elems.iter().map(lower_type).collect(),
+            args: elems.iter().map(lower).collect(),
             span: *span,
         },
         TypeName::Generic { name, args, span } => HirType::Generic {
             name: name.clone(),
-            args: args.iter().map(lower_type).collect(),
+            args: args.iter().map(lower).collect(),
             span: *span,
         },
         TypeName::Array { inner, span } => HirType::Array {
-            inner: Box::new(lower_type(inner)),
+            inner: Box::new(lower(inner)),
             span: *span,
         },
         TypeName::Option { inner, span } => HirType::Option {
-            inner: Box::new(lower_type(inner)),
+            inner: Box::new(lower(inner)),
             span: *span,
         },
         TypeName::Result { ok, err, span } => HirType::Result {
-            ok: Box::new(lower_type(ok)),
-            err: Box::new(lower_type(err)),
+            ok: Box::new(lower(ok)),
+            err: Box::new(lower(err)),
             span: *span,
         },
-        TypeName::Function { params, ret, span } => HirType::Function {
-            params: params.iter().map(lower_type).collect(),
-            ret: ret.as_ref().map(|r| Box::new(lower_type(r))),
+        TypeName::Function {
+            params: ps,
+            ret,
+            span,
+        } => HirType::Function {
+            params: ps.iter().map(lower).collect(),
+            ret: ret.as_ref().map(|r| Box::new(lower(r))),
             span: *span,
         },
     }

@@ -74,6 +74,8 @@ function files(dir, out = []) {
         ["act fn pay(n: Int) { }", "pay", "entity.name.function"],
         ["struct Point { x: Int }", "Point", "entity.name.type"],
         ["enum Light { Red, Green(Int) }", "enum", "storage.type"],
+        ["enum Tree[T] { Leaf, Node(T) }", "Tree", "entity.name.type"],
+        ["struct Pair[T] { a: T }", "Pair", "entity.name.type"],
         ["impl Area for Square { }", "Area", "entity.name.type"],
         ["impl Point { }", "Point", "entity.name.type"],
         ["let p = Point::new(1)", "Point", "entity.name.namespace"],

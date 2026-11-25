@@ -308,14 +308,13 @@ fn member_definition(
     let typed = analysis.typed.as_ref()?;
     let receiver = receiver_expr_before_dot(contents, offset)?;
     let receiver_ty = type_of_receiver(receiver, hir, typed)?;
-    let inner = unwrap_type(&receiver_ty);
     let ctx = TypeCheckContext::from_program(hir);
+    let inner = ctx.instance_of(&unwrap_type(&receiver_ty));
 
-    if let Type::Struct { name, .. } = inner {
-        let ctx = TypeCheckContext::from_program(hir);
-        if let Some(Type::Struct { fields, .. }) = ctx.user_type(&name) {
+    if let Type::Struct { ref name, .. } = inner {
+        if let Type::Struct { fields, .. } = ctx.instance_of(&inner) {
             if fields.iter().any(|(f, _)| f == member) {
-                return analysis.symbols.by_name.get(&name).cloned();
+                return analysis.symbols.by_name.get(name).cloned();
             }
         }
         return None;
@@ -361,19 +360,16 @@ pub fn member_completions(
     let Some(receiver_ty) = type_of_receiver(receiver, hir, typed) else {
         return Vec::new();
     };
-    let inner = unwrap_type(&receiver_ty);
     let ctx = TypeCheckContext::from_program(hir);
+    let inner = ctx.instance_of(&unwrap_type(&receiver_ty));
     let mut items = Vec::new();
     let mut seen = std::collections::HashSet::new();
 
-    if let Type::Struct { name, .. } = &inner {
-        let fields = ctx
-            .user_type(name)
-            .and_then(|t| match t {
-                Type::Struct { fields, .. } => Some(fields.clone()),
-                _ => None,
-            })
-            .unwrap_or_default();
+    if let Type::Struct { .. } = &inner {
+        let fields = match ctx.instance_of(&inner) {
+            Type::Struct { fields, .. } => fields,
+            _ => Vec::new(),
+        };
         for (field, ty) in fields {
             if seen.insert(field.clone()) {
                 items.push(MemberCompletion {
@@ -486,12 +482,7 @@ fn receiver_type_at(analysis: &DocAnalysis, contents: &str, dot: usize) -> Optio
     let ctx = TypeCheckContext::from_program(hir);
     for field in parts {
         let inner = unwrap_type(&ty);
-        let inner = match &inner {
-            Type::Struct { name, .. } | Type::Enum { name, .. } => {
-                ctx.user_type(name).cloned().unwrap_or(inner)
-            }
-            _ => inner,
-        };
+        let inner = ctx.instance_of(&inner);
         ty = match inner {
             Type::Struct { fields, .. } => fields.into_iter().find(|(n, _)| n == field)?.1,
             Type::Tuple(elems) => elems.get(field.parse::<usize>().ok()?)?.clone(),

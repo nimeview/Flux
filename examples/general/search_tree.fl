@@ -1,0 +1,55 @@
+// A binary search tree that holds any ordered values: a generic enum and
+// generic functions, used for numbers and for words.
+import io { println }
+
+enum Tree[T] {
+    Leaf,
+    Node { value: T, left: Tree[T], right: Tree[T] }
+}
+
+struct Stats[T] {
+    size: Int,
+    smallest: Option[T]
+}
+
+fn insert[T](tree: Tree[T], x: T) -> Tree[T] {
+    match tree {
+        Leaf => Node { value: x, left: Leaf, right: Leaf },
+        Node { value, left, right } if x < value => Node { value: value, left: insert(left, x), right: right },
+        Node { value, left, right } if x > value => Node { value: value, left: left, right: insert(right, x) },
+        Node { value, left, right } => Node { value: value, left: left, right: right }
+    }
+}
+
+fn in_order[T](tree: Tree[T]) -> [T] {
+    match tree {
+        Leaf => [],
+        Node { value, left, right } => in_order(left) + [value] + in_order(right)
+    }
+}
+
+fn stats[T](tree: Tree[T]) -> Stats[T] {
+    let items = in_order(tree)
+    Stats { size: items.len(), smallest: items.first() }
+}
+
+fn build[T](items: [T], empty: Tree[T]) -> Tree[T] {
+    let mut tree = empty
+    for x in items {
+        tree = insert(tree, x)
+    }
+    tree
+}
+
+fn main() {
+    let no_numbers: Tree[Int] = Leaf
+    let numbers = build([5, 2, 8, 2, 9, 1], no_numbers)
+    let no_words: Tree[String] = Leaf
+    let words = build("the quick brown fox jumps over the lazy dog".split(" "), no_words)
+    println("{in_order(numbers)}")
+    println("{in_order(words)}")
+    println("{stats(numbers)}")
+    let summary = stats(words)
+    let first = summary.smallest.unwrap_or("none")
+    println("{summary.size} words, first {first}")
+}
