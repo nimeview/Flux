@@ -328,6 +328,19 @@ pub enum FluxError {
         fix_span: Option<miette::SourceSpan>,
     },
 
+    /// A module's code changes a source another module declares.
+    #[error("`{name}` belongs to another module; only that module changes it")]
+    #[diagnostic(
+        code(flux::E032),
+        help("emit one of its events, or call one of its `pub act fn`s")
+    )]
+    ForeignSourceWrite {
+        name: String,
+        #[label("changes another module's source")]
+        span: miette::SourceSpan,
+        source_id: SourceId,
+    },
+
     /// A generic call's type argument lacks a trait its parameter's bound names.
     #[error("`{ty}` does not have trait `{trait_name}`, which `{function}` needs for `{param}`")]
     #[diagnostic(code(flux::E031), help("{help}"))]
@@ -374,11 +387,12 @@ impl FluxError {
             | Self::UninhabitedType { source_id, .. }
             | Self::ImportedNameTaken { source_id, .. }
             | Self::WriteOutsideAct { source_id, .. }
-            | Self::UnsatisfiedBound { source_id, .. } => *source_id,
+            | Self::UnsatisfiedBound { source_id, .. }
+            | Self::ForeignSourceWrite { source_id, .. } => *source_id,
         }
     }
 
-    /// Stable diagnostic code (`E000`–`E027` and `E031`; warnings use E015,
+    /// Stable diagnostic code (`E000`–`E027`, `E031`, and `E032`; warnings use E015,
     /// E026, and E028–E030).
     pub fn code(&self) -> &'static str {
         match self {
@@ -410,6 +424,7 @@ impl FluxError {
             Self::ImportedNameTaken { .. } => "E004",
             Self::WriteOutsideAct { .. } => "E027",
             Self::UnsatisfiedBound { .. } => "E031",
+            Self::ForeignSourceWrite { .. } => "E032",
         }
     }
 
@@ -445,6 +460,7 @@ impl FluxError {
             | Self::ImportedNameTaken { span, .. }
             | Self::WriteOutsideAct { span, .. }
             | Self::UnsatisfiedBound { span, .. }
+            | Self::ForeignSourceWrite { span, .. }
             | Self::DuplicateDefinition { span, .. } => *span,
         };
         crate::warning::span_from_miette(source_id, miette_span)

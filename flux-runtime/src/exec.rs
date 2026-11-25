@@ -145,6 +145,9 @@ pub struct Executor {
     trap: Option<Box<RuntimeError>>,
     /// Compiled code failed: the VM reruns it, and runs everything from then on.
     vm_only: bool,
+    /// While modules initialize: the watches (by index) that may run, those
+    /// of the modules initialized so far.
+    initial_watches: Option<HashSet<usize>>,
     /// Operand stacks reused across expression evaluations.
     stack_pool: Vec<Vec<RuntimeValue>>,
     /// Cleared frames reused by calls: allocating one per call dominated
@@ -344,30 +347,63 @@ impl Executor {
             call_depth: 0,
             trap: None,
             vm_only: false,
+            initial_watches: None,
         };
-        // Initial values are assigned without propagation; derived values and
-        // watches then run once over the fully initialized graph.
-        this.defer_propagation = true;
-        for stmt in &this.program.init_stmts.clone() {
-            this.run_stmt(stmt, &mut Locals::default());
+        // Modules initialize one after another, dependencies first. A
+        // module's initial values are assigned without propagation; then
+        // derived values recompute and the watches of the modules so far run
+        // (a watch that ran before runs again only if what it follows
+        // changed). Without groups: all statements, then all watches.
+        let stmts = this.program.init_stmts.clone();
+        let groups = if this.program.init_groups.is_empty() {
+            vec![flux_ir::InitGroup {
+                stmts_end: stmts.len(),
+                watches: (0..this.program.watches.len()).collect(),
+                derived: Vec::new(),
+            }]
+        } else {
+            this.program.init_groups.clone()
+        };
+        let mut start = 0;
+        let mut scope: HashSet<usize> = HashSet::new();
+        let last = groups.len() - 1;
+        for (g, group) in groups.iter().enumerate() {
+            this.defer_propagation = true;
+            for stmt in &stmts[start..group.stmts_end] {
+                this.run_stmt(stmt, &mut Locals::default());
+                if this.trap.is_some() {
+                    let binding = match stmt {
+                        flux_ir::IrStmt::Assign { target, .. } => Some(target.as_str()),
+                        _ => None,
+                    };
+                    let declared = binding.and_then(|b| this.program.source_map.bindings.get(b));
+                    let declared = declared.copied();
+                    this.push_trace_frame("module initialization".to_string(), declared);
+                    this.set_trap_context("module initialization", binding);
+                    break;
+                }
+            }
+            start = group.stmts_end;
+            this.defer_propagation = false;
+            this.reactive.mutated_sources.clear();
+            this.reactive.changed_nodes.clear();
             if this.trap.is_some() {
-                let binding = match stmt {
-                    flux_ir::IrStmt::Assign { target, .. } => Some(target.as_str()),
-                    _ => None,
-                };
-                let declared = binding.and_then(|b| this.program.source_map.bindings.get(b));
-                let declared = declared.copied();
-                this.push_trace_frame("module initialization".to_string(), declared);
-                this.set_trap_context("module initialization", binding);
                 break;
             }
-        }
-        this.defer_propagation = false;
-        this.reactive.mutated_sources.clear();
-        this.reactive.changed_nodes.clear();
-        if this.trap.is_none() {
-            this.recompute_all();
+            scope.extend(group.watches.iter().copied());
+            // Later modules' derived values wait for their statements.
+            if g == last {
+                this.recompute_all();
+            } else {
+                let ids: Vec<NodeId> = group.derived.iter().map(|id| NodeId(id.0)).collect();
+                this.recompute(&ids);
+            }
+            this.initial_watches = Some(scope.clone());
             this.run_watches();
+            this.initial_watches = None;
+            if this.trap.is_some() {
+                break;
+            }
         }
         if let Some(err) = this.trap.take() {
             return Err(ExecutorError::Runtime(*err));
@@ -604,6 +640,26 @@ impl Executor {
         self.reactive.mutated_sources = sources;
         if !self.in_watch {
             self.run_watches();
+        }
+    }
+
+    /// Computes the derived values `ids` (a module's), in dependency order.
+    fn recompute(&mut self, ids: &[NodeId]) {
+        let wanted: HashSet<NodeId> = ids.iter().copied().collect();
+        let derived: Vec<_> = self
+            .graph
+            .topo_order
+            .iter()
+            .filter(|id| wanted.contains(id))
+            .filter_map(|&id| self.reactive.node_of[id.0 as usize].map(|idx| (id, idx)))
+            .collect();
+        for (id, idx) in derived {
+            let value = self.eval_derived(id, idx);
+            if self.trap.is_some() {
+                self.note_derived_failure(id);
+                return;
+            }
+            self.graph.nodes[id.0 as usize].value = value;
         }
     }
 
@@ -962,7 +1018,15 @@ impl Executor {
                 .enumerate()
                 .filter(|(_, (idx, triggers))| {
                     !ran.contains(idx)
+                        && self
+                            .initial_watches
+                            .as_ref()
+                            .is_none_or(|w| w.contains(idx))
                         && (run_all
+                            // While modules initialize, a watch that has not
+                            // run yet runs, whatever else changed.
+                            || (self.initial_watches.is_some()
+                                && self.reactive.watch_memory[*idx].is_none())
                             || triggers
                                 .iter()
                                 .any(|dep| self.reactive.changed_marks[dep.0 as usize]))

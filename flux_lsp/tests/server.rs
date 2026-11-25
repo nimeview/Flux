@@ -1439,3 +1439,109 @@ fn hover_on_a_generic_method_call_shows_the_instance() {
     assert!(hover.contains("Int64"), "{hover}");
     shutdown(&client, handle);
 }
+
+/// A module with its own handlers and watches has no errors in the editor,
+/// and writing its source from an importer is E032 there.
+#[test]
+fn a_reactive_module_checks_and_its_sources_are_read_only_outside() {
+    let (_dir, main, util) = import_project(
+        "pub let mut count = 0\npub event Inc(by: Int)\non Inc(by) {\n    count += by\n}\nwatch count {\n    let seen = count\n}\n",
+    );
+    let (client, handle) = start_server();
+    let util_text = std::fs::read_to_string(util.to_file_path().unwrap()).unwrap();
+    did_open_uri(&client, util.clone(), &util_text);
+    let module = recv_diagnostics(&client);
+    assert!(module.diagnostics.is_empty(), "{module:?}");
+    did_open_uri(
+        &client,
+        main,
+        "import util { count, Inc }\nevent Go\non Go {\n    count = 1\n}\nfn main() {\n}\n",
+    );
+    let root = recv_diagnostics(&client);
+    assert!(
+        root.diagnostics
+            .iter()
+            .any(|d| d.message.contains("belongs to another module")),
+        "{root:?}"
+    );
+    shutdown(&client, handle);
+}
+
+/// Renaming an imported module's event renames it where it is declared,
+/// handled, and emitted, also written `c::E`.
+#[test]
+fn rename_of_a_module_event_reaches_qualified_uses() {
+    let (_dir, main, util) = import_project("pub event E(n: Int)\n");
+    let root = util.to_file_path().unwrap().parent().unwrap().to_path_buf();
+    let text = "import util as c\non c::E(n) {\n}\nact fn main() {\n    emit c::E(1)\n}\n";
+    std::fs::write(root.join("main.fl"), text).unwrap();
+    let (client, handle) = start_server();
+    did_open_uri(&client, main.clone(), text);
+    let _ = recv_diagnostics(&client);
+    let result = ask(
+        &client,
+        2,
+        "textDocument/rename",
+        serde_json::json!({
+            "textDocument": { "uri": main.clone() },
+            "position": { "line": 1, "character": 6 },
+            "newName": "F",
+        }),
+    );
+    shutdown(&client, handle);
+    let edits = &result["changes"][main.as_str()];
+    let ranges: Vec<(u64, u64, u64)> = edits
+        .as_array()
+        .expect("edits in main")
+        .iter()
+        .map(|e| {
+            let r = &e["range"];
+            (
+                r["start"]["line"].as_u64().unwrap(),
+                r["start"]["character"].as_u64().unwrap(),
+                r["end"]["character"].as_u64().unwrap(),
+            )
+        })
+        .collect();
+    let mut ranges = ranges;
+    ranges.sort();
+    assert_eq!(ranges, [(1, 6, 7), (4, 12, 13)], "{result}");
+    assert!(result["changes"][util.as_str()].is_array(), "{result}");
+}
+
+/// A module alias spelled like the event keeps its name on rename.
+#[test]
+fn rename_of_an_event_leaves_an_alias_of_the_same_spelling() {
+    let (_dir, main, util) = import_project("pub event E(n: Int)\n");
+    let root = util.to_file_path().unwrap().parent().unwrap().to_path_buf();
+    let text = "import util as E\non E::E(n) {\n}\nact fn main() {\n    emit E::E(1)\n}\n";
+    std::fs::write(root.join("main.fl"), text).unwrap();
+    let (client, handle) = start_server();
+    did_open_uri(&client, main.clone(), text);
+    let _ = recv_diagnostics(&client);
+    let result = ask(
+        &client,
+        2,
+        "textDocument/rename",
+        serde_json::json!({
+            "textDocument": { "uri": main.clone() },
+            "position": { "line": 1, "character": 6 },
+            "newName": "F",
+        }),
+    );
+    shutdown(&client, handle);
+    let mut ranges: Vec<(u64, u64)> = result["changes"][main.as_str()]
+        .as_array()
+        .expect("edits in main")
+        .iter()
+        .map(|e| {
+            let r = &e["range"];
+            (
+                r["start"]["line"].as_u64().unwrap(),
+                r["start"]["character"].as_u64().unwrap(),
+            )
+        })
+        .collect();
+    ranges.sort();
+    assert_eq!(ranges, [(1, 6), (4, 12)], "{result}");
+}

@@ -6,6 +6,7 @@ Notable changes to Flux. The versioning policy is in [`RELEASE.md`](RELEASE.md).
 
 ### Added
 
+- Reactive components: an imported module can have `on` handlers, `watch`es, and top-level `if`s, and owns its sources. Events are used like functions: `emit counter::Inc(1)`, `emit Inc(1)` after importing it, and `on counter::Inc(by) { }` in an importer. Modules initialize dependencies first, each running its watches at the end of its own initialization.
 - Trait bounds: `fn largest[T: Ord](xs: [T]) -> T`, `[T: Ord + Display]`. A call whose type lacks a bound's trait is the new error E031. The library traits `Eq`, `Ord`, and `Display` can be named in bounds; a user type gets `Display` with `impl Display for P { fn to_string(self) -> String }`.
 - Impls for generic types: `impl[T] Pair[T] { … }`, `impl[T: Display] Display for Pair[T] { … }`, with type functions such as `Pair::new`.
 - Generic structs and enums: `struct Pair[T] { a: T, b: T }`, `enum Tree[T] { Leaf, Node(T) }`, written `Pair[Int]`. Type arguments come from the values and from context (an annotation, a parameter, a return type), never written at construction; `let t = Leaf` alone is an error that suggests an annotation.
@@ -14,6 +15,8 @@ Notable changes to Flux. The versioning policy is in [`RELEASE.md`](RELEASE.md).
 
 ### Changes that can alter programs
 
+- Another module's `pub let mut` source is read-only: assigning it is the new error E032 (it used to be allowed in the root's handlers). Migration: give the module an event that makes the change (`pub event Reset` with `on Reset { count = 0 }`) and emit it, or a `pub act fn reset()` and call it.
+- Modules initialize in dependency order (a module after the modules it imports); the order was by first import, so a module could initialize before one it imports.
 - A type from another module is visible only through an import or as `geo::Point`, and only if it is `pub`; it used to be visible everywhere by its bare name. Migration: add the type to the import (`import geo { origin, Point }`) or write `geo::Point`, and mark it `pub`. Names starting with `__mod_` are reserved for the compiler.
 - An integer and a float compare by exact value: `9007199254740993 == 9007199254740992.0` is now `false`; the integer used to be rounded to a float first.
 - A `fn`, `track fn`, or method that changes a source is an error (E027), as announced in 0.2; it was a warning. This includes `fn main`. Migration: `flux migrate --write` turns such a `fn` into an `act fn` (for `main`, the whole body becomes one batch, so watches run once at its end); a method can call an `act fn`.
@@ -23,6 +26,7 @@ Notable changes to Flux. The versioning policy is in [`RELEASE.md`](RELEASE.md).
 - A generic call as the argument of another, `id(id(3))`, was an error ("generic type arguments could not be unified").
 - An array literal took its element type from its first element only, so `[None, Some(1)]` was an error; later elements now fix what the first left unknown.
 - A type parameter named twice, `fn f[T, T]`, was accepted; it is an error (E004).
+- A block `match` arm ending in an `if … else` chain had the value `()` instead of the value of the branch that runs, so the program failed to type-check; it now behaves as at the end of a function body.
 - When a callback of `map`, `filter`, or `reduce` failed, the remaining elements were still passed to it, so its printing and other effects went on after the error.
 - A method named like a changing library method (`push`, `pop`, `set`, `sort`, `reverse`, `remove`) on a type that defines it without changing its receiver lost its value when written last in a block: `fn f(s: S) -> Int { s.push(1) }` was a type error.
 - After an error in a function body, the function's parameters stayed in scope and hid the same names in the functions after it, so their errors appeared only after the first was fixed.

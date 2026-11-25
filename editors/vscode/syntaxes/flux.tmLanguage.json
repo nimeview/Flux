@@ -268,23 +268,35 @@
     "handler": {
       "patterns": [
         {
-          "match": "\\b(on)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "match": "\\b(on)\\s+(?:([A-Za-z_][A-Za-z0-9_]*)(::))?([A-Za-z_][A-Za-z0-9_]*)",
           "captures": {
             "1": {
               "name": "keyword.control.reactive.flux"
             },
             "2": {
+              "name": "entity.name.namespace.flux"
+            },
+            "3": {
+              "name": "punctuation.separator.path.flux"
+            },
+            "4": {
               "name": "entity.name.function.event.flux"
             }
           }
         },
         {
-          "match": "\\b(emit)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "match": "\\b(emit)\\s+(?:([A-Za-z_][A-Za-z0-9_]*)(::))?([A-Za-z_][A-Za-z0-9_]*)",
           "captures": {
             "1": {
               "name": "keyword.control.reactive.flux"
             },
             "2": {
+              "name": "entity.name.namespace.flux"
+            },
+            "3": {
+              "name": "punctuation.separator.path.flux"
+            },
+            "4": {
               "name": "entity.name.function.event.flux"
             }
           }

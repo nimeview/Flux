@@ -364,6 +364,23 @@ pub struct CompiledProgram {
     /// the host can still call `run` or `abs` by name.
     #[serde(default)]
     pub renamed_functions: HashMap<String, String>,
+    /// Modules initialize one after another, dependencies first: each group
+    /// runs its statements of `init_stmts`, then the first run of its
+    /// watches. Empty: all statements, then all watches.
+    #[serde(default)]
+    pub init_groups: Vec<InitGroup>,
+}
+
+/// One module's part of initialization.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct InitGroup {
+    /// `init_stmts[..stmts_end]` have run when this group's watches run.
+    pub stmts_end: usize,
+    /// The indices into `watches` of this module's watches.
+    pub watches: Vec<usize>,
+    /// This module's derived values, computed once its statements have run.
+    #[serde(default)]
+    pub derived: Vec<NodeId>,
 }
 
 impl CompiledProgram {

@@ -93,7 +93,7 @@ return_type = { "->" ~ type_name }
 watch_stmt = { "watch" ~ (ident ~ watch_prev?)? ~ block }
 watch_prev = { "(" ~ ident ~ ")" }
 // `on Move(x, y) { }`; `on E { n -> }` is the older form for one value.
-on_stmt = { "on" ~ ident ~ on_params? ~ handler }
+on_stmt = { "on" ~ (path_ident | ident) ~ on_params? ~ handler }
 on_params = { "(" ~ ident_list? ~ ")" }
 
 handler = { "{" ~ handler_body ~ "}" }
@@ -133,7 +133,7 @@ place_step = { assign_index | assign_field }
 assign_index = { "[" ~ expr ~ "]" }
 assign_field = { "." ~ (ident | tuple_index) }
 assign_op = { "+=" | "-=" | "*=" | "/=" | "%=" | "=" }
-emit_stmt = { "emit" ~ ident ~ emit_args? }
+emit_stmt = { "emit" ~ (path_ident | ident) ~ emit_args? }
 emit_args = { "(" ~ expr_list? ~ ")" }
 expr_stmt = { expr }
 

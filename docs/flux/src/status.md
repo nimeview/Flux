@@ -35,6 +35,7 @@ These may change or disappear, with no compatibility promise:
 - In a trace, a statement written directly in a `match` arm reports the line of the `match`. A top-level `if` has no location.
 - When compiled code fails, it is run again on the VM to report the error, so a failure after long native work can take a while.
 - Strings order by Unicode code point, not alphabetically.
+- In the editor, a watch cycle (E029) that runs through two files is reported by `flux check`, but not shown when both files are open.
 
 ## Versions
 

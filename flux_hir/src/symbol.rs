@@ -111,6 +111,9 @@ pub struct SymbolTable {
     /// method there to be `mut self`, and a `mut self` method to be called
     /// nowhere else.
     pub mut_call_sites: std::collections::HashSet<Span>,
+    /// Spans of the matches a block arm's trailing `if … else` chain lowers
+    /// to: their arms must agree exactly, without numeric widening.
+    pub if_value_matches: std::collections::HashSet<Span>,
     /// `place.m(…)` statements inside a closure whose place's root the
     /// closure captures: an error if `m` changes its receiver.
     pub captured_call_sites: std::collections::HashSet<Span>,
@@ -200,6 +203,7 @@ impl SymbolTable {
             mut_method_names: std::collections::HashSet::new(),
             mut_methods: std::collections::HashSet::new(),
             mut_call_sites: std::collections::HashSet::new(),
+            if_value_matches: std::collections::HashSet::new(),
             captured_call_sites: std::collections::HashSet::new(),
             deferred_writes: HashMap::new(),
             extension_sources: HashMap::new(),

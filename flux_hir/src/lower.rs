@@ -66,13 +66,40 @@ pub fn lower_linked_program(
     let mut hir = lower_program_inner(&program, diagnostics, Some((&linked, &scoped.variants)))?;
     hir.root_types = scoped.root_types;
     hir.root_qualified_types = scoped.root_qualified;
+    hir.init_order = init_order(&linked);
     Some(hir)
+}
+
+/// The files of the program's modules in the order they initialize: each
+/// after the modules it imports (in import order), the root last.
+fn init_order(linked: &flux_resolve::LinkedProgram) -> Vec<flux_diagnostics::SourceId> {
+    fn visit(
+        index: usize,
+        linked: &flux_resolve::LinkedProgram,
+        seen: &mut Vec<bool>,
+        out: &mut Vec<flux_diagnostics::SourceId>,
+    ) {
+        if seen[index] {
+            return;
+        }
+        seen[index] = true;
+        for import in linked.module_imports.get(index).into_iter().flatten() {
+            visit(import.module_index, linked, seen, out);
+        }
+        out.push(linked.modules[index].source.id);
+    }
+    let mut seen = vec![false; linked.modules.len()];
+    let mut out = Vec::new();
+    if !linked.modules.is_empty() {
+        visit(0, linked, &mut seen, &mut out);
+    }
+    out
 }
 
 /// Module bindings assigned from a `watch`/`on`/fn body, which makes them
 /// sources. An assignment to a name bound locally (param, `for` variable, or a
 /// `let` earlier in an enclosing block) targets that local, not the module.
-fn collect_reassigned_sources(program: &Program) -> HashSet<String> {
+pub(super) fn collect_reassigned_sources(program: &Program) -> HashSet<String> {
     let mut collector = AssignmentCollector {
         names: HashSet::new(),
         // Like is_variant_name in stmts: only None is special without a declaration.
@@ -570,6 +597,7 @@ fn lower_program_inner(
             trait_impls,
             type_bounds: symbols.type_bounds.clone(),
             specialized_from: Default::default(),
+            init_order: Vec::new(),
             generic_fns,
             type_aliases,
             qualified_symbols: symbols.qualified_symbols.clone(),
@@ -578,6 +606,7 @@ fn lower_program_inner(
             mut_methods: symbols.mut_methods.clone(),
             builtin_ids: std::mem::take(&mut symbols.builtin_ids),
             mut_call_sites: symbols.mut_call_sites.clone(),
+            if_value_matches: std::mem::take(&mut symbols.if_value_matches),
             changing_calls: Default::default(),
             captured_call_sites: symbols.captured_call_sites.clone(),
             deferred_writes: std::mem::take(&mut symbols.deferred_writes),

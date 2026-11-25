@@ -202,29 +202,33 @@ fn private_items_of_a_nested_import_stay_private() {
     );
 }
 
-#[test]
-fn watch_in_an_imported_module_is_rejected() {
-    check_fails(
-        &[
-            ("main.fl", MAIN_TWICE),
-            (
-                "lib.fl",
-                "pub let mut n = 0\nwatch n {\n  n = 1\n}\npub fn twice(x: Int) -> Int { x }\n",
-            ),
-        ],
-        ".",
-        "not supported in an imported module",
-    );
-}
-
+/// A module's source changes only in that module (E032): the importer
+/// asks for a change through the module's event, and reads the result.
 #[test]
 fn imported_reactive_binding_drives_root_derived_values() {
+    check_fails(
+        &[
+            (
+                "main.fl",
+                "import counter { count }\nevent Tick\non Tick {\n  count = count + 1\n}\n",
+            ),
+            ("counter.fl", "pub let mut count = 1\n"),
+        ],
+        ".",
+        "`count` belongs to another module",
+    );
     let dir = tempfile::tempdir().unwrap();
     write_tree(
         dir.path(),
         &[
-            ("main.fl", "import counter { count }\nevent Tick\nlet doubled = count * 2\non Tick {\n  count = count + 1\n}\n"),
-            ("counter.fl", "pub let mut count = 1\n"),
+            (
+                "main.fl",
+                "import counter { count, Tick }\nlet doubled = count * 2\n",
+            ),
+            (
+                "counter.fl",
+                "pub let mut count = 1\npub event Tick\non Tick {\n  count = count + 1\n}\n",
+            ),
         ],
     );
     let compiled = flux_cli::pipeline::compile_file(
@@ -234,7 +238,7 @@ fn imported_reactive_binding_drives_root_derived_values() {
     .unwrap_or_else(|f| panic!("{:?}", f.diagnostics.errors));
     let mut ex = compiled.executor;
     assert_eq!(ex.get_number("doubled"), Some(2.0));
-    ex.emit("Tick", flux_runtime::RuntimeValue::Unit);
+    ex.emit("__mod_1__Tick", flux_runtime::RuntimeValue::Unit);
     assert_eq!(ex.get_number("doubled"), Some(4.0));
 }
 

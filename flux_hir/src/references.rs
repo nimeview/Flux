@@ -119,8 +119,12 @@ pub fn rename_spans(
         }
         return dedupe_spans(out);
     }
+    // An imported module's item is written by its declared name
+    // (`__mod_1__Tick` is `Tick`, also in `c::Tick`).
+    let declared = crate::display_path(name);
+    let name = declared.as_str();
     // Some uses are recorded with their statement's span (`watch total { }`,
-    // `on Tick { }`): rewrite only the name in it.
+    // `on Tick { }`, `emit Tick`): rewrite only the name in it.
     for span in &mut out {
         if span.end - span.start != name.len() {
             *span = narrow_name_span(*span, name, sources);
@@ -196,6 +200,7 @@ fn collect_refs_stmt(stmt: &HirStmt, map: &mut HashMap<SymbolId, Vec<Span>>) {
             collect_refs_expr(&a.value, map);
         }
         HirStmt::Emit(e) => {
+            push_ref(map, e.event, e.span);
             for arg in &e.args {
                 collect_refs_expr(arg, map);
             }
@@ -527,7 +532,13 @@ fn narrow_name_span(span: Span, name: &str, sources: &HashMap<SourceId, String>)
         return span;
     }
     let slice = &text[span.start..span.end];
-    if let Some(rel) = find_whole_word(slice, name) {
+    // `alias::Name` first: the alias may be spelled like the name.
+    let qualified = format!("::{name}");
+    let after_path = slice.match_indices(&qualified).find_map(|(at, _)| {
+        let end = at + qualified.len();
+        (!is_ident_byte(slice.as_bytes().get(end).copied())).then_some(at + 2)
+    });
+    if let Some(rel) = after_path.or_else(|| find_whole_word(slice, name)) {
         let start = span.start + rel;
         return Span {
             source: span.source,

@@ -972,7 +972,10 @@ pub(crate) fn infer_expr(
             let mut unified = unwrap_value_type(&first);
             for arm_ty in arm_types.iter().skip(1) {
                 let arm_ty = unwrap_value_type(arm_ty);
-                if super::super::util::numeric_compatible(&unified, &arm_ty) {
+                // An arm's trailing `if … else` chain: no widening, as for
+                // an `if` tail (the runtime inserts no conversion).
+                let exact = ctx.if_value_matches.contains(span);
+                if !exact && super::super::util::numeric_compatible(&unified, &arm_ty) {
                     unified = super::super::util::widen_numeric(&unified, &arm_ty);
                 } else if !types_compatible(&unified, &arm_ty) {
                     diagnostics.push(FluxError::TypeMismatch {

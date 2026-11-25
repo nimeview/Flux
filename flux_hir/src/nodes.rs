@@ -27,6 +27,9 @@ pub struct HirProgram {
     /// Each generic specialization's template, so that a use of one is a use
     /// of the function as written (references, rename).
     pub specialized_from: std::collections::HashMap<SymbolId, SymbolId>,
+    /// The files of the modules in the order they initialize (dependencies
+    /// first, the root last); empty for a program without modules.
+    pub init_order: Vec<flux_diagnostics::SourceId>,
     /// Generic function templates keyed by base name.
     pub generic_fns: std::collections::HashMap<String, GenericFnTemplate>,
     /// Type aliases declared in this module (`type UserId = Int`).
@@ -43,6 +46,9 @@ pub struct HirProgram {
     /// Spans of `place.m(…)` calls written as statements, lowered to
     /// `place = place.m(…)`.
     pub mut_call_sites: std::collections::HashSet<Span>,
+    /// Spans of the matches a block arm's trailing `if … else` chain lowers
+    /// to: their arms must agree without numeric widening.
+    pub if_value_matches: std::collections::HashSet<Span>,
     /// The `mut_call_sites` that call a library method changing its receiver
     /// (`xs.push(1)`); filled in after type checking.
     pub changing_calls: std::collections::HashSet<Span>,

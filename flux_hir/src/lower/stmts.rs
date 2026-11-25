@@ -574,6 +574,9 @@ pub(super) fn lower_match_arm(
     diagnostics: &mut DiagnosticBag,
     reads_reactive: &mut bool,
 ) -> Option<HirMatchArm> {
+    if let Some(arm) = tail_if_as_value(arm, symbols) {
+        return lower_match_arm(&arm, symbols, scope, diagnostics, reads_reactive);
+    }
     if let MatchPattern::TupleValue { elems, span } = &arm.pattern {
         return lower_tuple_arm(
             arm,
@@ -711,6 +714,97 @@ pub(super) fn lower_match_arm(
         unit,
         nested: None,
     })
+}
+
+/// A block arm that ends in `if … else` takes the value of the branch that
+/// runs, as a function body does. Inside a function (the only place an arm
+/// may hold an `if`), the chain becomes the arm's value as a `match` whose
+/// arms are guarded by its conditions: each branch is a block arm, so it may
+/// run statements before its value, nest another chain, or leave. `None` when
+/// the arm is left as it is.
+fn tail_if_as_value(arm: &MatchArm, symbols: &mut SymbolTable) -> Option<MatchArm> {
+    if arm.expr.is_some() || !symbols.in_function() {
+        return None;
+    }
+    let Some(Stmt::If(tail)) = arm.stmts.last() else {
+        return None;
+    };
+    tail.else_branch.as_ref()?;
+    let value = if_as_match(tail, symbols);
+    let mut stmts = arm.stmts.clone();
+    stmts.pop();
+    Some(MatchArm {
+        pattern: arm.pattern.clone(),
+        guard: arm.guard.clone(),
+        stmts,
+        expr: Some(value),
+        span: arm.span,
+    })
+}
+
+/// `if c { a } else if d { b } else { e }` as
+/// `match true { _ if c => { a }, _ if d => { b }, _ => { e } }`. The guards
+/// are checked as `if` conditions are, and the match's span is recorded so
+/// that its arms must agree without numeric widening, as an `if` tail's
+/// branches must. A final `else if` without `else` stays a statement, so that
+/// arm is `()`, as in a function body.
+fn if_as_match(stmt: &IfStmt, symbols: &mut SymbolTable) -> Expr {
+    let wildcard = |span: Span| {
+        MatchPattern::Simple(Ident {
+            name: "_".into(),
+            span,
+        })
+    };
+    let branch = |guard: Option<Expr>, mut stmts: Vec<Stmt>, span: Span| {
+        let expr = match stmts.pop() {
+            Some(Stmt::Expr(e)) => Some(e),
+            Some(other) => {
+                stmts.push(other);
+                None
+            }
+            None => None,
+        };
+        MatchArm {
+            pattern: wildcard(span),
+            guard,
+            stmts,
+            expr,
+            span,
+        }
+    };
+    let mut arms = Vec::new();
+    let mut current = stmt;
+    loop {
+        arms.push(branch(
+            Some(current.cond.clone()),
+            current.then_branch.stmts.clone(),
+            current.then_branch.span,
+        ));
+        match &current.else_branch {
+            Some(ElseBranch::If(inner)) if inner.else_branch.is_some() => current = inner,
+            Some(ElseBranch::If(inner)) => {
+                arms.push(branch(None, vec![Stmt::If((**inner).clone())], inner.span));
+                break;
+            }
+            Some(ElseBranch::Block(block)) => {
+                arms.push(branch(None, block.stmts.clone(), block.span));
+                break;
+            }
+            None => {
+                arms.push(branch(None, vec![], current.span));
+                break;
+            }
+        }
+    }
+    symbols.if_value_matches.insert(stmt.span);
+    Expr::Match {
+        scrutinee: Box::new(Expr::Bool {
+            value: true,
+            span: stmt.span,
+        }),
+        arms,
+        span: stmt.span,
+    }
 }
 
 /// What a block arm may not contain, if anything. Everywhere: `let`,
@@ -857,7 +951,8 @@ fn lower_stmt(
             }
         }
         Stmt::Emit(EmitStmt { event, args, span }) => {
-            let event_id = resolve_name(&event.name, event.span, symbols, diagnostics)?;
+            let event_id =
+                super::exprs::resolve_event(&event.name, event.span, symbols, diagnostics)?;
             let mut reads_reactive = false;
             let scope = tracking_scope(ctx);
             let args = args
@@ -1155,6 +1250,26 @@ fn check_writer_at(
     if symbols.get(sym).map(|s| s.kind) != Some(SymbolKind::Source)
         || symbols.constants.contains(&sym)
     {
+        return;
+    }
+    // Another module's source is read-only here: it changes through that
+    // module's events and `act fn`s (E032).
+    let declared_in = symbols.get(sym).map(|s| s.span.source);
+    let imported = symbols
+        .get(sym)
+        .is_some_and(|s| s.name.starts_with("__mod_"));
+    if imported && declared_in.is_some_and(|file| file != span.source) {
+        let error = FluxError::ForeignSourceWrite {
+            name: crate::display_path(name),
+            span: span_to_miette(span),
+            source_id: span.source,
+        };
+        match call {
+            Some(call) => {
+                symbols.deferred_writes.insert(call, error);
+            }
+            None => diagnostics.push(error),
+        }
         return;
     }
     let Some(writer) = symbols.writers.last_mut() else {

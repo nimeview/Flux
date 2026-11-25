@@ -338,3 +338,37 @@ fn trailing_commas_semicolons_and_raw_strings() {
     rejects("fn main() {\n    let s = r\"open\n}\n", "parse error");
     rejects("fn main() {\n    let a = [,]\n}\n", "parse error");
 }
+
+#[test]
+fn an_if_chain_ending_a_block_arm_is_the_arms_value() {
+    // The issue's program: `else if` chain as a block arm's tail.
+    prints(
+        "import io { println }\nenum T { A, B(Int) }\nfn f(t: T, x: Int) -> T {\n    match t {\n        A => B(x),\n        B(v) => {\n            if x < v {\n                B(1)\n            } else if x > v {\n                B(2)\n            } else {\n                B(3)\n            }\n        }\n    }\n}\nfn show(t: T) -> Int {\n    match t {\n        A => 0,\n        B(n) => n\n    }\n}\nfn main() {\n    println(\"{show(f(B(5), 1))} {show(f(B(5), 9))} {show(f(B(5), 5))} {show(f(A, 7))}\")\n}\n",
+        "1 2 3 7\n",
+    );
+    // Branches may run statements before their value, nest, and leave.
+    prints(
+        "import io { println }\nfn g(n: Int) -> String {\n    let s = match n {\n        0 => \"zero\",\n        _ => {\n            let half = n / 2\n            if half > 10 {\n                let big = \"big\"\n                println(\"seen {n}\")\n                big\n            } else if n < 0 {\n                return \"negative\"\n            } else {\n                if n % 2 == 0 { \"even\" } else { \"odd\" }\n            }\n        }\n    }\n    \"{s}!\"\n}\nfn main() {\n    println(\"{g(0)} {g(50)} {g(-3)} {g(4)} {g(7)}\")\n}\n",
+        "seen 50\nzero! big! negative even! odd!\n",
+    );
+    // An `if` without `else` still leaves the arm `()`.
+    rejects(
+        "fn f(n: Int) -> Int {\n    match n {\n        0 => 1,\n        _ => {\n            if n > 1 {\n                2\n            }\n        }\n    }\n}\nfn main() {\n    f(1)\n}\n",
+        "Unit",
+    );
+    // Branches must agree, as in a function body's tail.
+    rejects(
+        "fn f(n: Int) -> Int {\n    match n {\n        0 => 1,\n        _ => {\n            if n > 1 {\n                2\n            } else {\n                \"two\"\n            }\n        }\n    }\n}\nfn main() {\n    f(1)\n}\n",
+        "mismatch",
+    );
+    // No numeric widening (the runtime inserts no conversion), and the
+    // condition must be a `Bool`, as for a function body's `if` tail.
+    rejects(
+        "fn f(n: Int) -> Float {\n    match n {\n        0 => 1.5,\n        _ => {\n            if n > 1 { 2 } else { 2.5 }\n        }\n    }\n}\nfn main() {\n    f(1)\n}\n",
+        "expected `Int64`, found `Float64`",
+    );
+    rejects(
+        "fn f(n: Int) -> Int {\n    match n {\n        0 => 1,\n        _ => {\n            if n { 2 } else { 3 }\n        }\n    }\n}\nfn main() {\n    f(1)\n}\n",
+        "expected `Bool`, found `Int64`",
+    );
+}

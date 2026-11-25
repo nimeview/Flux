@@ -735,6 +735,34 @@ pub(super) fn resolve_name(
     }
 }
 
+/// The event `emit`/`on` names: `Inc`, or `counter::Inc` for a `pub` event
+/// of the module imported as `counter`.
+pub(super) fn resolve_event(
+    name: &str,
+    span: Span,
+    symbols: &mut SymbolTable,
+    diagnostics: &mut DiagnosticBag,
+) -> Option<SymbolId> {
+    if let Some((alias, event)) = name.split_once("::") {
+        if symbols.module_aliases.contains_key(alias) {
+            let found = symbols
+                .qualified_symbols
+                .get(&(alias.to_string(), event.to_string()))
+                .copied();
+            if found.is_none() {
+                diagnostics.push(FluxError::UnknownExport {
+                    module: alias.to_string(),
+                    name: event.to_string(),
+                    span: span_to_miette(span),
+                    source_id: span.source,
+                });
+            }
+            return found;
+        }
+    }
+    resolve_name(name, span, symbols, diagnostics)
+}
+
 /// What a `a::b` path names.
 enum PathTarget {
     /// A name to look up as usual: a variant (`Shape::Circle` is `Circle`)

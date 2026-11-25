@@ -18,7 +18,7 @@ use std::collections::HashMap;
 use flux_diagnostics::{span_to_miette, DiagnosticBag, FluxError, SourceId, Span};
 use flux_hir::{BindingKind, HirFn, HirItem, HirProgram, SymbolId, SymbolKind};
 
-use crate::{CompiledProgram, IrNode, IrStmt, NodeId, NodeKind, SourceMap};
+use crate::{CompiledProgram, InitGroup, IrNode, IrStmt, NodeId, NodeKind, SourceMap};
 
 use codegen::lower_expr;
 use graph::{find_dependency_cycle, format_cycle, push_on_effect_node, push_watch_effect_node};
@@ -46,6 +46,18 @@ pub fn lower_to_ir(
     source: SourceId,
     diagnostics: &mut DiagnosticBag,
 ) -> Option<CompiledProgram> {
+    // A module's position in initialization order, from its file; the root
+    // (and a program without modules) is the last.
+    let group_count = program.init_order.len().max(1);
+    let group_of = |span: Span| {
+        program
+            .init_order
+            .iter()
+            .position(|s| *s == span.source)
+            .unwrap_or(group_count - 1)
+    };
+    let mut watch_groups: Vec<usize> = Vec::new();
+    let mut derived_groups: Vec<(NodeId, usize)> = Vec::new();
     let mut nodes = Vec::new();
     // (statement, target binding, value read set or None for a barrier)
     let mut init_items: Vec<InitItem> = Vec::new();
@@ -115,6 +127,7 @@ pub fn lower_to_ir(
             continue;
         }
         let id = symbol_to_node[&b.name];
+        derived_groups.push((id, group_of(b.span)));
         let reads = collect_reads_expr(&b.value, program, &reactive_fns);
         let deps: Vec<NodeId> = reads
             .iter()
@@ -162,6 +175,7 @@ pub fn lower_to_ir(
                         },
                         target: Some(b.name),
                         reads: Some(collect_reads_expr(&b.value, program, &all_fns)),
+                        group: group_of(b.span),
                     });
                 }
             }
@@ -176,6 +190,7 @@ pub fn lower_to_ir(
                         },
                         target: None,
                         reads: None,
+                        group: group_of(a.span),
                     });
                 }
             }
@@ -184,6 +199,7 @@ pub fn lower_to_ir(
                     stmt: lower_if_stmt(i, program),
                     target: None,
                     reads: None,
+                    group: group_of(i.span),
                 });
             }
             HirItem::Fn(f) => {
@@ -200,6 +216,7 @@ pub fn lower_to_ir(
                 let watch_idx = watches.len();
                 let compiled = lower_watch(w, program, &reactive_fns);
                 watches.push(compiled);
+                watch_groups.push(group_of(w.span));
                 push_watch_effect_node(
                     &mut nodes,
                     watch_idx,
@@ -218,7 +235,20 @@ pub fn lower_to_ir(
         }
     }
 
-    let init_stmts = order_init_stmts(init_items, program, &binding_spans, diagnostics)?;
+    // One module after another: a module depends only on earlier ones, and
+    // a top-level `if` orders only its own module's statements.
+    init_items.sort_by_key(|item| item.group);
+    let ordered = order_init_stmts(init_items, program, &binding_spans, diagnostics)?;
+    let mut ordered = ordered;
+    ordered.sort_by_key(|(group, _)| *group);
+    let init_groups = if program.init_order.len() > 1 {
+        (0..group_count)
+            .map(|g| init_group(g, &ordered, &watch_groups, &derived_groups))
+            .collect()
+    } else {
+        Vec::new()
+    };
+    let init_stmts: Vec<IrStmt> = ordered.into_iter().map(|(_, stmt)| stmt).collect();
 
     if let Some(cycle) = find_dependency_cycle(&nodes) {
         let cycle_names: Vec<String> = cycle.iter().map(|&idx| nodes[idx].name.clone()).collect();
@@ -260,6 +290,7 @@ pub fn lower_to_ir(
         },
         nodes,
         init_stmts,
+        init_groups,
         functions,
         watches,
         on_handlers,
@@ -277,18 +308,44 @@ struct InitItem {
     /// Bindings its value reads (through called functions too); `None` marks
     /// a barrier (a top-level `if` or assignment) that keeps its position.
     reads: Option<std::collections::HashSet<SymbolId>>,
+    /// The module it belongs to, by its position in `init_order`.
+    group: usize,
 }
 
 /// Orders module initialization: a computed source initializer runs after
 /// the initializers of the bindings it reads (declaration order otherwise),
 /// so `let a = f()` may use a `const` declared later. Barriers stay in place
 /// relative to everything before and after them. A cycle is an error.
+/// Group `g`'s part of initialization: where its statements end in the
+/// group-sorted list, and its watches.
+fn init_group(
+    g: usize,
+    ordered: &[(usize, IrStmt)],
+    watch_groups: &[usize],
+    derived_groups: &[(NodeId, usize)],
+) -> InitGroup {
+    InitGroup {
+        derived: derived_groups
+            .iter()
+            .filter(|(_, group)| *group == g)
+            .map(|(id, _)| *id)
+            .collect(),
+        stmts_end: ordered.iter().take_while(|(group, _)| *group <= g).count(),
+        watches: watch_groups
+            .iter()
+            .enumerate()
+            .filter(|(_, group)| **group == g)
+            .map(|(i, _)| i)
+            .collect(),
+    }
+}
+
 fn order_init_stmts(
     items: Vec<InitItem>,
     program: &HirProgram,
     binding_spans: &HashMap<SymbolId, Span>,
     diagnostics: &mut DiagnosticBag,
-) -> Option<Vec<IrStmt>> {
+) -> Option<Vec<(usize, IrStmt)>> {
     let target_index: HashMap<SymbolId, usize> = items
         .iter()
         .enumerate()
@@ -297,10 +354,19 @@ fn order_init_stmts(
     let n = items.len();
     let mut deps: Vec<std::collections::BTreeSet<usize>> = vec![Default::default(); n];
     let mut last_barrier: Option<usize> = None;
+    // `items` are in module order; a barrier orders its own module's.
+    let group_start = |i: usize| {
+        (0..=i)
+            .find(|&j| items[j].group == items[i].group)
+            .unwrap_or(i)
+    };
     for (i, item) in items.iter().enumerate() {
+        if last_barrier.is_some_and(|b| items[b].group != item.group) {
+            last_barrier = None;
+        }
         match &item.reads {
             None => {
-                deps[i].extend(0..i);
+                deps[i].extend(group_start(i)..i);
                 last_barrier = Some(i);
             }
             Some(reads) => {
@@ -314,11 +380,13 @@ fn order_init_stmts(
             }
         }
     }
-    // Statements after a barrier stay after it.
+    // Statements after a barrier stay after it, in its module.
     for (i, item) in items.iter().enumerate() {
         if item.reads.is_none() {
-            for later in deps.iter_mut().skip(i + 1) {
-                later.insert(i);
+            for (j, later) in deps.iter_mut().enumerate().skip(i + 1) {
+                if items[j].group == item.group {
+                    later.insert(i);
+                }
             }
         }
     }
@@ -345,6 +413,9 @@ fn order_init_stmts(
         done[next] = true;
         order.push(next);
     }
-    let mut slots: Vec<Option<IrStmt>> = items.into_iter().map(|item| Some(item.stmt)).collect();
+    let mut slots: Vec<Option<(usize, IrStmt)>> = items
+        .into_iter()
+        .map(|item| Some((item.group, item.stmt)))
+        .collect();
     Some(order.into_iter().filter_map(|i| slots[i].take()).collect())
 }

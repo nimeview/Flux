@@ -73,6 +73,8 @@ pub struct TypeCheckContext {
     /// place (see `flux_hir::HirProgram::mut_call_sites`).
     pub(crate) mut_methods: std::collections::HashSet<SymbolId>,
     pub(crate) mut_call_sites: std::collections::HashSet<flux_diagnostics::Span>,
+    /// See `flux_hir::HirProgram::if_value_matches`.
+    pub(crate) if_value_matches: std::collections::HashSet<flux_diagnostics::Span>,
     pub(crate) captured_call_sites: std::collections::HashSet<flux_diagnostics::Span>,
     pub(crate) deferred_writes: HashMap<flux_diagnostics::Span, flux_diagnostics::FluxError>,
     /// Where each symbol is declared, for diagnostics about pattern bindings.
@@ -212,6 +214,7 @@ impl TypeCheckContext {
             .collect();
         ctx.mut_methods = program.mut_methods.clone();
         ctx.mut_call_sites = program.mut_call_sites.clone();
+        ctx.if_value_matches = program.if_value_matches.clone();
         ctx.captured_call_sites = program.captured_call_sites.clone();
         ctx.deferred_writes = program.deferred_writes.clone();
         ctx.symbol_spans = program

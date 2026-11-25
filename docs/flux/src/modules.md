@@ -47,7 +47,43 @@ fn main() {
 
 Importing a name that is not `pub` is an error. A module never sees its importer's names. Cyclic imports are an error, and a module imported along several paths is initialized once.
 
-Importing a `pub let mut` gives you the same reactive source, not a copy.
+Importing a `pub let mut` gives you the same reactive source, not a copy. You can read it and react to it, but only its own module changes it.
+
+A module can be a reactive component: it keeps its own state, events, handlers, and watches, and other files use it through its `pub` names:
+
+```text
+// counter.fl
+import io { println }
+
+pub let mut count = 0
+pub event Inc(by: Int)
+
+on Inc(by) {
+    count += by
+}
+
+watch count {
+    println("counter: {count}")
+}
+```
+
+```text
+// main.fl
+import io { println }
+import counter { count, Inc }
+
+on Inc(by) {
+    println("main heard {by}")
+}
+
+act fn main() {
+    emit Inc(2)
+    emit counter::Inc(3)
+    println("now {count}")
+}
+```
+
+This prints `counter: 0` while the modules initialize, then `main heard 2`, `main heard 3`, `now 5`, and, when `main`'s batch ends, `counter: 5`. Writing `count = 0` in `main.fl` is an error (E032): to change a module's state, emit its event or call one of its `pub act fn`s. Modules initialize in dependency order, each running its watches at the end of its own initialization, so `counter: 0` comes before anything `main.fl` does.
 
 Types belong to their module too: two files may each declare a `Point`, and they are different types. Use another module's type through an import, as `Point` above, or as `geometry::Point`. Importing an enum makes its variants usable on their own, as in `Circle(1.0)`.
 

@@ -211,7 +211,8 @@ pub(super) fn lower_on(
     symbols: &mut SymbolTable,
     diagnostics: &mut DiagnosticBag,
 ) -> Option<HirOn> {
-    let event = resolve_name(&stmt.event.name, stmt.event.span, symbols, diagnostics)?;
+    let event =
+        super::exprs::resolve_event(&stmt.event.name, stmt.event.span, symbols, diagnostics)?;
     let mut names: Vec<&flux_syntax::Ident> = stmt.params.iter().collect();
     if let Some((name, span)) = &stmt.arrow {
         if names.is_empty() {

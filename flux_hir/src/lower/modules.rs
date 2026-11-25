@@ -2,7 +2,7 @@
 
 use std::path::Path;
 
-use flux_diagnostics::{span_to_miette, DiagnosticBag, FluxError};
+use flux_diagnostics::DiagnosticBag;
 use flux_resolve::LinkedProgram;
 use flux_syntax::{Item, Program};
 
@@ -25,15 +25,6 @@ fn is_type_item(item: &Item) -> bool {
     )
 }
 
-fn item_span(item: &Item) -> flux_diagnostics::Span {
-    match item {
-        Item::Watch(w) => w.span,
-        Item::On(o) => o.span,
-        Item::If(i) => i.span,
-        _ => flux_diagnostics::Span::DUMMY,
-    }
-}
-
 /// Pass 1 for imported modules: declare every item of every non-root module.
 /// Values and functions get module-unique names (private ones too), and
 /// types already have theirs (`type_scope`). Runs before any root name exists.
@@ -48,16 +39,9 @@ pub(super) fn declare_module_items(
         }
         for item in &module.ast.items {
             match item {
-                Item::Watch(_) | Item::On(_) | Item::If(_) => {
-                    let span = item_span(item);
-                    diagnostics.push(FluxError::Parse {
-                        message: "`watch`, `on`, and top-level `if` are not supported in an \
-                                  imported module; keep reactive handlers in the root module"
-                            .into(),
-                        span: span_to_miette(span),
-                        source_id: span.source,
-                    });
-                }
+                // A module's handlers, watches, and top-level `if`s are
+                // lowered with its other items, in its own scope.
+                Item::Watch(_) | Item::On(_) | Item::If(_) => {}
                 Item::Impl(decl) => super::decls::declare_type_functions(decl, symbols),
                 Item::Import(_) | Item::TypeAlias(_) => {}
                 Item::Struct(_) | Item::Enum(_) | Item::Trait(_) => {
@@ -145,13 +129,15 @@ pub(super) fn lower_module_items(
     variants: &[std::collections::HashMap<String, String>],
     symbols: &mut SymbolTable,
     diagnostics: &mut DiagnosticBag,
-    reassigned_sources: &std::collections::HashSet<String>,
+    _root_reassigned: &std::collections::HashSet<String>,
 ) -> Vec<HirItem> {
     let mut items = Vec::new();
     for (index, module) in linked.modules.iter().enumerate().skip(1) {
         if is_stdlib_module_path(&module.path) {
             continue;
         }
+        // Only a module's own code changes its sources.
+        let reassigned_sources = &super::collect_reassigned_sources(&module.ast);
         let saved_aliases = std::mem::take(&mut symbols.module_aliases);
         let saved_qualified = std::mem::take(&mut symbols.qualified_symbols);
         let saved_variants = std::mem::replace(
@@ -183,8 +169,14 @@ pub(super) fn lower_module_items(
 
         for item in &module.ast.items {
             match item {
-                Item::Import(_) | Item::Watch(_) | Item::On(_) | Item::If(_) => {}
-                Item::TypeAlias(_) => {}
+                Item::Import(_) | Item::TypeAlias(_) => {}
+                Item::Watch(_) | Item::On(_) | Item::If(_) => {
+                    if let Some(hir_item) =
+                        super::lower_item(item, symbols, diagnostics, reassigned_sources)
+                    {
+                        items.push(hir_item);
+                    }
+                }
                 Item::Impl(impl_decl) => {
                     if let Some(extra) =
                         super::decls::lower_impl_fns(impl_decl, symbols, diagnostics)
