@@ -66,6 +66,11 @@ pub enum ArithError {
     IndexOutOfBounds = 10,
     /// `m[k]` for a key the map does not have.
     KeyNotFound = 11,
+    /// `exit(code)`: stops the program (not a failure; the command line
+    /// exits with the code, see `flux_std::take_exit_code`).
+    Exit = 12,
+    /// `exit` with a code outside `0..=255`.
+    BadExitStatus = 13,
 }
 
 impl ArithError {
@@ -81,6 +86,8 @@ impl ArithError {
             9 => Self::Internal,
             10 => Self::IndexOutOfBounds,
             11 => Self::KeyNotFound,
+            12 => Self::Exit,
+            13 => Self::BadExitStatus,
             _ => Self::InvalidOperands,
         }
     }
@@ -98,6 +105,8 @@ impl ArithError {
             Self::Internal => "internal error (a bug in Flux; please report it)",
             Self::IndexOutOfBounds => "index out of bounds",
             Self::KeyNotFound => "key not found",
+            Self::Exit => "exit",
+            Self::BadExitStatus => "exit status must be 0..=255",
         }
     }
 }

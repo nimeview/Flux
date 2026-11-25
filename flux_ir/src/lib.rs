@@ -359,9 +359,21 @@ pub struct CompiledProgram {
     pub watches: Vec<CompiledWatch>,
     pub on_handlers: Vec<CompiledOnHandler>,
     pub events: Vec<String>,
+    /// User functions that share a name with a library function are kept
+    /// under another name; this maps the name in the source to it, so that
+    /// the host can still call `run` or `abs` by name.
+    #[serde(default)]
+    pub renamed_functions: HashMap<String, String>,
 }
 
 impl CompiledProgram {
+    /// The name a user function called `name` in the source runs under.
+    pub fn function_name<'a>(&'a self, name: &'a str) -> &'a str {
+        self.renamed_functions
+            .get(name)
+            .map_or(name, String::as_str)
+    }
+
     pub fn function_map(&self) -> HashMap<&str, &CompiledFunction> {
         self.functions
             .iter()

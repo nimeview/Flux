@@ -318,6 +318,10 @@ fn run_file(
             Ok(0)
         }
         Err(failed) => {
+            // `exit(code)` while the module initializes.
+            if let Some(code) = flux_std::take_exit_code() {
+                return Ok(code);
+            }
             report_failure(failed.source(), &failed.sources, &failed.diagnostics).map(|()| 1)
         }
     }
@@ -337,6 +341,11 @@ fn run_main(executor: &mut flux_runtime::Executor) -> i32 {
             }
         },
         Err(err) => {
+            // `exit(code)` stops the program on purpose.
+            let code = flux_std::take_exit_code();
+            if let (flux_runtime::ArithError::Exit, Some(code)) = (err.kind, code) {
+                return code;
+            }
             eprintln!("error: {err:#}");
             1
         }

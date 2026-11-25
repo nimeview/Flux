@@ -69,6 +69,52 @@ best: ann
 | `write_file(path, s)` | `Result[Unit, String]` | create or replace |
 | `append_file(path, s)` | `Result[Unit, String]` | add to the end |
 | `file_exists(path)` | `Bool` | |
+| `read_stdin()` | `Result[String, String]` | all of standard input |
+
+## env, fs, path, process
+
+For programs that work with files and other programs. A failure that can be expected, such as a missing file, is an `Err` with a message that names the file.
+
+| Function | Returns | Notes |
+|---|---|---|
+| `env_var(name)` | `Option[String]` | `None` when it is not set |
+| `current_dir()` | `Result[String, String]` | |
+| `list_dir(path)` | `Result[[String], String]` | entry names, sorted |
+| `is_dir(path)` | `Bool` | |
+| `create_dir(path)` | `Result[Unit, String]` | with missing parents |
+| `remove_file(path)`, `remove_dir(path)` | `Result[Unit, String]` | a directory must be empty |
+| `path_join(base, part)` | `String` | |
+| `file_name(path)`, `extension(path)`, `parent(path)` | `Option[String]` | |
+| `run(program, args)` | `Result[(Int, String, String), String]` | exit code, stdout, stderr; no shell |
+| `exit(code)` | | stops the program at once |
+
+`exit` ends the program with a status, from anywhere:
+
+```flux,exit=2
+import io { println, eprintln }
+
+import path { file_name, extension }
+
+import process { exit }
+
+fn main() {
+    let file = "reports/2026/summary.csv"
+    println("{file_name(file)} {extension(file)}")
+    if extension(file) != Some("txt") {
+        eprintln("expected a .txt file")
+        exit(2)
+    }
+    println("not reached")
+}
+```
+
+```output
+Some("summary.csv") Some("csv")
+```
+
+```stderr
+expected a .txt file
+```
 
 ## collections
 

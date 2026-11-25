@@ -32,6 +32,7 @@ fn rejects_invalid_load_at_executor_init() {
         watches: vec![],
         on_handlers: vec![],
         events: vec![],
+        renamed_functions: Default::default(),
     };
     assert!(
         Executor::new(program).is_err(),

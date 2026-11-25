@@ -96,3 +96,29 @@ fn shopping_cart_reacts_to_events() {
         ],
     );
 }
+
+#[test]
+fn dir_report_lists_a_directory_and_exits_1_when_it_is_missing() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir(dir.path().join("notes")).unwrap();
+    std::fs::write(dir.path().join("a.txt"), "a\nb\nc\n").unwrap();
+    std::fs::write(dir.path().join("b.csv"), "x").unwrap();
+    let target = dir.path().to_string_lossy().into_owned();
+    for engine in ["--vm", "--jit"] {
+        let stdout = run_with("dir_report.fl", engine, &["--", &target]);
+        assert_eq!(
+            stdout.lines().collect::<Vec<_>>(),
+            ["a.txt: 3 lines", "b.csv", "notes/", "3 entries"],
+            "{engine}"
+        );
+    }
+    let missing = dir.path().join("missing").to_string_lossy().into_owned();
+    let examples = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../examples/general");
+    let output = Command::new(env!("CARGO_BIN_EXE_flux"))
+        .args(["run", "--vm", "dir_report.fl", "--", &missing])
+        .current_dir(&examples)
+        .output()
+        .expect("spawn flux");
+    assert_eq!(output.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&output.stderr).starts_with("cannot read "));
+}

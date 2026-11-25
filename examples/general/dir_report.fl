@@ -1,0 +1,41 @@
+// Directory report: each entry of a directory, with line counts of its
+// `.txt` files. Exits with status 1 if the directory cannot be read.
+// Usage: flux run dir_report.fl -- <directory>
+import io { println, eprintln, read_file, args }
+
+import fs { list_dir, is_dir }
+
+import path { path_join, extension }
+
+import process { exit }
+
+fn describe(dir: String, name: String) -> String {
+    let full = path_join(dir, name)
+    if is_dir(full) {
+        return "{name}/"
+    }
+    if extension(name) != Some("txt") {
+        return name
+    }
+    match read_file(full) {
+        Ok(text) => "{name}: {text.lines().len()} lines",
+        Err(e) => "{name}: {e}"
+    }
+}
+
+fn main() {
+    let given = args()
+    let dir = given.first().unwrap_or(".")
+    match list_dir(dir) {
+        Ok(names) => {
+            for name in names {
+                println(describe(dir, name))
+            }
+            println("{names.len()} entries")
+        },
+        Err(e) => {
+            eprintln("cannot read {e}")
+            exit(1)
+        }
+    }
+}

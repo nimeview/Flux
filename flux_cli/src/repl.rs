@@ -76,6 +76,7 @@ pub fn run(jit: bool) -> io::Result<()> {
                 session.executor = Some(compiled.executor);
             }
             Err(failed) => {
+                exit_if_asked();
                 session.source.truncate(prev_len);
                 let _ = report_errors(failed.source(), &failed.sources, &failed.diagnostics);
             }
@@ -83,6 +84,13 @@ pub fn run(jit: bool) -> io::Result<()> {
     }
 
     Ok(())
+}
+
+/// `exit(code)` in what the session ran ends the REPL with that status.
+fn exit_if_asked() {
+    if let Some(code) = flux_std::take_exit_code() {
+        std::process::exit(code);
+    }
 }
 
 enum CommandResult {
@@ -133,6 +141,7 @@ fn handle_command(line: &str, session: &mut ReplSession) -> CommandResult {
     }
     if let Some(rest) = line.strip_prefix(":emit ") {
         emit_event(rest.trim(), session);
+        exit_if_asked();
         return CommandResult::Continue;
     }
     if line == ":help" || line == ":h" {

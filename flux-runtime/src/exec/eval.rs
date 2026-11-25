@@ -493,6 +493,10 @@ impl Executor {
                     let mut result = Vec::with_capacity(arr.len());
                     for item in arr.iter() {
                         result.push(self.call_callback(&callback, std::slice::from_ref(item)));
+                        // A failure (or `exit`) stops the loop: no later call runs.
+                        if self.trap.is_some() {
+                            return RuntimeValue::Unit;
+                        }
                     }
                     RuntimeValue::array(result)
                 }
@@ -524,11 +528,14 @@ impl Executor {
                     };
                     let mut result = Vec::new();
                     for item in arr.iter() {
-                        if self
+                        let keep = self
                             .call_callback(&callback, std::slice::from_ref(item))
                             .as_bool()
-                            .unwrap_or(false)
-                        {
+                            .unwrap_or(false);
+                        if self.trap.is_some() {
+                            return RuntimeValue::Unit;
+                        }
+                        if keep {
                             result.push(item.clone());
                         }
                     }
@@ -553,6 +560,9 @@ impl Executor {
                     let mut acc = init;
                     for item in arr.iter() {
                         acc = self.call_callback(&callback, &[acc, item.clone()]);
+                        if self.trap.is_some() {
+                            return RuntimeValue::Unit;
+                        }
                     }
                     acc
                 }

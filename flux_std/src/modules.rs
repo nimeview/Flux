@@ -15,8 +15,22 @@ pub const STD_MODULES: &[(&str, &[&str])] = &[
             "write_file",
             "append_file",
             "file_exists",
+            "read_stdin",
         ],
     ),
+    ("env", &["env_var", "current_dir"]),
+    (
+        "fs",
+        &[
+            "list_dir",
+            "is_dir",
+            "create_dir",
+            "remove_file",
+            "remove_dir",
+        ],
+    ),
+    ("path", &["path_join", "file_name", "extension", "parent"]),
+    ("process", &["exit", "run"]),
     (
         "collections",
         &[

@@ -693,6 +693,21 @@ pub(super) fn infer_builtin_call(
             Some(Type::String)
         }
         _ => {
+            // A function with one signature: each argument has its type.
+            if let Some((params, ret)) = crate::builtins::os_signature(name) {
+                if params.len() != args.len() {
+                    diagnostics.push(FluxError::TypeMismatch {
+                        expected: format!("{} arguments", params.len()),
+                        found: format!("{} arguments", args.len()),
+                        span: span_to_miette(span),
+                        source_id: span.source,
+                    });
+                }
+                for (param, arg) in params.iter().zip(args) {
+                    check_arg(ctx, Some(arg), param, types, names, source, diagnostics);
+                }
+                return Some(ret);
+            }
             diagnostics.push(FluxError::UndefinedName {
                 name: name.into(),
                 span: span_to_miette(span),

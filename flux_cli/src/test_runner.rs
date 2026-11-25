@@ -107,6 +107,8 @@ fn run_one(
     name: &str,
     mode: ExecutionMode,
 ) -> Result<(), String> {
+    // An `exit` from another test's file must not color this one's result.
+    let _ = flux_std::take_exit_code();
     let mut executor = Executor::with_mode(program.clone(), mode).map_err(|e| e.to_string())?;
     if executor.function_arity(name) != Some(0) {
         return Err(format!("`{name}` must take no parameters"));
@@ -118,7 +120,10 @@ fn run_one(
             "returned {}; a test returns nothing, `true`, or `false`",
             other.display_string()
         )),
-        Err(err) => Err(format!("{err:#}")),
+        Err(err) => Err(match (err.kind, flux_std::take_exit_code()) {
+            (flux_runtime::ArithError::Exit, Some(code)) => format!("called exit({code})"),
+            _ => format!("{err:#}"),
+        }),
     }
 }
 

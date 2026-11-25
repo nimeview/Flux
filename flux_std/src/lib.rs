@@ -4,6 +4,7 @@ mod io;
 mod math;
 pub mod methods;
 mod modules;
+mod os;
 mod str_ext;
 
 pub use modules::{
@@ -12,6 +13,7 @@ pub use modules::{
 
 use flux_value::MapKey;
 pub use flux_value::Value;
+pub use os::take_exit_code;
 
 pub const BUILTIN_FNS: &[&str] = &[
     "print",
@@ -62,6 +64,20 @@ pub const BUILTIN_FNS: &[&str] = &[
     "write_file",
     "append_file",
     "file_exists",
+    "read_stdin",
+    "env_var",
+    "current_dir",
+    "list_dir",
+    "is_dir",
+    "create_dir",
+    "remove_file",
+    "remove_dir",
+    "path_join",
+    "file_name",
+    "extension",
+    "parent",
+    "exit",
+    "run",
     "Some",
     "None",
     "Ok",
@@ -100,6 +116,16 @@ pub const SIDE_EFFECT_BUILTINS: &[&str] = &[
     "read_file",
     "write_file",
     "append_file",
+    "read_stdin",
+    "env_var",
+    "current_dir",
+    "list_dir",
+    "is_dir",
+    "create_dir",
+    "remove_file",
+    "remove_dir",
+    "exit",
+    "run",
 ];
 
 pub const HOF_FNS: &[&str] = &["map", "filter", "reduce"];
@@ -129,6 +155,7 @@ pub fn call_builtin_checked(
             return Some(math::abs_int(args.first()?))
         }
         "assert_eq" => return Some(math::assert_eq(args.first()?, args.get(1)?)),
+        "exit" => return Some(os::exit(int_arg(args.first()))),
         // Integer operands promote like arithmetic does; a value that does not
         // fit the promoted width (`min(-1, 0u64)`) is the same overflow error
         // as `-1 + 0u64`, not a missing result.
@@ -411,6 +438,22 @@ pub fn call_builtin(name: &str, args: &[Value]) -> Option<Value> {
         "assert" => math::assert(args.first()?).ok(),
         "assert_eq" => math::assert_eq(args.first()?, args.get(1)?).ok(),
         "read_line" => Some(io::read_line()),
+        "read_stdin" => Some(os::read_stdin()),
+        "env_var" => Some(os::env_var(str_arg(args.first())?)),
+        "current_dir" => Some(os::current_dir()),
+        "list_dir" => Some(os::list_dir(str_arg(args.first())?)),
+        "is_dir" => Some(os::is_dir(str_arg(args.first())?)),
+        "create_dir" => Some(os::create_dir(str_arg(args.first())?)),
+        "remove_file" => Some(os::remove_file(str_arg(args.first())?)),
+        "remove_dir" => Some(os::remove_dir(str_arg(args.first())?)),
+        "path_join" => Some(os::path_join(str_arg(args.first())?, str_arg(args.get(1))?)),
+        "file_name" => Some(os::file_name(str_arg(args.first())?)),
+        "extension" => Some(os::extension(str_arg(args.first())?)),
+        "parent" => Some(os::parent(str_arg(args.first())?)),
+        "run" => match args.get(1)? {
+            Value::Array(items) => Some(os::run(str_arg(args.first())?, items)),
+            _ => None,
+        },
         "read_file" => {
             let path = match args.first()? {
                 Value::String(s) => s.as_str(),
@@ -463,6 +506,13 @@ pub fn call_builtin(name: &str, args: &[Value]) -> Option<Value> {
                 .unwrap_or(Value::String(String::new()));
             Some(Value::Result(Err(Box::new(inner))))
         }
+        _ => None,
+    }
+}
+
+fn str_arg(v: Option<&Value>) -> Option<&str> {
+    match v? {
+        Value::String(s) => Some(s.as_str()),
         _ => None,
     }
 }

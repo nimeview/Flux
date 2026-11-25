@@ -34,6 +34,7 @@ mod tests {
             watches: vec![],
             on_handlers: vec![],
             events: vec![],
+            renamed_functions: Default::default(),
         });
         assert_eq!(status, WasmBackendStatus::Stub);
         assert_eq!(&bytes[0..4], b"\0asm");

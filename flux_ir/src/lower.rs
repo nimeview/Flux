@@ -50,6 +50,7 @@ pub fn lower_to_ir(
     // (statement, target binding, value read set or None for a barrier)
     let mut init_items: Vec<InitItem> = Vec::new();
     let mut functions = Vec::new();
+    let mut renamed_functions = HashMap::new();
     let mut watches = Vec::new();
     let mut on_handlers = Vec::new();
     let mut events = Vec::new();
@@ -187,6 +188,11 @@ pub fn lower_to_ir(
             }
             HirItem::Fn(f) => {
                 if let Some(name) = runtime_symbol_name(program, &f.name) {
+                    if let Some(source) = program.names.get(&f.name) {
+                        if *source != name {
+                            renamed_functions.insert(source.clone(), name.clone());
+                        }
+                    }
                     functions.push(lower_fn(f, &name, program));
                 }
             }
@@ -258,6 +264,7 @@ pub fn lower_to_ir(
         watches,
         on_handlers,
         events,
+        renamed_functions,
     };
     crate::resolve_locals(&mut program);
     Some(program)

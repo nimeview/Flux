@@ -431,7 +431,9 @@ impl Executor {
 
     /// Parameter count of the user function `name`, if the program defines it.
     pub fn function_arity(&self, name: &str) -> Option<usize> {
-        self.functions.get(name).map(|f| f.params.len())
+        self.functions
+            .get(self.program.function_name(name))
+            .map(|f| f.params.len())
     }
 
     /// Calls the user function `name` (e.g. a program's `main`). A runtime
@@ -444,7 +446,8 @@ impl Executor {
         if let Some(err) = &self.trap {
             return Err((**err).clone());
         }
-        let value = self.call_function(name, args);
+        let runtime_name = self.program.function_name(name).to_string();
+        let value = self.call_function(&runtime_name, args);
         self.set_trap_context(&format!("`{name}`"), None);
         match &self.trap {
             Some(err) => Err((**err).clone()),

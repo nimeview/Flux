@@ -4,7 +4,40 @@ use crate::Type;
 pub const BUILTIN_FNS: &[&str] = flux_std::BUILTIN_FNS;
 
 /// Type signature of a builtin function, if known.
+/// Parameter and result types of the library functions for the operating
+/// system (`env`, `fs`, `path`, `process`, `read_stdin`): each has one
+/// signature, which both a call and the function used as a value follow.
+pub fn os_signature(name: &str) -> Option<(Vec<Type>, Type)> {
+    let s = || Type::String;
+    let result = |ok: Type| Type::Result {
+        ok: Box::new(ok),
+        err: Box::new(Type::String),
+    };
+    let option = |t: Type| Type::Option(Box::new(t));
+    Some(match name {
+        "read_stdin" | "current_dir" => (vec![], result(s())),
+        "env_var" => (vec![s()], option(s())),
+        "list_dir" => (vec![s()], result(Type::Array(Box::new(s())))),
+        "is_dir" => (vec![s()], Type::Bool),
+        "create_dir" | "remove_file" | "remove_dir" => (vec![s()], result(Type::Unit)),
+        "path_join" => (vec![s(), s()], s()),
+        "file_name" | "extension" | "parent" => (vec![s()], option(s())),
+        "exit" => (vec![Type::Int], Type::Unit),
+        "run" => (
+            vec![s(), Type::Array(Box::new(s()))],
+            result(Type::Tuple(vec![Type::Int, s(), s()])),
+        ),
+        _ => return None,
+    })
+}
+
 pub fn builtin_fn_type(name: &str) -> Option<Type> {
+    if let Some((params, ret)) = os_signature(name) {
+        return Some(Type::Func {
+            params,
+            ret: Box::new(ret),
+        });
+    }
     match name {
         "print" | "println" | "eprint" | "eprintln" => Some(Type::Func {
             params: vec![Type::String],

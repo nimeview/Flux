@@ -318,7 +318,11 @@ Selective imports: `import io { println, read_line }`. Stdlib modules are built 
 
 | Module | Symbols |
 |--------|---------|
-| `io` | `print`, `println`, `eprint`, `eprintln`, `args`, `read_line`, `read_file`, `write_file`, `append_file`, `file_exists` |
+| `io` | `print`, `println`, `eprint`, `eprintln`, `args`, `read_line`, `read_file`, `write_file`, `append_file`, `file_exists`, `read_stdin` |
+| `env` | `env_var`, `current_dir` |
+| `fs` | `list_dir`, `is_dir`, `create_dir`, `remove_file`, `remove_dir` |
+| `path` | `path_join`, `file_name`, `extension`, `parent` |
+| `process` | `exit`, `run` |
 | `collections` | `len`, `range`, `push`, `set`, `pop`, `get`, `map`, `filter`, `reduce`, `map_new`, `map_has`, `map_remove`, `map_keys`, `map_values` |
 | `math` | `abs`, `min`, `max`, `clamp`, `sqrt`, `floor`, `ceil`, `pow`, `assert`, `assert_eq` |
 | `testing` | `assert`, `assert_eq` (the same functions as in `math`) |
@@ -379,6 +383,19 @@ Values of library types have methods, which need no import: `text.split(",")` is
 | `write_file` | `fn(String, String) -> Result[Unit, String]` | Write UTF-8 (create/truncate) |
 | `append_file` | `fn(String, String) -> Result[Unit, String]` | Append UTF-8 to file |
 | `file_exists` | `fn(String) -> Bool` | Whether path exists |
+| `read_stdin` | `fn() -> Result[String, String]` | All of stdin, until its end |
+| `env_var` | `fn(String) -> Option[String]` | An environment variable, if set |
+| `current_dir` | `fn() -> Result[String, String]` | The working directory |
+| `list_dir` | `fn(String) -> Result[[String], String]` | Entry names of a directory, sorted |
+| `is_dir` | `fn(String) -> Bool` | Whether the path is a directory |
+| `create_dir` | `fn(String) -> Result[Unit, String]` | Create a directory and missing parents; an existing one is fine |
+| `remove_file` / `remove_dir` | `fn(String) -> Result[Unit, String]` | Remove a file, or an empty directory |
+| `path_join` | `fn(String, String) -> String` | `part` inside `base`; an absolute `part` replaces it |
+| `file_name` / `extension` / `parent` | `fn(String) -> Option[String]` | Parts of a path; `None` when there is none |
+| `exit` | `fn(Int) -> Unit` | Stop the program at once with a status `0..=255` (else a runtime error); nothing after it runs, no watch included |
+| `run` | `fn(String, [String]) -> Result[(Int, String, String), String]` | Run a program without a shell, wait, and return its exit code (`-1` if a signal ended it), stdout, and stderr; `Err` if it cannot start |
+
+Expected failures of these functions are `Err` with a message naming the file or program. Except the `path` functions, they are side effects (**E017** in a derived value or `const`).
 | `Some` / `None` | Option constructors | |
 | `Ok` / `Err` | Result constructors | |
 

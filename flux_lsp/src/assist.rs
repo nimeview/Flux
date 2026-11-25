@@ -16,6 +16,20 @@ pub const STD_DOCS: &[(&str, &str, &str, &str)] = &[
     ("write_file", "io", "write_file(path: String, text: String) -> Result[Unit, String]", "Creates or replaces a file."),
     ("append_file", "io", "append_file(path: String, text: String) -> Result[Unit, String]", "Adds to the end of a file."),
     ("file_exists", "io", "file_exists(path: String) -> Bool", "Whether the path exists."),
+    ("read_stdin", "io", "read_stdin() -> Result[String, String]", "All of standard input, until its end."),
+    ("env_var", "env", "env_var(name: String) -> Option[String]", "The value of an environment variable, if it is set."),
+    ("current_dir", "env", "current_dir() -> Result[String, String]", "The directory the program runs in."),
+    ("list_dir", "fs", "list_dir(path: String) -> Result[[String], String]", "The names of a directory's entries, sorted."),
+    ("is_dir", "fs", "is_dir(path: String) -> Bool", "Whether the path is a directory."),
+    ("create_dir", "fs", "create_dir(path: String) -> Result[Unit, String]", "Creates a directory and any missing parents; an existing one is fine."),
+    ("remove_file", "fs", "remove_file(path: String) -> Result[Unit, String]", "Removes a file."),
+    ("remove_dir", "fs", "remove_dir(path: String) -> Result[Unit, String]", "Removes an empty directory."),
+    ("path_join", "path", "path_join(base: String, part: String) -> String", "`part` inside `base`; an absolute `part` replaces `base`."),
+    ("file_name", "path", "file_name(path: String) -> Option[String]", "The last part of the path."),
+    ("extension", "path", "extension(path: String) -> Option[String]", "The text after the last `.` of the file name."),
+    ("parent", "path", "parent(path: String) -> Option[String]", "The path without its last part; `None` when nothing is left."),
+    ("exit", "process", "exit(code: Int)", "Stops the program at once with `code` (0 to 255); no later code or watch runs."),
+    ("run", "process", "run(program: String, args: [String]) -> Result[(Int, String, String), String]", "Runs a program (no shell), waits, and gives its exit code, stdout, and stderr."),
     ("len", "collections", "len(x: [T] | String | Map[K, V]) -> Int", "The number of elements, characters, or entries."),
     ("range", "collections", "range(start: Int, end: Int, step: Int) -> [Int]", "Numbers up to, but not including, `end`. `range(n)` and `range(a, b)` also work."),
     ("push", "collections", "push(xs: [T], value: T) -> [T]", "The array with `value` added. Write `xs = push(xs, v)`."),
@@ -573,6 +587,23 @@ pub fn import_edit(src: &str, module: &str, name: &str) -> (u32, u32, u32, Strin
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn every_library_function_is_documented_in_its_module() {
+        // A name may come from more than one module (`assert`).
+        for (_, names) in flux_std::STD_MODULES {
+            for name in *names {
+                if PRELUDE.iter().any(|entry| entry.0 == *name) {
+                    continue;
+                }
+                let doc = std_doc(name).unwrap_or_else(|| panic!("no doc for `{name}`"));
+                let exported = flux_std::STD_MODULES
+                    .iter()
+                    .any(|(module, names)| *module == doc.1 && names.contains(name));
+                assert!(exported, "`{name}` is documented in `{}`", doc.1);
+            }
+        }
+    }
 
     fn scope(src: &str) -> Vec<String> {
         let offset = src.find('@').expect("cursor");
