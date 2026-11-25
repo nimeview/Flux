@@ -52,11 +52,12 @@ fn function_match_arms_may_emit_and_write_sources() {
          fn main() {\n    match 0 {\n        _ => {\n            emit T\n            0\n        }\n    }\n    println(\"after\")\n}\n",
         "got\nafter\n",
     );
-    // The write propagates at once, as in a function body: not a local binding.
+    // An arm in an `act fn` writes the source, not a local binding; the
+    // batch settles when the `act fn` returns.
     prints(
         "import io { println }\nlet mut x = 0\nwatch x {\n    println(\"x={x}\")\n}\n\
-         fn main() {\n    match 0 {\n        _ => {\n            x = 1\n            println(\"in arm\")\n        }\n    }\n}\n",
-        "x=0\nx=1\nin arm\n",
+         act fn main() {\n    match 0 {\n        _ => {\n            x = 1\n            println(\"in arm\")\n        }\n    }\n}\n",
+        "x=0\nin arm\nx=1\n",
     );
     // Direct and nested forms now obey the same rule.
     prints(

@@ -4,6 +4,16 @@ Notable changes to Flux. The versioning policy is in [`RELEASE.md`](RELEASE.md).
 
 ## [Unreleased]
 
+### Changes that can alter programs
+
+- An integer and a float compare by exact value: `9007199254740993 == 9007199254740992.0` is now `false`; the integer used to be rounded to a float first.
+- A `fn`, `track fn`, or method that changes a source is an error (E027), as announced in 0.2; it was a warning. This includes `fn main`. Migration: `flux migrate --write` turns such a `fn` into an `act fn` (for `main`, the whole body becomes one batch, so watches run once at its end); a method can call an `act fn`.
+
+### Fixed
+
+- A method named like a changing library method (`push`, `pop`, `set`, `sort`, `reverse`, `remove`) on a type that defines it without changing its receiver lost its value when written last in a block: `fn f(s: S) -> Int { s.push(1) }` was a type error.
+- After an error in a function body, the function's parameters stayed in scope and hid the same names in the functions after it, so their errors appeared only after the first was fixed.
+
 ## [0.2.1] - 2026-11-24
 
 ### Changes that can alter programs

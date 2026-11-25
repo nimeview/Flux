@@ -632,6 +632,28 @@ pub fn hover_for_name(
     Some(format!("{word}: {}", describe_type(ty)))
 }
 
+/// A diagnostic's fix, as a range in the file it edits (the fix is in the
+/// same file as its diagnostic).
+fn ranged_fix(
+    fix: flux_diagnostics::Fix,
+    source_indexes: &HashMap<SourceId, (LineIndex<'_>, &str)>,
+    root_index: &LineIndex<'_>,
+) -> RangedFix {
+    let index = match source_indexes.get(&fix.span.source) {
+        Some((index, _)) if fix.span.source != SourceId(0) => index,
+        _ => root_index,
+    };
+    let (sl, sc, el, ec) = index.range(fix.span.start, fix.span.end);
+    RangedFix {
+        title: fix.title,
+        start_line: sl as usize + 1,
+        start_column: sc as usize + 1,
+        end_line: el as usize + 1,
+        end_column: ec as usize + 1,
+        replacement: fix.replacement,
+    }
+}
+
 /// The analyzed document is always [`SourceId`] 0 (the resolver's root, or the
 /// lone buffer); other ids are imported modules whose own text maps the range.
 fn to_ranged(
@@ -664,12 +686,16 @@ fn to_ranged(
     };
     let mut out = Vec::with_capacity(bag.errors.len() + bag.warnings.len());
     for e in &bag.errors {
-        out.push(ranged(
+        let mut diagnostic = ranged(
             e.label_span(),
             e.to_string(),
             e.code().to_string(),
             DiagnosticLevel::Error,
-        ));
+        );
+        diagnostic.fix = e
+            .fix()
+            .map(|fix| ranged_fix(fix, &source_indexes, &root_index));
+        out.push(diagnostic);
     }
     for w in &bag.warnings {
         let mut diagnostic = ranged(
@@ -679,21 +705,9 @@ fn to_ranged(
             DiagnosticLevel::Warning,
         );
         // The fix is in the same file as the warning.
-        diagnostic.fix = w.fix().map(|fix| {
-            let index = match source_indexes.get(&fix.span.source) {
-                Some((index, _)) if fix.span.source != SourceId(0) => index,
-                _ => &root_index,
-            };
-            let (sl, sc, el, ec) = index.range(fix.span.start, fix.span.end);
-            RangedFix {
-                title: fix.title,
-                start_line: sl as usize + 1,
-                start_column: sc as usize + 1,
-                end_line: el as usize + 1,
-                end_column: ec as usize + 1,
-                replacement: fix.replacement,
-            }
-        });
+        diagnostic.fix = w
+            .fix()
+            .map(|fix| ranged_fix(fix, &source_indexes, &root_index));
         out.push(diagnostic);
     }
     out

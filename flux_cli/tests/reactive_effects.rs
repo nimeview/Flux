@@ -108,15 +108,15 @@ fn codes(stderr: &str) -> Vec<&str> {
 }
 
 #[test]
-fn writes_outside_handlers_and_act_fns_warn_but_still_run() {
+fn writes_outside_handlers_and_act_fns_are_errors() {
     let (status, stdout, stderr) = both(
         "import io { println }\nlet mut n = 0\nlet mut seen = 0\nlet twice = n * 2\nfn bump() {\n    n = snap(n) + 1\n    n = snap(n) + 1\n    seen = 1\n}\ntrack fn peek() -> Int {\n    seen = 2\n    n\n}\nwatch twice {\n    seen = seen + 10\n}\nfn main() {\n    bump()\n    println(\"{snap(n)} {snap(seen)}\")\n}\n",
     );
-    assert_eq!(status, Some(0), "{stderr}");
-    // Each write settles at once, so `seen = 1` comes after the watch ran.
-    assert_eq!(stdout, "2 1\n");
-    // One warning per source and function, then the track fn, then the watch.
-    assert_eq!(codes(&stderr), ["E027", "E027", "E027", "E028"], "{stderr}");
+    // A `fn` or `track fn` that changes a source is an error (E027), once
+    // per source and function; a watch that does warns (E028).
+    assert_eq!(status, Some(1), "{stderr}");
+    assert!(stdout.is_empty(), "nothing runs: {stdout}");
+    assert_eq!(codes(&stderr), ["E028", "E027", "E027", "E027"], "{stderr}");
     assert!(
         stderr.contains("`bump` changes `n`, but only `on` handlers and `act fn` change state"),
         "{stderr}"
@@ -139,7 +139,8 @@ fn migrate_makes_a_writing_fn_an_act_fn() {
     let before = "import io { println }\n\nlet mut total = 0\n\npub fn add(k: Int) {\n    total = snap(total) + k\n}\n\nfn main() {\n    add(2)\n    add(3)\n    println(\"{snap(total)}\")\n}\n";
     std::fs::write(dir.path().join("main.fl"), before).unwrap();
     let run = ["run", "--vm", "--no-cache", "--quiet", "main.fl"];
-    let (_, out_before, stderr) = flux(dir.path(), &run);
+    let (status, _, stderr) = flux(dir.path(), &run);
+    assert_eq!(status, Some(1), "{stderr}");
     assert_eq!(codes(&stderr), ["E027"], "{stderr}");
 
     let (status, _, stderr) = flux(dir.path(), &["migrate", "--write", "main.fl"]);
@@ -149,7 +150,6 @@ fn migrate_makes_a_writing_fn_an_act_fn() {
 
     let (status, out_after, stderr) = flux(dir.path(), &run);
     assert_eq!(status, Some(0));
-    assert_eq!(out_after, out_before);
     assert_eq!(out_after, "5\n");
     assert!(stderr.is_empty(), "{stderr}");
 }
@@ -307,7 +307,7 @@ fn watch_cycles_follow_methods_and_function_values_but_not_act_fn_reads() {
         stderr.contains("this watch wakes itself through `n`")
     };
     assert!(warns(
-        "let mut n = 0\ntrait Bump {\n    fn bump(self: Int) -> Unit;\n}\nimpl Bump for Int {\n    fn bump(self: Int) {\n        n = snap(n) + self\n    }\n}\nwatch n {\n    (1).bump()\n}\nfn main() {\n}\n"
+        "let mut n = 0\nact fn add(k: Int) {\n    n = n + k\n}\ntrait Bump {\n    fn bump(self: Int) -> Unit;\n}\nimpl Bump for Int {\n    fn bump(self: Int) {\n        add(self)\n    }\n}\nwatch n {\n    (1).bump()\n}\nfn main() {\n}\n"
     ));
     assert!(warns(
         "let mut n = 0\nact fn bump() {\n    n = n + 1\n}\nlet callback = bump\nwatch n {\n    callback()\n}\nfn main() {\n}\n"
@@ -316,4 +316,47 @@ fn watch_cycles_follow_methods_and_function_values_but_not_act_fn_reads() {
     assert!(!warns(
         "let mut n = 0\nact fn bump() {\n    n = n + 1\n}\nwatch {\n    bump()\n}\nfn main() {\n}\n"
     ));
+}
+
+#[test]
+fn a_method_call_on_a_source_is_e027_only_if_it_changes_the_source() {
+    // A type's own `push` that only reads is not a write, in any function,
+    // and when it is the last expression it is the function's value.
+    prints(
+        "import io { println }\nstruct S {\n    n: Int\n}\nimpl S {\n    fn push(self, x: Int) -> Int {\n        self.n + x\n    }\n}\nlet mut s = S { n: 1 }\ntrack fn f() -> Int {\n    s.push(1)\n}\nfn g(t: S) -> Int {\n    t.push(10)\n}\nfn main() {\n    println(\"{snap(f())} {g(S { n: 1 })}\")\n}\n",
+        "2 11\n",
+    );
+    // A `mut self` method and the library's `push` change the source.
+    for src in [
+        "struct S {\n    n: Int\n}\nimpl S {\n    fn bump(mut self) {\n        self.n += 1\n    }\n}\nlet mut s = S { n: 1 }\nfn f() {\n    s.bump()\n}\nfn main() {}\n",
+        "let mut xs = [1]\nfn f() {\n    xs.push(2)\n}\nfn main() {}\n",
+    ] {
+        let (status, _, stderr) = both(src);
+        assert_eq!(status, Some(1), "{src}");
+        assert!(stderr.contains("`f` changes"), "{stderr}");
+    }
+}
+
+#[test]
+fn migrate_fixes_every_writing_fn_in_one_go() {
+    // A failing function body used to leave its parameters in scope, hiding
+    // the next functions' writes until another round.
+    let mut src: String = (0..9).map(|i| format!("let mut x{i} = 0\n")).collect();
+    for i in 0..9 {
+        let params: Vec<String> = (i + 1..9).map(|j| format!("x{j}: Int")).collect();
+        src += &format!(
+            "fn f{i}({}) {{\n    x{i} = x{i} + 1\n}}\n",
+            params.join(", ")
+        );
+    }
+    src += "fn main() {}\n";
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("main.fl"), &src).unwrap();
+    let (_, _, stderr) = flux(dir.path(), &["check", "main.fl"]);
+    assert_eq!(stderr.matches("E027").count(), 9, "{stderr}");
+    flux(dir.path(), &["migrate", "--write", "main.fl"]);
+    let after = std::fs::read_to_string(dir.path().join("main.fl")).unwrap();
+    assert_eq!(after.matches("act fn f").count(), 9, "{after}");
+    let (status, _, stderr) = flux(dir.path(), &["check", "main.fl"]);
+    assert_eq!(status, Some(0), "{stderr}");
 }

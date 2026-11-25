@@ -147,9 +147,10 @@ pub(super) fn lower_fn_inner(
     };
 
     let hir_body = lower_block(body, symbols, scope, diagnostics);
-    let hir_body = hir_body?;
-
+    // Close the function's scope even when its body failed, or its
+    // parameters would hide names in the functions after it.
     symbols.pop();
+    let hir_body = hir_body?;
 
     Some(HirFn {
         is_closure: false,

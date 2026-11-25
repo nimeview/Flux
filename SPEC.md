@@ -51,7 +51,8 @@ The VM is the reference; the JIT must produce the same value or error, or fall b
 | unary `-` | `-MIN` → `integer overflow` | IEEE 754 |
 | `== < …` | Exact (no conversion through `Float`) | IEEE 754 (`NaN != NaN`) |
 
-- Mixed integer and float arithmetic and comparison convert the integer to the float operand's type: `Float32` with a `Float32` operand (which may round a large integer: `16777217 + 0.0f32` is `16777216.0`), and `Float64` otherwise. Operators on two integers keep the integer type, so `Int / Int` is `Int`: division by zero is a runtime error rather than a value of another type.
+- An integer and a float compare (`==`, `<`, …) by their exact values: `9007199254740993 == 9007199254740992.0` is `false`, though the integer rounds to that float. `NaN` is unordered with every number, so only `!=` is `true`.
+- Mixed integer and float arithmetic converts the integer to the float operand's type: `Float32` with a `Float32` operand (which may round a large integer: `16777217 + 0.0f32` is `16777216.0`), and `Float64` otherwise. Operators on two integers keep the integer type, so `Int / Int` is `Int`: division by zero is a runtime error rather than a value of another type.
 - `<`, `<=`, `>`, `>=` also order two strings, by Unicode code point: `"a" < "b"`, and `"Z" < "a"`. A string and a number cannot be compared.
 - Casts are checked: an integer out of the target range, a negative value cast to an unsigned type, or a `NaN`/infinite/out-of-range float cast to an integer is the runtime error `numeric cast out of range`. Float → integer casts truncate toward zero.
 - A runtime error stops the current evaluation and is reported as `runtime error: <message> in <context>`, where the context names the binding, `watch`, or `on` handler, followed by what was running, innermost first: `  at <name> (<path>:<line>:<column>)`. The location is the failing statement in that frame, or the declaration of a derived binding; a statement directly in a `match` arm reports the `match`, and a module-level `if` has no location. A trace longer than 12 frames shows its 10 innermost and 2 outermost. Both engines report the same text: an error in compiled code replays on the VM, and the rest of the run stays there. Statements after the failing one do not run, and when settling a batch fails, no watch runs. If the error happens during module initialization, `flux run` exits non-zero. Out-of-range integer *literals* are rejected at parse time.
@@ -177,7 +178,7 @@ A **`mut self` method** changes the value it is called on and returns nothing: `
 
 `watch` and `on` are only valid at module level; using them inside a function body is a compile error (**E011**).
 
-**Who changes sources.** A source changes in an `on` handler, in an `act fn`, or while the module initializes. Other writes still work but warn: a `fn`, `track fn`, or `impl` method that assigns a source is **E027**, which becomes an error in 0.3 (the fix turns a `fn` into an `act fn`); a `watch` that assigns a source is **E028** (compute the value with `let`, or `emit` an event whose `on` handler changes it). Each function, handler, or watch reports a source once. A closure counts as the code it is written in.
+**Who changes sources.** A source changes in an `on` handler, in an `act fn`, or while the module initializes. A `fn`, `track fn`, or `impl` method that assigns a source is an error, **E027** (the fix turns a `fn` into an `act fn`; a method can change state by calling an `act fn`). `main` is no exception: `act fn main` changes state as one batch. A `watch` that assigns a source still runs but warns, **E028** (compute the value with `let`, or `emit` an event whose `on` handler changes it). Each function, handler, or watch reports a source once. A closure counts as the code it is written in.
 
 **Writes and settling.** An assignment takes effect on the source at once. A derived value that depends on a changed source is marked stale, and reading it recomputes it first, so code always reads current values; a stale value nobody reads is not computed until the batch ends, and its errors appear only then. Changes are grouped in **batches**. An `emit` or a call to an `act fn` opens one when none is open; everything it runs joins it, including every handler of the event, nested `emit`s and their handlers, and the `act fn`s they call. When the batch ends, the derived values that are still stale recompute, then the watches that depend on what changed run; what they write, and the events they emit, settle in the same batch. Each watch runs at most once per batch, so a cycle of watches ends: a change that reaches a watch that has already run does not run it again. A derived value counts as changed only when its new value differs from the old one by `==`, so `0.0` and `-0.0` are no change. A watch runs only when what it follows differs from what it last saw (below). A write outside any batch (in a plain `fn` called from `main`, E027) settles at once. If a batch fails, the writes made before the failure stay and nothing else runs.
 
@@ -219,7 +220,7 @@ Maps are equal when they have the same keys with equal values. The JIT has no fo
 
 ### Equality
 
-`==` and `!=` (and `assert_eq`) compare two values of the same type when that type is equatable: numbers (any widths, by value, Float by IEEE 754), `Bool`, `Char`, `String`, `()`, and arrays, `Option`, `Result`, structs, and enums whose parts are equatable. Compound values are equal when their parts are, by the same rules: `[0.0 / 0.0] == [0.0 / 0.0]` is `false`, and `Some([1]) == Some([1])` is `true`. Comparing functions, or values of different types, is a type error (**E005**).
+`==` and `!=` (and `assert_eq`) compare two values of the same type when that type is equatable: numbers (any widths, and integers with floats, by exact value; Float by IEEE 754), `Bool`, `Char`, `String`, `()`, and arrays, `Option`, `Result`, structs, and enums whose parts are equatable. Compound values are equal when their parts are, by the same rules: `[0.0 / 0.0] == [0.0 / 0.0]` is `false`, and `Some([1]) == Some([1])` is `true`. Comparing functions, or values of different types, is a type error (**E005**).
 
 ### `if` and `match` as operands
 
@@ -420,7 +421,7 @@ These limits keep extreme programs a language error rather than a native stack o
 | E014 | Importing a name a module does not have |
 | E015 | Warning: unused binding |
 | E026 | Warning: an older form that still works; it names its replacement, which the editor's quick fix and `flux migrate` apply |
-| E027 | Warning: a `fn`, `track fn`, or method changes a source (§ Reactive semantics); an error from 0.3. For a `fn`, the quick fix and `flux migrate` write `act fn` |
+| E027 | A `fn`, `track fn`, or method changes a source (§ Reactive semantics). For a `fn`, the quick fix and `flux migrate` write `act fn` |
 | E028 | Warning: a `watch` changes a source |
 | E029 | Warning: watches that wake each other, or one that wakes itself, in a cycle |
 | E030 | Warning: a collection function's result is not used (`push(xs, 3)` alone) |

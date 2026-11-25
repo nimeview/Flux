@@ -62,6 +62,23 @@ pub(super) fn infer_block_return(
             .map(|v| infer_expr(ctx, v, &scope, names, source, diagnostics))
             .unwrap_or(Some(Type::Unit)),
         Some(HirStmt::Expr(expr)) => infer_expr(ctx, expr, &scope, names, source, diagnostics),
+        // `x.push(1)` written last: if the method turns out not to change `x`
+        // (a type's own `push` that returns a value), it is the block's value.
+        Some(HirStmt::Assign(assign)) if ctx.mut_call_sites.contains(&assign.span) => {
+            let ty = infer_expr(ctx, &assign.value, &scope, names, source, diagnostics);
+            let resolved = ctx
+                .method_calls
+                .borrow()
+                .get(&(ctx.current_function.get(), assign.span))
+                .copied();
+            let changes = resolved.is_some_and(|id| ctx.mut_methods.contains(&id))
+                || ctx.changing_sites.borrow().contains(&assign.span);
+            if changes {
+                Some(Type::Unit)
+            } else {
+                ty
+            }
+        }
         _ => Some(Type::Unit),
     }
 }

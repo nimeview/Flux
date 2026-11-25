@@ -558,6 +558,7 @@ fn lower_program_inner(
             mut_call_sites: symbols.mut_call_sites.clone(),
             changing_calls: Default::default(),
             captured_call_sites: symbols.captured_call_sites.clone(),
+            deferred_writes: std::mem::take(&mut symbols.deferred_writes),
             extension_sources: symbols.extension_sources.clone(),
             file_imports: linked.map(file_imports).unwrap_or_default(),
         };

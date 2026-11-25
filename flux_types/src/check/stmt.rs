@@ -579,6 +579,10 @@ pub(super) fn check_stmt(
                 if !changing {
                     break 'assign;
                 }
+                // The method changes the place: a write outside an `act fn`.
+                if let Some(error) = ctx.deferred_writes.get(span) {
+                    diagnostics.push(error.clone());
+                }
                 pre_got = Some(got);
             }
             if let Some(local_name) = names.get(name) {

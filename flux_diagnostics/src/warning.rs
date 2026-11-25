@@ -37,19 +37,6 @@ pub enum FluxWarning {
         span: miette::SourceSpan,
         source_id: SourceId,
     },
-    /// A function other than an `act fn` changes a source. An error from 0.3.
-    #[error("`{function}` changes `{name}`, but only `on` handlers and `act fn` change state")]
-    #[diagnostic(code(flux::E027), help("{help}"))]
-    WriteOutsideAct {
-        function: String,
-        name: String,
-        help: String,
-        #[label("changes state")]
-        span: miette::SourceSpan,
-        source_id: SourceId,
-        /// The `fn` keyword, which the fix turns into `act fn`.
-        fix_span: Option<miette::SourceSpan>,
-    },
     /// Watches that wake each other in a cycle.
     #[error("{message}")]
     #[diagnostic(
@@ -100,7 +87,6 @@ impl FluxWarning {
         match self {
             Self::UnusedBinding { source_id, .. }
             | Self::Deprecated { source_id, .. }
-            | Self::WriteOutsideAct { source_id, .. }
             | Self::WatchWrites { source_id, .. }
             | Self::WatchCycle { source_id, .. }
             | Self::UnusedResult { source_id, .. }
@@ -112,7 +98,6 @@ impl FluxWarning {
         match self {
             Self::UnusedBinding { .. } => "E015",
             Self::Deprecated { .. } | Self::OldForm { .. } => "E026",
-            Self::WriteOutsideAct { .. } => "E027",
             Self::WatchWrites { .. } => "E028",
             Self::WatchCycle { .. } => "E029",
             Self::UnusedResult { .. } => "E030",
@@ -124,7 +109,6 @@ impl FluxWarning {
         let miette_span = match self {
             Self::UnusedBinding { span, .. }
             | Self::Deprecated { span, .. }
-            | Self::WriteOutsideAct { span, .. }
             | Self::WatchWrites { span, .. }
             | Self::WatchCycle { span, .. }
             | Self::UnusedResult { span, .. }
@@ -141,17 +125,7 @@ impl FluxWarning {
                 span: self.label_span(),
                 replacement: replacement.clone(),
             }),
-            Self::WriteOutsideAct {
-                function,
-                fix_span: Some(fix_span),
-                ..
-            } => Some(Fix {
-                title: format!("Make `{function}` an `act fn`"),
-                span: span_from_miette(self.source_id(), *fix_span),
-                replacement: "act fn".to_string(),
-            }),
             Self::UnusedBinding { .. }
-            | Self::WriteOutsideAct { .. }
             | Self::WatchWrites { .. }
             | Self::WatchCycle { .. }
             | Self::UnusedResult { .. }

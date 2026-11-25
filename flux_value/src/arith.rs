@@ -272,8 +272,39 @@ pub fn compare(a: &Value, b: &Value) -> Option<Ordering> {
     }
     match (num(a)?, num(b)?) {
         (Num::Int(_, x), Num::Int(_, y)) => Some(x.cmp(&y)),
+        // An integer and a float compare by their exact values, not through
+        // a rounded conversion: `2^53 + 1` is greater than `2^53` as a float.
+        (Num::Int(_, x), Num::Float(_, y)) => int_float_cmp(x, y),
+        (Num::Float(_, x), Num::Int(_, y)) => int_float_cmp(y, x).map(Ordering::reverse),
         (na, nb) => float_parts(&na).1.partial_cmp(&float_parts(&nb).1),
     }
+}
+
+/// The exact order of the integer `i` and the float `f`; `None` for `NaN`.
+pub fn int_float_cmp(i: i128, f: f64) -> Option<Ordering> {
+    if f.is_nan() {
+        return None;
+    }
+    let whole = f.trunc();
+    // Beyond every integer width (and infinities): the float's sign decides.
+    if whole.abs() >= 1.7e38 {
+        return Some(if f > 0.0 {
+            Ordering::Less
+        } else {
+            Ordering::Greater
+        });
+    }
+    // `whole` is an integer below 2^127, so this conversion is exact.
+    Some(i.cmp(&(whole as i128)).then_with(|| {
+        let fraction = f - whole;
+        if fraction > 0.0 {
+            Ordering::Less
+        } else if fraction < 0.0 {
+            Ordering::Greater
+        } else {
+            Ordering::Equal
+        }
+    }))
 }
 
 /// Language equality (`==`): numeric values compare by value across widths,

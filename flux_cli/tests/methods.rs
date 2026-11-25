@@ -265,11 +265,11 @@ fn review_findings_stay_fixed() {
         "import io { println }\ntrait Cl {\n    fn copy(self) -> Self;\n}\nstruct C {\n    n: Int\n}\nimpl Cl for C {\n    fn copy(self) -> C {\n        self\n    }\n}\nenum A {\n    X\n}\nenum B {\n    X\n}\nimpl A {\n    fn make() -> Self {\n        A::X\n    }\n}\nfn main() {\n    println(\"{C { n: 4 }.copy().n} {A::make()} {B::X}\")\n}\n",
         "4 A::X B::X\n",
     );
-    // A source-changing method in a plain fn warns (E027) but runs.
+    // A source-changing method in a plain fn is an error (E027), not E002.
     let (status, _, stderr) = both(
         "struct C {\n    n: Int\n}\nimpl C {\n    fn bump(mut self) {\n        self.n += 1\n    }\n}\nlet mut c = C { n: 0 }\nfn change() {\n    c.bump()\n}\nfn main() {\n    change()\n}\n",
     );
-    assert_eq!(status, Some(0), "{stderr}");
+    assert_eq!(status, Some(1), "{stderr}");
     assert!(
         stderr.contains("E027") && !stderr.contains("E002"),
         "{stderr}"

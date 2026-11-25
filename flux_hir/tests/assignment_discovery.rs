@@ -29,7 +29,7 @@ fn nested_if_assignment_in_match_rejects_immutable_module_let() {
 #[test]
 fn nested_assignment_with_mutable_module_let_still_lowers() {
     let diagnostics =
-        errors("let mut x = 0\nfn main() { match 0 { _ => { if true { x = 1 } 0 } } }\n");
+        errors("let mut x = 0\nact fn main() { match 0 { _ => { if true { x = 1 } 0 } } }\n");
     assert!(!diagnostics.has_errors(), "{:?}", diagnostics.errors);
 }
 

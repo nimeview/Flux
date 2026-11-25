@@ -314,6 +314,19 @@ pub enum FluxError {
         span: miette::SourceSpan,
         source_id: SourceId,
     },
+    /// A function other than an `act fn` changes a source.
+    #[error("`{function}` changes `{name}`, but only `on` handlers and `act fn` change state")]
+    #[diagnostic(code(flux::E027), help("{help}"))]
+    WriteOutsideAct {
+        function: String,
+        name: String,
+        help: String,
+        #[label("changes state")]
+        span: miette::SourceSpan,
+        source_id: SourceId,
+        /// The `fn` keyword, which the fix turns into `act fn`.
+        fix_span: Option<miette::SourceSpan>,
+    },
 }
 
 impl FluxError {
@@ -345,11 +358,12 @@ impl FluxError {
             | Self::NotCallable { source_id, .. }
             | Self::CyclicTypeAlias { source_id, .. }
             | Self::UninhabitedType { source_id, .. }
-            | Self::ImportedNameTaken { source_id, .. } => *source_id,
+            | Self::ImportedNameTaken { source_id, .. }
+            | Self::WriteOutsideAct { source_id, .. } => *source_id,
         }
     }
 
-    /// Stable diagnostic code (`E000`–`E025`; warnings use E015 and E026).
+    /// Stable diagnostic code (`E000`–`E027`; warnings use E015, E026, and E028–E030).
     pub fn code(&self) -> &'static str {
         match self {
             Self::Parse { .. } => "E000",
@@ -378,6 +392,7 @@ impl FluxError {
             Self::CyclicTypeAlias { .. } => "E024",
             Self::UninhabitedType { .. } => "E025",
             Self::ImportedNameTaken { .. } => "E004",
+            Self::WriteOutsideAct { .. } => "E027",
         }
     }
 
@@ -411,9 +426,26 @@ impl FluxError {
             | Self::CyclicTypeAlias { span, .. }
             | Self::UninhabitedType { span, .. }
             | Self::ImportedNameTaken { span, .. }
+            | Self::WriteOutsideAct { span, .. }
             | Self::DuplicateDefinition { span, .. } => *span,
         };
         crate::warning::span_from_miette(source_id, miette_span)
+    }
+
+    /// The edit that resolves this error, if it has one.
+    pub fn fix(&self) -> Option<crate::Fix> {
+        match self {
+            Self::WriteOutsideAct {
+                function,
+                fix_span: Some(fix_span),
+                ..
+            } => Some(crate::Fix {
+                title: format!("Make `{function}` an `act fn`"),
+                span: crate::warning::span_from_miette(self.source_id(), *fix_span),
+                replacement: "act fn".to_string(),
+            }),
+            _ => None,
+        }
     }
 }
 

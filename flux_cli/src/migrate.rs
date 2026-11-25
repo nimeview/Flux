@@ -39,11 +39,12 @@ pub fn apply_compiler_fixes(path: &Path, contents: &str) -> String {
         let Some(root) = analyzed.sources.first().map(|s| s.id) else {
             break;
         };
-        let fixes: Vec<(usize, usize, String)> = analyzed
-            .diagnostics
+        let diagnostics = &analyzed.diagnostics;
+        let fixes: Vec<(usize, usize, String)> = diagnostics
             .warnings
             .iter()
             .filter_map(|w| w.fix())
+            .chain(diagnostics.errors.iter().filter_map(|e| e.fix()))
             .filter(|fix| fix.span.source == root)
             .map(|fix| (fix.span.start, fix.span.end, fix.replacement))
             .collect();

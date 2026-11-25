@@ -177,6 +177,43 @@ fn cases() -> Vec<(&'static str, String, Want)> {
             "let mut a = 2\nlet r = a < 2.5",
             Value("true"),
         ),
+        // An integer and a float compare by exact value, not by rounding the
+        // integer: 2^53 + 1 is not 2^53, and 2^24 + 1 is not 2^24 as Float32.
+        c(
+            "int_float_equal_is_exact",
+            "let mut a = 9007199254740993\nlet r = a == 9007199254740992.0",
+            Value("false"),
+        ),
+        c(
+            "int_float_order_is_exact",
+            "let mut a = 9007199254740993\nlet r = a > 9007199254740992.0",
+            Value("true"),
+        ),
+        c(
+            "float_int_order_is_exact",
+            "let mut a = 9007199254740992.0\nlet r = a < 9007199254740993",
+            Value("true"),
+        ),
+        c(
+            "int_float32_equal_is_exact",
+            "let mut a = 16777217\nlet r = a == 16777216.0f32",
+            Value("false"),
+        ),
+        c(
+            "int_float_fraction",
+            "let mut a = -1\nlet r = a < -0.5 && a > -1.5 && a != -1.0 + 0.25",
+            Value("true"),
+        ),
+        c(
+            "int_float_nan",
+            "let mut a = 1\nlet n = 0.0 / 0.0\nlet r = a < n || a == n || a > n",
+            Value("false"),
+        ),
+        c(
+            "int_float_infinity",
+            "let mut a = 9223372036854775807\nlet inf = 1.0 / 0.0\nlet r = a < inf && 0 - a > 0.0 - inf",
+            Value("true"),
+        ),
         // Casts are checked.
         c(
             "cast_in_range",

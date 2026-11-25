@@ -21,7 +21,15 @@ pub(super) fn lower_block(
     symbols.push(scope);
     let mut stmts = Vec::new();
     for stmt in &block.stmts {
-        stmts.extend(lower_stmt(stmt, symbols, diagnostics)?);
+        match lower_stmt(stmt, symbols, diagnostics) {
+            Some(lowered) => stmts.extend(lowered),
+            // Close the scope even on failure, or its names would hide the
+            // same names in the code after it.
+            None => {
+                symbols.pop();
+                return None;
+            }
+        }
     }
     symbols.pop();
     Some(HirBlock {
@@ -618,9 +626,11 @@ pub(super) fn lower_match_arm(
                 // value (`None => 0` before `Some(v) => v` matched `Some(4)`).
                 (v.name.clone(), vec![], vec![])
             } else {
-                let id = symbols
-                    .declare(&v.name, SymbolKind::Local { mutable: false }, v.span)
-                    .ok()?;
+                let Ok(id) = symbols.declare(&v.name, SymbolKind::Local { mutable: false }, v.span)
+                else {
+                    symbols.pop();
+                    return None;
+                };
                 (String::new(), vec![id], vec![])
             }
         }
@@ -678,13 +688,14 @@ pub(super) fn lower_match_arm(
     let diverges = arm.expr.is_none() && leaves;
     let unit = arm.expr.is_none() && !leaves;
     let expr = match &arm.expr {
-        Some(value) => lower_expr(value, symbols, scope, diagnostics, reads_reactive)?,
-        None => HirExpr::Bool {
+        Some(value) => lower_expr(value, symbols, scope, diagnostics, reads_reactive),
+        None => Some(HirExpr::Bool {
             value: false,
             span: arm.span,
-        },
+        }),
     };
     symbols.pop();
+    let expr = expr?;
     Some(HirMatchArm {
         variant,
         bindings,
@@ -894,7 +905,16 @@ fn lower_stmt(
                 return lower_expr(whole, symbols, scope, diagnostics, &mut reads_reactive)
                     .map(|e| vec![HirStmt::Expr(e)]);
             }
-            check_writer(sym, &root.name, root.span, symbols, diagnostics);
+            // Whether `m` changes the place is known only after type checking:
+            // an E027 here is kept for the checker (`deferred_writes`).
+            check_writer_at(
+                sym,
+                &root.name,
+                root.span,
+                Some(*span),
+                symbols,
+                diagnostics,
+            );
             let mut out = Vec::new();
             let mut reads_reactive = false;
             let scope = tracking_scope(ctx);
@@ -1117,44 +1137,73 @@ fn check_writer(
     symbols: &mut SymbolTable,
     diagnostics: &mut DiagnosticBag,
 ) {
-    if symbols.get(sym).map(|s| s.kind) != Some(SymbolKind::Source) {
+    check_writer_at(sym, name, span, None, symbols, diagnostics);
+}
+
+/// [`check_writer`]; for `place.m(…)` at `call`, an E027 is not reported but
+/// kept in `deferred_writes`, for the type checker to report if `m` turns out
+/// to change its receiver.
+fn check_writer_at(
+    sym: SymbolId,
+    name: &str,
+    span: Span,
+    call: Option<Span>,
+    symbols: &mut SymbolTable,
+    diagnostics: &mut DiagnosticBag,
+) {
+    // A `const` is not state: assigning one is E009, reported by the type checker.
+    if symbols.get(sym).map(|s| s.kind) != Some(SymbolKind::Source)
+        || symbols.constants.contains(&sym)
+    {
         return;
     }
     let Some(writer) = symbols.writers.last_mut() else {
         return;
     };
-    if matches!(writer.kind, WriterKind::Act | WriterKind::Handler) || !writer.warned.insert(sym) {
+    if matches!(writer.kind, WriterKind::Act | WriterKind::Handler) || writer.warned.contains(&sym)
+    {
         return;
     }
-    let warning = match writer.kind {
-        WriterKind::Watch => FluxWarning::WatchWrites {
-            name: name.to_string(),
-            span: span_to_miette(span),
-            source_id: span.source,
-        },
-        kind => {
-            let help = match kind {
-                WriterKind::Plain => format!(
-                    "write `act fn {}` so that callers see one change; from 0.3 this is an error",
-                    writer.name
-                ),
-                WriterKind::Track => "a `track fn` is recomputed whenever what it reads changes; \
-                     change state in an `act fn` or an `on` handler"
-                    .to_string(),
-                _ => "change state in an `act fn` or an `on` handler".to_string(),
-            };
-            FluxWarning::WriteOutsideAct {
-                function: writer.name.clone(),
+    if call.is_none() || writer.kind == WriterKind::Watch {
+        writer.warned.insert(sym);
+    }
+    // A watch that writes warns (E028); any other function is an error (E027).
+    let kind = match writer.kind {
+        WriterKind::Watch => {
+            diagnostics.push_warning(FluxWarning::WatchWrites {
                 name: name.to_string(),
-                help,
                 span: span_to_miette(span),
                 source_id: span.source,
-                fix_span: (kind == WriterKind::Plain)
-                    .then_some(writer.keyword)
-                    .flatten()
-                    .map(span_to_miette),
-            }
+            });
+            return;
         }
+        kind => kind,
     };
-    diagnostics.push_warning(warning);
+    let help = match kind {
+        WriterKind::Plain => format!(
+            "write `act fn {}` so that callers see one change; `flux migrate` does it",
+            writer.name
+        ),
+        WriterKind::Track => "a `track fn` is recomputed whenever what it reads changes; \
+                 change state in an `act fn` or an `on` handler"
+            .to_string(),
+        _ => "change state in an `act fn` or an `on` handler".to_string(),
+    };
+    let error = FluxError::WriteOutsideAct {
+        function: writer.name.clone(),
+        name: name.to_string(),
+        help,
+        span: span_to_miette(span),
+        source_id: span.source,
+        fix_span: (kind == WriterKind::Plain)
+            .then_some(writer.keyword)
+            .flatten()
+            .map(span_to_miette),
+    };
+    match call {
+        Some(call) => {
+            symbols.deferred_writes.insert(call, error);
+        }
+        None => diagnostics.push(error),
+    }
 }

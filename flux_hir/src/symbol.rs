@@ -112,6 +112,9 @@ pub struct SymbolTable {
     /// `place.m(…)` statements inside a closure whose place's root the
     /// closure captures: an error if `m` changes its receiver.
     pub captured_call_sites: std::collections::HashSet<Span>,
+    /// E027 for `place.m(…)` statements, by call span: reported by the type
+    /// checker only if `m` changes its receiver.
+    pub deferred_writes: HashMap<Span, flux_diagnostics::FluxError>,
     /// See `HirProgram::extension_sources`.
     pub extension_sources: HashMap<SymbolId, flux_diagnostics::SourceId>,
 }
@@ -195,6 +198,7 @@ impl SymbolTable {
             mut_methods: std::collections::HashSet::new(),
             mut_call_sites: std::collections::HashSet::new(),
             captured_call_sites: std::collections::HashSet::new(),
+            deferred_writes: HashMap::new(),
             extension_sources: HashMap::new(),
         }
     }

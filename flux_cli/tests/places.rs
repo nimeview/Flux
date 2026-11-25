@@ -130,8 +130,9 @@ fn a_field_of_a_source_is_a_write() {
     let (status, _, stderr) = both(
         "struct P {\n    x: Int\n}\nlet mut p = P { x: 1 }\nfn reset() {\n    p.x = 0\n}\nfn main() {\n}\n",
     );
-    assert_eq!(status, Some(0));
+    assert_eq!(status, Some(1));
     assert!(stderr.contains("`reset` changes `p`"), "{stderr}");
+    assert!(stderr.contains("E027"), "{stderr}");
 }
 
 #[test]

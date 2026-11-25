@@ -272,7 +272,7 @@ after
 x=1
 ```
 
-The call to `set_it` is one batch, so the watch runs once it returns. Writing a source anywhere else still works but warns. A `fn`, `track fn`, or method that writes one is E027, an error from 0.3; the editor's quick fix and `flux migrate` turn such a `fn` into an `act fn`. A `watch` that writes one is E028: compute the value with `let` instead, or `emit` an event whose `on` handler changes it.
+The call to `set_it` is one batch, so the watch runs once it returns. A `fn`, `track fn`, or method that writes a source is an error, E027; the editor's quick fix and `flux migrate` turn such a `fn` into an `act fn`, and a method can call an `act fn`. A `watch` that writes one still runs but warns, E028: compute the value with `let` instead, or `emit` an event whose `on` handler changes it.
 
 ## Dependencies follow the branch taken
 

@@ -34,6 +34,9 @@ pub struct HirProgram {
     pub changing_calls: std::collections::HashSet<Span>,
     /// `place.m(…)` statements in a closure that captures the place's root.
     pub captured_call_sites: std::collections::HashSet<Span>,
+    /// E027 for `place.m(…)` statements whose `m` may change the place; the
+    /// type checker reports it if `m` does.
+    pub deferred_writes: std::collections::HashMap<Span, flux_diagnostics::FluxError>,
     /// Methods of `impl Type { }` for a library type (`String`, `Int`, …),
     /// with the file that declares them: visible there and in files that
     /// import it.
