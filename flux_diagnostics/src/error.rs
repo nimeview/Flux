@@ -327,6 +327,20 @@ pub enum FluxError {
         /// The `fn` keyword, which the fix turns into `act fn`.
         fix_span: Option<miette::SourceSpan>,
     },
+
+    /// A generic call's type argument lacks a trait its parameter's bound names.
+    #[error("`{ty}` does not have trait `{trait_name}`, which `{function}` needs for `{param}`")]
+    #[diagnostic(code(flux::E031), help("{help}"))]
+    UnsatisfiedBound {
+        ty: String,
+        trait_name: String,
+        function: String,
+        param: String,
+        help: String,
+        #[label("`{param}` is `{ty}` here")]
+        span: miette::SourceSpan,
+        source_id: SourceId,
+    },
 }
 
 impl FluxError {
@@ -359,11 +373,13 @@ impl FluxError {
             | Self::CyclicTypeAlias { source_id, .. }
             | Self::UninhabitedType { source_id, .. }
             | Self::ImportedNameTaken { source_id, .. }
-            | Self::WriteOutsideAct { source_id, .. } => *source_id,
+            | Self::WriteOutsideAct { source_id, .. }
+            | Self::UnsatisfiedBound { source_id, .. } => *source_id,
         }
     }
 
-    /// Stable diagnostic code (`E000`–`E027`; warnings use E015, E026, and E028–E030).
+    /// Stable diagnostic code (`E000`–`E027` and `E031`; warnings use E015,
+    /// E026, and E028–E030).
     pub fn code(&self) -> &'static str {
         match self {
             Self::Parse { .. } => "E000",
@@ -393,6 +409,7 @@ impl FluxError {
             Self::UninhabitedType { .. } => "E025",
             Self::ImportedNameTaken { .. } => "E004",
             Self::WriteOutsideAct { .. } => "E027",
+            Self::UnsatisfiedBound { .. } => "E031",
         }
     }
 
@@ -427,6 +444,7 @@ impl FluxError {
             | Self::UninhabitedType { span, .. }
             | Self::ImportedNameTaken { span, .. }
             | Self::WriteOutsideAct { span, .. }
+            | Self::UnsatisfiedBound { span, .. }
             | Self::DuplicateDefinition { span, .. } => *span,
         };
         crate::warning::span_from_miette(source_id, miette_span)

@@ -57,6 +57,10 @@ event_decl = { pub_modifier? ~ "event" ~ ident ~ event_params? }
 event_params = { "(" ~ param_list? ~ ")" }
 
 type_params = { "[" ~ ident ~ ("," ~ ident)* ~ ","? ~ "]" }
+// A function's or impl's type parameters may name traits: `[T: Ord + Display]`.
+bounded_params = { "[" ~ type_param ~ ("," ~ type_param)* ~ ","? ~ "]" }
+type_param = { ident ~ (":" ~ trait_bound ~ ("+" ~ trait_bound)*)? }
+trait_bound = { path_ident | ident }
 
 trait_decl = { pub_modifier? ~ "trait" ~ ident ~ trait_body }
 trait_body = { "{" ~ trait_method* ~ "}" }
@@ -64,13 +68,13 @@ trait_method = { "fn" ~ ident ~ fn_sig ~ ";" }
 
 // `impl Trait for Type { }`, or `impl Type { }` for the type's own methods
 // and type functions.
-impl_decl = { "impl" ~ ((path_ident | ident) ~ kw_for)? ~ type_name ~ impl_body }
+impl_decl = { "impl" ~ bounded_params? ~ ((path_ident | ident) ~ kw_for)? ~ type_name ~ impl_body }
 kw_for = @{ "for" ~ kw_end }
 impl_body = { "{" ~ impl_method* ~ "}" }
 impl_method = { "fn" ~ ident ~ fn_sig ~ block }
 
 // `track fn` reads reactive values and tracks them; `act fn` changes state.
-fn_decl = { pub_modifier? ~ fn_kind? ~ kw_fn ~ ident ~ type_params? ~ fn_sig ~ block }
+fn_decl = { pub_modifier? ~ fn_kind? ~ kw_fn ~ ident ~ bounded_params? ~ fn_sig ~ block }
 fn_kind = { kw_track | kw_act }
 kw_fn = @{ "fn" ~ kw_end }
 kw_track = @{ "track" ~ kw_end }

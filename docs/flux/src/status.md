@@ -27,7 +27,6 @@ These may change or disappear, with no compatibility promise:
 - A package registry, and dependencies by version.
 - Windows support.
 - Rerunning a cycle of watches until values stop changing.
-- Functions that accept "any type with this trait", and `impl` blocks for generic types.
 - Private fields.
 - Catching a runtime error from inside the language.
 

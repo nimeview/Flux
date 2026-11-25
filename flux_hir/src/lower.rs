@@ -568,6 +568,8 @@ fn lower_program_inner(
             names,
             enum_variants: symbols.enum_variants.clone(),
             trait_impls,
+            type_bounds: symbols.type_bounds.clone(),
+            specialized_from: Default::default(),
             generic_fns,
             type_aliases,
             qualified_symbols: symbols.qualified_symbols.clone(),

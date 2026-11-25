@@ -81,11 +81,19 @@ pub fn rename_spans(
     symbol_id: SymbolId,
     sources: &HashMap<SourceId, String>,
 ) -> Vec<Span> {
-    let mut out = index
-        .references
-        .get(&symbol_id)
-        .cloned()
-        .unwrap_or_default();
+    // A generic function and its specializations are one name in the
+    // source: a call that runs a specialization renames the function.
+    let symbol_id = *hir.specialized_from.get(&symbol_id).unwrap_or(&symbol_id);
+    let mut out: Vec<Span> = hir
+        .specialized_from
+        .iter()
+        .filter(|(_, template)| **template == symbol_id)
+        .map(|(specialized, _)| *specialized)
+        .chain(std::iter::once(symbol_id))
+        .filter_map(|id| index.references.get(&id))
+        .flatten()
+        .copied()
+        .collect();
 
     let Some(name) = hir.names.get(&symbol_id) else {
         return dedupe_spans(out);

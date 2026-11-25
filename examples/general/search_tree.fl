@@ -1,4 +1,4 @@
-// A binary search tree that holds any ordered values: a generic enum and
+// A binary search tree that holds any ordered values (`T: Ord`): a generic enum and
 // generic functions, used for numbers and for words.
 import io { println }
 
@@ -12,7 +12,7 @@ struct Stats[T] {
     smallest: Option[T]
 }
 
-fn insert[T](tree: Tree[T], x: T) -> Tree[T] {
+fn insert[T: Ord](tree: Tree[T], x: T) -> Tree[T] {
     match tree {
         Leaf => Node { value: x, left: Leaf, right: Leaf },
         Node { value, left, right } if x < value => Node { value: value, left: insert(left, x), right: right },
@@ -33,7 +33,7 @@ fn stats[T](tree: Tree[T]) -> Stats[T] {
     Stats { size: items.len(), smallest: items.first() }
 }
 
-fn build[T](items: [T], empty: Tree[T]) -> Tree[T] {
+fn build[T: Ord](items: [T], empty: Tree[T]) -> Tree[T] {
     let mut tree = empty
     for x in items {
         tree = insert(tree, x)

@@ -61,6 +61,17 @@ pub(super) fn lower_fn_as(
     symbols.writers.pop();
     let mut function = function?;
     function.act = decl.kind == FnKind::Act;
+    if !decl.type_bounds.is_empty() {
+        let bounds = decl
+            .type_bounds
+            .iter()
+            .map(|b| crate::HirBound {
+                param: b.param.clone(),
+                traits: b.traits.iter().map(|t| (t.name.clone(), t.span)).collect(),
+            })
+            .collect();
+        symbols.type_bounds.insert(function.name, bounds);
+    }
     Some(function)
 }
 

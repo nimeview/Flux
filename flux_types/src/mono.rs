@@ -35,11 +35,15 @@ pub fn monomorphize_program(
             }
         }
     }
+    report_unknown_bounds(program, diagnostics);
     if generic_fns.is_empty() {
         return;
     }
 
-    let mut next_id = program.names.keys().map(|id| id.0).max().unwrap_or(0) + 1;
+    let mut state = Specializations {
+        next_id: program.names.keys().map(|id| id.0).max().unwrap_or(0) + 1,
+        done: HashMap::new(),
+    };
     let mut reachable_names = std::collections::HashSet::new();
     collect_generic_calls(program, &generic_fns, &mut reachable_names);
     let mut generic_names: Vec<_> = reachable_names.into_iter().collect();
@@ -50,11 +54,6 @@ pub fn monomorphize_program(
     // The cap protects against unbounded polymorphic recursion (for example,
     // a generic function that recursively wraps its type in another array).
     const MAX_MONOMORPHIZATION_PASSES: usize = 256;
-    // Passes alone do not bound the work: types grow with every pass, and a
-    // function can specialize itself in several ways at once.
-    const MAX_SPECIALIZATIONS: usize = 1024;
-    const MAX_SPECIALIZED_TYPE_DEPTH: usize = 32;
-    let mut specializations: HashMap<(String, String), String> = HashMap::new();
     for pass in 0..MAX_MONOMORPHIZATION_PASSES {
         crate::check::prepare_closures(program, _source);
         let mut created_specialization = false;
@@ -121,70 +120,30 @@ pub fn monomorphize_program(
                     .iter()
                     .filter_map(|name| substitutions.get(name).cloned())
                     .collect();
-                let suffix = generic_types
-                    .iter()
-                    .map(|ty| ty.key())
-                    .collect::<Vec<_>>()
-                    .join("_");
-                let specialization_key = (base_name.clone(), suffix.clone());
-                if let Some(inst_name) = specializations.get(&specialization_key) {
-                    rewrite_matching_calls(program, base_name, inst_name, &concrete, &symbol_types);
-                    continue;
-                }
-                let deepest = generic_types.iter().map(type_depth).max().unwrap_or(0);
-                if specializations.len() >= MAX_SPECIALIZATIONS
-                    || deepest > MAX_SPECIALIZED_TYPE_DEPTH
-                {
-                    diagnostics.push(FluxError::TypeMismatch {
-                        expected: "finite generic specialization".into(),
-                        found: format!(
-                            "`{base_name}` needs more than {MAX_SPECIALIZATIONS} specializations or types nested more than {MAX_SPECIALIZED_TYPE_DEPTH} levels"
-                        ),
-                        span: span_to_miette(template.fn_item.span),
-                        source_id: template.fn_item.span.source,
-                    });
-                    return;
-                }
-                let readable_name = format!("{base_name}_{suffix}");
-                // A user may declare `id_Int` alongside `id[T]`. Generated
-                // functions must never silently reuse that unrelated symbol.
-                let inst_name = if program.names.values().any(|name| name == &readable_name) {
-                    format!("\0flux_mono_{}_{readable_name}", next_id)
-                } else {
-                    readable_name
+                let inst_name = match specialize(
+                    program,
+                    template,
+                    base_name,
+                    &generic_types,
+                    span,
+                    &mut state,
+                    diagnostics,
+                ) {
+                    Specialized::Done { name, created, .. } => {
+                        created_specialization |= created;
+                        name
+                    }
+                    Specialized::Unmet => continue,
+                    Specialized::Limit => return,
                 };
-                specializations.insert(specialization_key, inst_name.clone());
-
-                let sym = SymbolId(next_id);
-                next_id += 1;
-                program.names.insert(sym, inst_name.clone());
-                if let Some(template_symbol) = program.symbols.get(&template.fn_item.name).cloned()
-                {
-                    program.symbols.insert(
-                        sym,
-                        Symbol {
-                            id: sym,
-                            name: inst_name.clone(),
-                            kind: SymbolKind::Function {
-                                reactive: template.fn_item.reactive,
-                            },
-                            span: template_symbol.span,
-                        },
-                    );
-                }
-                let mut subst: HashMap<&str, HirType> = HashMap::new();
-                for (param, ty) in template.type_params.iter().zip(generic_types.iter()) {
-                    subst.insert(param.as_str(), type_to_hir_type(ty, span));
-                }
-                let mut inst = instantiate_fn(&template.fn_item, sym, &subst);
-                inst.type_params.clear();
-                remap_instantiated_symbols(&mut inst, &subst, program, &mut next_id);
-                program.items.push(HirItem::Fn(inst));
-                created_specialization = true;
                 rewrite_matching_calls(program, base_name, &inst_name, &concrete, &symbol_types);
             }
         }
 
+        match specialize_methods(program, &generic_fns, &mut state, _source, diagnostics) {
+            Some(created) => created_specialization |= created,
+            None => return,
+        }
         if !created_specialization {
             for error in pending.errors {
                 diagnostics.push(error);
@@ -205,6 +164,597 @@ pub fn monomorphize_program(
                 });
             }
         }
+    }
+}
+
+/// Passes alone do not bound the work: types grow with every pass, and a
+/// function can specialize itself in several ways at once.
+const MAX_SPECIALIZATIONS: usize = 1024;
+const MAX_SPECIALIZED_TYPE_DEPTH: usize = 32;
+
+/// The specializations made so far, by template and type arguments.
+struct Specializations {
+    next_id: u32,
+    done: HashMap<(String, String), (String, SymbolId)>,
+}
+
+enum Specialized {
+    /// The specialization's name and symbol, and whether it is new.
+    Done {
+        name: String,
+        symbol: SymbolId,
+        created: bool,
+    },
+    /// A type argument lacks a trait its bound names (reported).
+    Unmet,
+    /// Too many specializations, or types nested too deep (reported).
+    Limit,
+}
+
+/// The specialization of `template` for `generic_types` (its type
+/// parameters' arguments, in order), made if it is new.
+fn specialize(
+    program: &mut HirProgram,
+    template: &flux_hir::GenericFnTemplate,
+    base_name: &str,
+    generic_types: &[Type],
+    span: flux_diagnostics::Span,
+    state: &mut Specializations,
+    diagnostics: &mut DiagnosticBag,
+) -> Specialized {
+    let suffix = generic_types
+        .iter()
+        .map(|ty| ty.key())
+        .collect::<Vec<_>>()
+        .join("_");
+    let key = (base_name.to_string(), suffix.clone());
+    if let Some((name, symbol)) = state.done.get(&key) {
+        return Specialized::Done {
+            name: name.clone(),
+            symbol: *symbol,
+            created: false,
+        };
+    }
+    if !bounds_hold(
+        program,
+        template,
+        base_name,
+        generic_types,
+        span,
+        diagnostics,
+    ) {
+        return Specialized::Unmet;
+    }
+    let deepest = generic_types.iter().map(type_depth).max().unwrap_or(0);
+    if state.done.len() >= MAX_SPECIALIZATIONS || deepest > MAX_SPECIALIZED_TYPE_DEPTH {
+        diagnostics.push(FluxError::TypeMismatch {
+            expected: "finite generic specialization".into(),
+            found: format!(
+                "`{}` needs more than {MAX_SPECIALIZATIONS} specializations or types nested more than {MAX_SPECIALIZED_TYPE_DEPTH} levels",
+                flux_hir::display_path(base_name)
+            ),
+            span: span_to_miette(template.fn_item.span),
+            source_id: template.fn_item.span.source,
+        });
+        return Specialized::Limit;
+    }
+    let readable_name = format!("{base_name}_{suffix}");
+    // A user may declare `id_Int` alongside `id[T]`. Generated
+    // functions must never silently reuse that unrelated symbol.
+    let inst_name = if program.names.values().any(|name| name == &readable_name) {
+        format!("\0flux_mono_{}_{readable_name}", state.next_id)
+    } else {
+        readable_name
+    };
+    let sym = SymbolId(state.next_id);
+    state.next_id += 1;
+    state.done.insert(key, (inst_name.clone(), sym));
+    program.specialized_from.insert(sym, template.fn_item.name);
+    program.names.insert(sym, inst_name.clone());
+    if let Some(template_symbol) = program.symbols.get(&template.fn_item.name).cloned() {
+        program.symbols.insert(
+            sym,
+            Symbol {
+                id: sym,
+                name: inst_name.clone(),
+                kind: SymbolKind::Function {
+                    reactive: template.fn_item.reactive,
+                },
+                span: template_symbol.span,
+            },
+        );
+    }
+    // A `mut self` method's specializations change their receiver too.
+    if program.mut_methods.contains(&template.fn_item.name) {
+        program.mut_methods.insert(sym);
+    }
+    let mut subst: HashMap<&str, HirType> = HashMap::new();
+    for (param, ty) in template.type_params.iter().zip(generic_types.iter()) {
+        subst.insert(param.as_str(), type_to_hir_type(ty, span));
+    }
+    let mut inst = instantiate_fn(&template.fn_item, sym, &subst);
+    inst.type_params.clear();
+    remap_instantiated_symbols(&mut inst, &subst, program, &mut state.next_id);
+    program.items.push(HirItem::Fn(inst));
+    Specialized::Done {
+        name: inst_name,
+        symbol: sym,
+        created: true,
+    }
+}
+
+/// Whether `generic_types` have the traits `template`'s bounds name;
+/// reports E031 for each that does not.
+fn bounds_hold(
+    program: &HirProgram,
+    template: &flux_hir::GenericFnTemplate,
+    base_name: &str,
+    generic_types: &[Type],
+    span: flux_diagnostics::Span,
+    diagnostics: &mut DiagnosticBag,
+) -> bool {
+    let Some(bounds) = program.type_bounds.get(&template.fn_item.name) else {
+        return true;
+    };
+    let mut ok = true;
+    for bound in bounds {
+        let Some(i) = template.type_params.iter().position(|p| p == &bound.param) else {
+            continue;
+        };
+        let Some(ty) = generic_types.get(i) else {
+            continue;
+        };
+        for (trait_name, _) in &bound.traits {
+            if !has_trait(program, ty, trait_name) {
+                ok = false;
+                let shown = flux_hir::display_path(trait_name);
+                diagnostics.push(FluxError::UnsatisfiedBound {
+                    ty: ty.display(),
+                    trait_name: shown.to_string(),
+                    function: function_label(base_name),
+                    param: bound.param.clone(),
+                    help: bound_help(ty, &shown),
+                    span: span_to_miette(span),
+                    source_id: span.source,
+                });
+            }
+        }
+    }
+    ok
+}
+
+/// A call `base.method(args)`, to a method a generic impl may define.
+struct MethodSite {
+    base: HirExpr,
+    method: String,
+    args: Vec<HirExpr>,
+    span: flux_diagnostics::Span,
+}
+
+/// Every `x.m(…)` call outside generic templates (their specializations are
+/// items of their own).
+fn method_sites(program: &HirProgram) -> Vec<MethodSite> {
+    let mut out = Vec::new();
+    let mut visit = |e: &HirExpr| {
+        if let HirExpr::Call { callee, args, span } = e {
+            if let HirExpr::Field { base, field, .. } = callee.as_ref() {
+                out.push(MethodSite {
+                    base: base.as_ref().clone(),
+                    method: field.clone(),
+                    args: args.clone(),
+                    span: *span,
+                });
+            }
+        }
+    };
+    for item in &program.items {
+        match item {
+            HirItem::Fn(f) if f.type_params.is_empty() => each_in_block(&f.body, &mut visit),
+            HirItem::Binding(b) => each_expr(&b.value, &mut visit),
+            HirItem::SourceAssign(a) => each_expr(&a.value, &mut visit),
+            HirItem::Watch(w) => each_in_block(&w.body, &mut visit),
+            HirItem::On(o) => each_in_block(&o.body, &mut visit),
+            HirItem::InitIf(i) => each_in_if(i, &mut visit),
+            _ => {}
+        }
+    }
+    out
+}
+
+fn each_in_if(i: &flux_hir::HirIf, f: &mut dyn FnMut(&HirExpr)) {
+    each_expr(&i.cond, f);
+    each_in_block(&i.then_branch, f);
+    match &i.else_branch {
+        Some(flux_hir::HirElse::If(inner)) => each_in_if(inner, f),
+        Some(flux_hir::HirElse::Block(b)) => each_in_block(b, f),
+        None => {}
+    }
+}
+
+fn each_in_block(block: &flux_hir::HirBlock, f: &mut dyn FnMut(&HirExpr)) {
+    for stmt in &block.stmts {
+        match stmt {
+            HirStmt::Expr(e) => each_expr(e, f),
+            HirStmt::Let(s) => each_expr(&s.value, f),
+            HirStmt::Assign(a) => {
+                for index in a.indices() {
+                    each_expr(index, f);
+                }
+                each_expr(&a.value, f);
+            }
+            HirStmt::Return(r) => {
+                if let Some(v) = &r.value {
+                    each_expr(v, f);
+                }
+            }
+            HirStmt::If(i) => each_in_if(i, f),
+            HirStmt::While(w) => {
+                each_expr(&w.cond, f);
+                each_in_block(&w.body, f);
+            }
+            HirStmt::For(l) => {
+                each_expr(&l.iter, f);
+                each_in_block(&l.body, f);
+            }
+            HirStmt::Watch(w) => each_in_block(&w.body, f),
+            HirStmt::On(o) => each_in_block(&o.body, f),
+            HirStmt::Emit(e) => e.args.iter().for_each(|a| each_expr(a, f)),
+            HirStmt::Break(_) | HirStmt::Continue(_) => {}
+        }
+    }
+}
+
+fn each_expr(expr: &HirExpr, f: &mut dyn FnMut(&HirExpr)) {
+    f(expr);
+    match expr {
+        HirExpr::Call { callee, args, .. } => {
+            each_expr(callee, f);
+            args.iter().for_each(|a| each_expr(a, f));
+        }
+        HirExpr::Binary { left, right, .. }
+        | HirExpr::Index {
+            base: left,
+            index: right,
+            ..
+        } => {
+            each_expr(left, f);
+            each_expr(right, f);
+        }
+        HirExpr::If {
+            cond,
+            then_expr,
+            else_expr,
+            ..
+        } => {
+            each_expr(cond, f);
+            each_expr(then_expr, f);
+            each_expr(else_expr, f);
+        }
+        HirExpr::Match {
+            scrutinee, arms, ..
+        } => {
+            each_expr(scrutinee, f);
+            for arm in arms {
+                if let Some(guard) = &arm.guard {
+                    each_expr(guard, f);
+                }
+                each_in_block(&arm.body, f);
+                each_expr(&arm.expr, f);
+            }
+        }
+        HirExpr::Unary { expr: inner, .. }
+        | HirExpr::Field { base: inner, .. }
+        | HirExpr::Snap { expr: inner, .. }
+        | HirExpr::Cast { expr: inner, .. }
+        | HirExpr::ToText { expr: inner, .. }
+        | HirExpr::Try { expr: inner, .. } => each_expr(inner, f),
+        HirExpr::Array { elems, .. } => elems.iter().for_each(|e| each_expr(e, f)),
+        HirExpr::StructLit { fields, .. } => fields.iter().for_each(|(_, e)| each_expr(e, f)),
+        HirExpr::EnumVariant {
+            payload: Some(p), ..
+        } => each_expr(p, f),
+        _ => {}
+    }
+}
+
+/// Specializes the methods of generic impls that `x.m(…)` calls reach: the
+/// specialization for `Pair[Int]` is found by the tag `Pair[Int]`. Returns
+/// whether it made a new one.
+#[allow(clippy::too_many_arguments)]
+fn specialize_methods(
+    program: &mut HirProgram,
+    generic_fns: &HashMap<String, flux_hir::GenericFnTemplate>,
+    state: &mut Specializations,
+    source: SourceId,
+    diagnostics: &mut DiagnosticBag,
+) -> Option<bool> {
+    let mut created = false;
+    let sites = method_sites(program);
+    if sites.is_empty() {
+        return Some(false);
+    }
+    let symbol_types = collect_symbol_types(program);
+    for site in sites {
+        let Some(receiver) = infer_mono_type(&site.base, &symbol_types, program) else {
+            continue;
+        };
+        // `Empty.put(1)`: an instance not known here has no tag of its own;
+        // the checker asks for an annotation.
+        if crate::check::mentions_empty(&receiver) {
+            continue;
+        }
+        let Some(tag) = crate::generic::instance_tag(&receiver) else {
+            continue;
+        };
+        let key = (tag.clone(), site.method.clone());
+        if program.trait_impls.contains_key(&key) {
+            continue;
+        }
+        let base_tag = crate::check::trait_dispatch_tag(&receiver);
+        let Some(template_symbol) = program
+            .trait_impls
+            .get(&(base_tag, site.method.clone()))
+            .copied()
+        else {
+            continue;
+        };
+        let Some(base_name) = program.names.get(&template_symbol).cloned() else {
+            continue;
+        };
+        let Some(template) = generic_fns.get(&base_name) else {
+            continue;
+        };
+        let mut all_args = vec![site.base.clone()];
+        all_args.extend(site.args.iter().cloned());
+        let mut scratch = DiagnosticBag::new();
+        let Some(substitutions) = infer_generic_substitutions(
+            &template.fn_item,
+            &template.type_params,
+            &all_args,
+            &symbol_types,
+            program,
+            source,
+            &mut scratch,
+        ) else {
+            continue;
+        };
+        let generic_types: Vec<Type> = template
+            .type_params
+            .iter()
+            .filter_map(|name| substitutions.get(name).cloned())
+            .collect();
+        match specialize(
+            program,
+            template,
+            &base_name,
+            &generic_types,
+            site.span,
+            state,
+            diagnostics,
+        ) {
+            Specialized::Done {
+                symbol,
+                created: new,
+                ..
+            } => {
+                created |= new;
+                program.trait_impls.insert(key, symbol);
+            }
+            Specialized::Unmet => {}
+            Specialized::Limit => return None,
+        }
+    }
+    Some(created)
+}
+
+/// The library traits a bound can name, unless the program declares a
+/// trait of that name.
+const LIBRARY_TRAITS: [&str; 3] = ["Eq", "Ord", "Display"];
+
+/// The library trait `name` is, if it is one (`\0lib:Ord` → `Ord`).
+fn library_trait(name: &str) -> Option<&str> {
+    name.strip_prefix(flux_hir::LIBRARY_TRAIT)
+        .filter(|t| LIBRARY_TRAITS.contains(t))
+}
+
+/// A bound names a declared trait or a library one (E007 otherwise).
+fn report_unknown_bounds(program: &HirProgram, diagnostics: &mut DiagnosticBag) {
+    let mut bounds: Vec<_> = program.type_bounds.values().flatten().collect();
+    bounds.sort_by_key(|b| b.traits.first().map(|(_, s)| (s.source.0, s.start)));
+    for bound in bounds {
+        for (name, span) in &bound.traits {
+            if declared_trait(program, name).is_none() && library_trait(name).is_none() {
+                diagnostics.push(FluxError::UnknownType {
+                    name: flux_hir::display_path(name),
+                    span: span_to_miette(*span),
+                    source_id: span.source,
+                });
+            }
+        }
+    }
+}
+
+/// The methods of the trait the program declares as `name`, if it does.
+fn declared_trait<'a>(program: &'a HirProgram, name: &str) -> Option<&'a flux_hir::HirTrait> {
+    program.items.iter().find_map(|item| match item {
+        HirItem::Trait(t) if program.names.get(&t.name).map(String::as_str) == Some(name) => {
+            Some(t)
+        }
+        _ => None,
+    })
+}
+
+/// The names `ty`'s methods are found by: a generic instance's own
+/// (`Pair[Int]`, its specializations) and its type's (`Pair`).
+pub(crate) fn impl_tags(ty: &Type) -> Vec<String> {
+    let mut tags = Vec::new();
+    if let Some(tag) = crate::generic::instance_tag(ty) {
+        tags.push(tag);
+    }
+    tags.push(crate::check::trait_dispatch_tag(ty));
+    tags
+}
+
+/// Whether `ty` has `method`. A generic impl's method counts when `ty`'s
+/// arguments meet the impl's bounds (`impl[T: Display] Display for Pair[T]`
+/// gives `Pair[Int]` a `to_string`, not `Pair[fn() -> Int]`).
+fn has_method(program: &HirProgram, ty: &Type, method: &str, trait_name: &str) -> bool {
+    // An impl of that trait, not a method that only shares the name.
+    let prefix = format!("__impl_{trait_name}_");
+    impl_tags(ty).into_iter().any(|tag| {
+        let Some(id) = program.trait_impls.get(&(tag, method.to_string())) else {
+            return false;
+        };
+        let template = program.specialized_from.get(id).unwrap_or(id);
+        if !program
+            .names
+            .get(template)
+            .is_some_and(|n| n.starts_with(&prefix))
+        {
+            return false;
+        }
+        let Some(bounds) = program.type_bounds.get(id) else {
+            return true;
+        };
+        let template_params = program.items.iter().find_map(|item| match item {
+            HirItem::Fn(f) if f.name == *id => Some(f.type_params.clone()),
+            _ => None,
+        });
+        let (Some(params), Type::Struct { args, .. } | Type::Enum { args, .. }) =
+            (template_params, ty)
+        else {
+            return true;
+        };
+        bounds.iter().all(|bound| {
+            let Some(arg) = params
+                .iter()
+                .position(|p| p == &bound.param)
+                .and_then(|i| args.get(i))
+            else {
+                return true;
+            };
+            bound
+                .traits
+                .iter()
+                .all(|(name, _)| has_trait(program, arg, name))
+        })
+    })
+}
+
+/// Whether `ty` has the trait `name`: a declared trait when the type has all
+/// its methods; `Eq` when `==` can compare its values; `Ord` for numbers and
+/// `String`; `Display` for library types, and for a user type with
+/// `impl Display`.
+fn has_trait(program: &HirProgram, ty: &Type, name: &str) -> bool {
+    if ty.is_error() {
+        return true;
+    }
+    if let Some(declared) = declared_trait(program, name) {
+        return declared
+            .methods
+            .iter()
+            .all(|(method, ..)| has_method(program, ty, method, name));
+    }
+    match library_trait(name).unwrap_or("") {
+        "Eq" => comparable(program, ty, &mut Vec::new()),
+        "Ord" => ty.is_integer() || ty.is_float() || *ty == Type::String,
+        "Display" => displayable(program, ty),
+        _ => false,
+    }
+}
+
+/// Whether `==` can compare values of `ty`: none holds a function.
+fn comparable(program: &HirProgram, ty: &Type, seen: &mut Vec<String>) -> bool {
+    match ty {
+        Type::Func { .. } => false,
+        Type::Array(t) | Type::Option(t) | Type::Cell(t) | Type::Read(t) => {
+            comparable(program, t, seen)
+        }
+        Type::Result { ok, err } => comparable(program, ok, seen) && comparable(program, err, seen),
+        Type::Map { key, value } => {
+            comparable(program, key, seen) && comparable(program, value, seen)
+        }
+        Type::Tuple(elems) => elems.iter().all(|t| comparable(program, t, seen)),
+        Type::Struct { name, args, .. } | Type::Enum { name, args, .. } if !name.is_empty() => {
+            // A type met again holds nothing new but its arguments
+            // (`E[T] { Next(E[[T]]) }` grows them forever).
+            if seen.contains(name) {
+                return args.iter().all(|a| comparable(program, a, seen));
+            }
+            // `seen` is the path from the outer type: a sibling is new.
+            seen.push(name.clone());
+            let holds = comparable_named(program, name, args, seen);
+            seen.pop();
+            holds
+        }
+        Type::Struct { fields, .. } => fields.iter().all(|(_, t)| comparable(program, t, seen)),
+        _ => true,
+    }
+}
+
+fn comparable_named(
+    program: &HirProgram,
+    name: &str,
+    args: &[Type],
+    seen: &mut Vec<String>,
+) -> bool {
+    let Some(full) =
+        resolve_type_name(name, program).map(|t| crate::generic::instantiate(&t, args))
+    else {
+        return true;
+    };
+    match &full {
+        Type::Struct { fields, .. } => fields.iter().all(|(_, t)| comparable(program, t, seen)),
+        Type::Enum { variants, .. } => variants
+            .iter()
+            .all(|(_, p)| p.as_ref().is_none_or(|p| comparable(program, p, seen))),
+        _ => true,
+    }
+}
+
+fn displayable(program: &HirProgram, ty: &Type) -> bool {
+    match ty {
+        Type::Func { .. } => false,
+        Type::Array(t) | Type::Option(t) | Type::Cell(t) | Type::Read(t) => displayable(program, t),
+        Type::Result { ok, err } => displayable(program, ok) && displayable(program, err),
+        Type::Map { key, value } => displayable(program, key) && displayable(program, value),
+        Type::Tuple(elems) => elems.iter().all(|t| displayable(program, t)),
+        Type::Struct { name, .. } | Type::Enum { name, .. } if !name.is_empty() => {
+            let display = format!("{}Display", flux_hir::LIBRARY_TRAIT);
+            has_method(program, ty, "to_string", &display)
+        }
+        _ => true,
+    }
+}
+
+/// How an E031 names the function that has the bound.
+fn function_label(base_name: &str) -> String {
+    match base_name.strip_prefix("__impl_") {
+        Some(_) => "its generic impl".to_string(),
+        None => flux_hir::display_path(base_name),
+    }
+}
+
+fn bound_help(ty: &Type, trait_name: &str) -> String {
+    if let Type::Struct { name, args, .. } | Type::Enum { name, args, .. } = ty {
+        if !args.is_empty() {
+            let name = flux_hir::display_path(name);
+            return format!(
+                "`{name}` has it through `impl[T] {trait_name} for {name}[T]`, and its type arguments must meet that impl's bounds"
+            );
+        }
+    }
+    match trait_name {
+        "Eq" => "`Eq` holds for values `==` can compare; a function cannot be compared".into(),
+        "Ord" => "`Ord` holds for numbers and `String`".into(),
+        "Display" => format!(
+            "give it one: `impl Display for {} {{ fn to_string(self) -> String {{ … }} }}`",
+            ty.display()
+        ),
+        _ => format!(
+            "implement it: `impl {trait_name} for {} {{ … }}`",
+            ty.display()
+        ),
     }
 }
 
@@ -505,6 +1055,9 @@ fn infer_mono_type(
         HirExpr::Call { callee, args, .. } => {
             if let HirExpr::Field { base, field, .. } = callee.as_ref() {
                 let recv = infer_mono_type(base, symbols, program)?;
+                if let Some(ty) = user_method_type(&recv, base, field, args, symbols, program) {
+                    return Some(ty);
+                }
                 return library_method_type(&recv, field, args, symbols, program);
             }
             let HirExpr::Ident { symbol, .. } = callee.as_ref() else {
@@ -564,16 +1117,7 @@ fn infer_mono_type(
                             .ret
                             .as_ref()
                             .and_then(|ret| hir_type_to_mono_type(ret, program))
-                            .or_else(|| match function.body.stmts.last() {
-                                Some(HirStmt::Expr(expr)) => {
-                                    infer_mono_type(expr, symbols, program)
-                                }
-                                Some(HirStmt::Return(ret)) => ret
-                                    .value
-                                    .as_ref()
-                                    .and_then(|expr| infer_mono_type(expr, symbols, program)),
-                                _ => None,
-                            })
+                            .or_else(|| body_result_type(function, symbols, program))
                     }
                     _ => None,
                 }),
@@ -593,6 +1137,64 @@ fn join_mono_types(a: &Type, b: &Type) -> Option<Type> {
         return None;
     }
     crate::check::types_compatible(a, b).then(|| crate::check::refine_unknown(a, b))
+}
+
+thread_local! {
+    /// The functions whose results are being inferred from their bodies.
+    static INFERRING: std::cell::RefCell<Vec<SymbolId>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// The type of `function`'s last expression, its result when it declares
+/// none. A function that reaches itself while this is inferred has none here
+/// (`fn f(self) { self.f() }`).
+fn body_result_type(
+    function: &HirFn,
+    symbols: &HashMap<SymbolId, Type>,
+    program: &HirProgram,
+) -> Option<Type> {
+    if INFERRING.with(|open| open.borrow().contains(&function.name)) {
+        return None;
+    }
+    INFERRING.with(|open| open.borrow_mut().push(function.name));
+    let ty = match function.body.stmts.last() {
+        Some(HirStmt::Expr(expr)) => infer_mono_type(expr, symbols, program),
+        Some(HirStmt::Return(ret)) => ret
+            .value
+            .as_ref()
+            .and_then(|expr| infer_mono_type(expr, symbols, program)),
+        _ => None,
+    };
+    INFERRING.with(|open| open.borrow_mut().pop());
+    ty
+}
+
+/// The result of `base.method(args)` when `recv`'s type has the method in an
+/// impl: a generic impl's for these arguments.
+fn user_method_type(
+    recv: &Type,
+    base: &HirExpr,
+    method: &str,
+    args: &[HirExpr],
+    symbols: &HashMap<SymbolId, Type>,
+    program: &HirProgram,
+) -> Option<Type> {
+    let id = impl_tags(recv)
+        .into_iter()
+        .find_map(|tag| program.trait_impls.get(&(tag, method.to_string())))?;
+    let function = program.items.iter().find_map(|item| match item {
+        HirItem::Fn(f) if f.name == *id => Some(f),
+        _ => None,
+    })?;
+    if function.type_params.is_empty() {
+        return function
+            .ret
+            .as_ref()
+            .and_then(|ret| hir_type_to_mono_type(ret, program))
+            .or_else(|| body_result_type(function, symbols, program));
+    }
+    let mut all_args = vec![base.clone()];
+    all_args.extend(args.iter().cloned());
+    generic_call_type(function, &all_args, symbols, program)
 }
 
 /// The declared result of a call of the generic `function`, with its type

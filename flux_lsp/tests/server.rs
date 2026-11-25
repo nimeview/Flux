@@ -1396,3 +1396,46 @@ fn a_field_of_a_generic_instance_offers_its_members() {
     assert!(items.contains("\"label\":\"n\""), "{items}");
     shutdown(&client, handle);
 }
+
+/// The methods of a generic impl are offered on its instances.
+#[test]
+fn a_generic_impls_methods_are_offered_on_an_instance() {
+    let (client, handle) = start_server();
+    let text = "struct Pair[T] { a: T, b: T }\nimpl[T] Pair[T] {\n    fn swap(self) -> Pair[T] {\n        Pair { a: self.b, b: self.a }\n    }\n}\nfn main() {\n    let p = Pair { a: 1, b: 2 }\n    let q = p.swap()\n}\n";
+    did_open(&client, text);
+    let diagnostics = recv_diagnostics(&client);
+    assert!(diagnostics.diagnostics.is_empty(), "{diagnostics:?}");
+    let at = serde_json::json!({
+        "textDocument": { "uri": test_uri() },
+        "position": { "line": 8, "character": 14 },
+    });
+    let items = ask(&client, 2, "textDocument/completion", at).to_string();
+    assert!(items.contains("\"label\":\"swap\""), "{items}");
+    shutdown(&client, handle);
+}
+
+/// Renaming a generic impl's method renames its calls on every instance,
+/// each of which runs its own specialization.
+#[test]
+fn rename_of_a_generic_method_reaches_every_instance() {
+    let text = "struct P[T] { x: T }\nimpl[T] P[T] {\n    fn get(self) -> T {\n        self.x\n    }\n}\nfn main() {\n    let a = P { x: 1 }.get()\n    let b = P { x: true }.get()\n}\n";
+    let ranges = rename_ranges(text, 7, 24);
+    assert_eq!(ranges, [(2, 7, 10), (7, 23, 26), (8, 26, 29)], "{ranges:?}");
+}
+
+/// Hover on a call of a generic method shows the instance's signature.
+#[test]
+fn hover_on_a_generic_method_call_shows_the_instance() {
+    let (client, handle) = start_server();
+    let text = "struct P[T] { x: T }\nimpl[T] P[T] {\n    fn get(self) -> T {\n        self.x\n    }\n}\nfn main() {\n    let p = P { x: 1 }\n    let n = p.get()\n}\n";
+    did_open(&client, text);
+    let _ = recv_diagnostics(&client);
+    let at = serde_json::json!({
+        "textDocument": { "uri": test_uri() },
+        "position": { "line": 8, "character": 15 },
+    });
+    let hover = ask(&client, 2, "textDocument/hover", at).to_string();
+    assert!(!hover.contains("<error>"), "{hover}");
+    assert!(hover.contains("Int64"), "{hover}");
+    shutdown(&client, handle);
+}

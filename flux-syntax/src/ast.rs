@@ -111,6 +111,9 @@ pub struct TraitMethod {
 
 #[derive(Debug, Clone)]
 pub struct ImplDecl {
+    /// `impl[T] Pair[T]`: the parameters of a generic type's impl.
+    pub type_params: Vec<String>,
+    pub type_bounds: Vec<TypeBound>,
     /// `None` for `impl Type { }`: the type's own methods.
     pub trait_name: Option<Ident>,
     pub target_type: TypeName,
@@ -137,10 +140,20 @@ pub struct FnDecl {
     pub keyword: Span,
     pub name: Ident,
     pub type_params: Vec<String>,
+    /// The traits each type parameter must have (`[T: Ord]`); only those
+    /// with a bound.
+    pub type_bounds: Vec<TypeBound>,
     pub params: Vec<Param>,
     pub ret: Option<TypeName>,
     pub body: Block,
     pub span: Span,
+}
+
+/// `T: Ord + Display` in a function's or impl's type parameters.
+#[derive(Debug, Clone)]
+pub struct TypeBound {
+    pub param: String,
+    pub traits: Vec<Ident>,
 }
 
 /// What a function may do with reactive values.

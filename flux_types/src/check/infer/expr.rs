@@ -366,7 +366,32 @@ pub(crate) fn infer_expr(
             if let HirExpr::Field { base, field, .. } = callee.as_ref() {
                 let base_ty = infer_expr(ctx, base, types, names, source, diagnostics)?;
                 let type_tag = trait_dispatch_tag(&base_ty);
-                let fn_id = ctx.trait_impl(&type_tag, field);
+                // A generic instance's methods are specializations, found by
+                // the instance (`Pair[Int]`); its type's is the template.
+                let instance = crate::generic::instance_tag(&unwrap_value_type(&base_ty))
+                    .and_then(|tag| ctx.trait_impl(&tag, field));
+                let fn_id = instance.or_else(|| ctx.trait_impl(&type_tag, field));
+                if fn_id.is_some_and(|id| ctx.generic_templates.contains(&id)) {
+                    for a in args {
+                        let _ = infer_expr(ctx, a, types, names, source, diagnostics);
+                    }
+                    // In a generic template, `T` is unknown until each
+                    // specialization is checked.
+                    let in_template = ctx
+                        .current_function
+                        .get()
+                        .is_some_and(|f| ctx.generic_templates.contains(&f));
+                    if !base_ty.mentions_error() && !in_template {
+                        diagnostics.push(FluxError::TypeMismatchWithHelp {
+                            expected: format!("a receiver whose type arguments are known where `{field}` is called"),
+                            found: base_ty.display(),
+                            span: span_to_miette(*span),
+                            source_id: span.source,
+                            help: "give the receiver a type annotation".into(),
+                        });
+                    }
+                    return Some(Type::Error);
+                }
                 // A method added to a library type is visible in its own file
                 // and in files that import it.
                 if let Some(defined) = fn_id.and_then(|id| ctx.extension_sources.get(&id)) {

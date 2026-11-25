@@ -66,6 +66,9 @@ pub struct TypeCheckContext {
     user_types: HashMap<String, Type>,
     type_aliases: HashMap<String, flux_hir::HirType>,
     pub(crate) trait_impls: HashMap<(String, String), SymbolId>,
+    /// Generic functions, including generic impls' methods: templates that
+    /// only their specializations run.
+    pub(crate) generic_templates: std::collections::HashSet<SymbolId>,
     /// `mut self` methods, and the call sites written as statements on a
     /// place (see `flux_hir::HirProgram::mut_call_sites`).
     pub(crate) mut_methods: std::collections::HashSet<SymbolId>,
@@ -199,6 +202,14 @@ impl TypeCheckContext {
         }
 
         ctx.trait_impls = program.trait_impls.clone();
+        ctx.generic_templates = program
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                HirItem::Fn(f) if !f.type_params.is_empty() => Some(f.name),
+                _ => None,
+            })
+            .collect();
         ctx.mut_methods = program.mut_methods.clone();
         ctx.mut_call_sites = program.mut_call_sites.clone();
         ctx.captured_call_sites = program.captured_call_sites.clone();

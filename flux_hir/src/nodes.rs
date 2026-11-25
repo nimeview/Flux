@@ -3,6 +3,14 @@ use flux_syntax::TypeName;
 
 use crate::symbol::SymbolId;
 
+/// `T: Ord + Display`: a type parameter and the traits it needs, with where
+/// each was written.
+#[derive(Debug, Clone)]
+pub struct HirBound {
+    pub param: String,
+    pub traits: Vec<(String, Span)>,
+}
+
 #[derive(Debug, Clone)]
 pub struct HirProgram {
     pub items: Vec<HirItem>,
@@ -13,6 +21,12 @@ pub struct HirProgram {
     /// exact dispatch lookup (e.g. `("Int", "to_string")`) — see `flux_types::check`'s
     /// handling of method-call syntax (`x.method(...)`).
     pub trait_impls: std::collections::HashMap<(String, String), SymbolId>,
+    /// The bounds of generic functions' type parameters (`[T: Ord]`), by
+    /// function; a generic impl's bounds are its methods'.
+    pub type_bounds: std::collections::HashMap<SymbolId, Vec<HirBound>>,
+    /// Each generic specialization's template, so that a use of one is a use
+    /// of the function as written (references, rename).
+    pub specialized_from: std::collections::HashMap<SymbolId, SymbolId>,
     /// Generic function templates keyed by base name.
     pub generic_fns: std::collections::HashMap<String, GenericFnTemplate>,
     /// Type aliases declared in this module (`type UserId = Int`).

@@ -52,7 +52,12 @@ pub(super) fn takes_self(method: &flux_syntax::FnDecl) -> bool {
 
 /// The name a type function of `impl Type { }` is called by: `Type::f`.
 fn type_function_name(decl: &ImplDecl, method: &flux_syntax::FnDecl) -> String {
-    format!("{}::{}", type_name_str(&decl.target_type), method.name.name)
+    // `impl[T] Pair[T]`: `Pair::new`.
+    let target = match &decl.target_type {
+        TypeName::Generic { name, .. } if !decl.type_params.is_empty() => name.clone(),
+        other => type_name_str(other),
+    };
+    format!("{target}::{}", method.name.name)
 }
 
 /// Declares the type functions of an `impl Type { }` (methods without
@@ -115,7 +120,9 @@ pub(super) fn lower_impl_fns(
     symbols: &mut SymbolTable,
     diagnostics: &mut DiagnosticBag,
 ) -> Option<Vec<HirItem>> {
-    let target_name = type_name_str(&decl.target_type);
+    let Some(target_name) = impl_target_name(decl, diagnostics) else {
+        return Some(Vec::new());
+    };
     symbols.pending_impls.push(decl.clone());
     let mut items = Vec::new();
     for method in &decl.methods {
@@ -137,6 +144,9 @@ pub(super) fn lower_impl_fns(
             continue;
         }
         let mut m = method.clone();
+        // A generic impl's methods are generic functions over its parameters.
+        m.type_params = decl.type_params.clone();
+        m.type_bounds = decl.type_bounds.clone();
         // `Self` in the signature is the type the impl is for.
         for p in &mut m.params {
             p.ty = subst_self(&p.ty, &decl.target_type);
@@ -246,6 +256,62 @@ pub(super) fn lower_impl_fns(
     Some(items)
 }
 
+/// The name an impl's methods are found by: the type's name, which for a
+/// generic impl (`impl[T] Pair[T]`) is its base name, shared by every
+/// instance. `None` (reported) for an impl that cannot be written.
+fn impl_target_name(decl: &ImplDecl, diagnostics: &mut DiagnosticBag) -> Option<String> {
+    let library = |name: &str| matches!(name, "Option" | "Result" | "Map") || name == TUPLE;
+    let fail = |message: String, diagnostics: &mut DiagnosticBag| {
+        let span = type_span(&decl.target_type);
+        diagnostics.push(FluxError::InvalidImpl {
+            message: crate::display_text(&message),
+            span: span_to_miette(span),
+            source_id: span.source,
+        });
+    };
+    match &decl.target_type {
+        TypeName::Generic { name, args, .. } if !library(name) => {
+            let params_match = args.len() == decl.type_params.len()
+                && args
+                    .iter()
+                    .zip(&decl.type_params)
+                    .all(|(a, p)| matches!(a, TypeName::Simple { name, .. } if name == p));
+            if decl.type_params.is_empty() {
+                fail(
+                    format!(
+                        "an impl for one instance of a generic type is not supported; write `impl[T] {name}[T]` for all of them"
+                    ),
+                    diagnostics,
+                );
+                None
+            } else if !params_match {
+                fail(
+                    format!(
+                        "a generic impl gives its parameters to the type in order: `impl[{}] {name}[{}]`",
+                        decl.type_params.join(", "),
+                        decl.type_params.join(", ")
+                    ),
+                    diagnostics,
+                );
+                None
+            } else {
+                Some(name.clone())
+            }
+        }
+        _ if !decl.type_params.is_empty() => {
+            fail(
+                format!(
+                    "`impl[{}]` is for a generic type, written with its parameters (`Pair[T]`)",
+                    decl.type_params.join(", ")
+                ),
+                diagnostics,
+            );
+            None
+        }
+        _ => Some(type_name_str(&decl.target_type)),
+    }
+}
+
 /// E020: an `impl` names a declared trait and defines exactly its methods,
 /// with the trait's parameter count, non-receiver parameter types, and return
 /// type. Traits have no `Self`, so the receiver's type is not compared; an
@@ -281,7 +347,19 @@ pub(super) fn validate_impls(
         let target_hir = lower_type(&imp.target_type);
         let key = |ty: &HirType| type_key(&subst_self_hir(ty, &target_hir));
         let Some(declared) = traits.get(trait_name.as_str()) else {
-            push(format!("unknown trait `{trait_name}`"), trait_ident.span);
+            // The library traits, unless the program declares its own.
+            let shown = crate::display_path(trait_name);
+            let library = trait_name.starts_with(crate::LIBRARY_TRAIT);
+            match shown.as_str() {
+                "Display" if library => check_display_impl(imp, &mut push),
+                "Eq" | "Ord" if library => push(
+                    format!(
+                        "`{shown}` is built in: a type has it when the language can compare its values; it cannot be implemented"
+                    ),
+                    trait_ident.span,
+                ),
+                _ => push(format!("unknown trait `{trait_name}`"), trait_ident.span),
+            }
             continue;
         };
         for method in &imp.methods {
@@ -339,6 +417,34 @@ pub(super) fn validate_impls(
                 );
             }
         }
+    }
+}
+
+/// `impl Display for T` defines exactly `fn to_string(self) -> String`.
+fn check_display_impl(imp: &ImplDecl, push: &mut impl FnMut(String, flux_diagnostics::Span)) {
+    let mut has = false;
+    for method in &imp.methods {
+        let returns_string =
+            matches!(&method.ret, Some(TypeName::Simple { name, .. }) if name == "String");
+        if method.name.name != "to_string" {
+            push(
+                format!("trait `Display` has no method `{}`", method.name.name),
+                method.name.span,
+            );
+        } else if !takes_self(method) || method.params.len() != 1 || !returns_string {
+            push(
+                "`Display` declares `fn to_string(self) -> String`".to_string(),
+                method.name.span,
+            );
+        } else {
+            has = true;
+        }
+    }
+    if !has && !imp.methods.iter().any(|m| m.name.name == "to_string") {
+        push(
+            "impl of `Display` is missing method `to_string`".to_string(),
+            imp.span,
+        );
     }
 }
 

@@ -87,6 +87,8 @@ pub struct SymbolTable {
     /// Trait impl methods keyed by `(receiver type tag, method name)`, populated as
     /// `impl Trait for Type` blocks are lowered. Used for exact `x.method(...)` dispatch.
     pub trait_impl_index: HashMap<(String, String), SymbolId>,
+    /// Bounds of generic functions' type parameters, by function.
+    pub type_bounds: HashMap<SymbolId, Vec<crate::HirBound>>,
     /// The library functions that methods on library values may call
     /// (`xs.sorted()`), each with a hidden symbol; filled as method names
     /// are seen, see [`Self::note_member`].
@@ -190,6 +192,7 @@ impl SymbolTable {
             constants: std::collections::HashSet::new(),
             immutable_lets: std::collections::HashSet::new(),
             trait_impl_index: HashMap::new(),
+            type_bounds: HashMap::new(),
             module_aliases: HashMap::new(),
             qualified_symbols: HashMap::new(),
             writers: Vec::new(),

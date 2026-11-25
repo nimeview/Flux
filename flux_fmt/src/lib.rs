@@ -301,19 +301,23 @@ fn format_item(item: &Item, out: &mut String, level: usize) {
         }
         Item::Impl(i) => {
             indent(out, level);
+            let tparams = bounded_params_fmt(&i.type_params, &i.type_bounds);
             match &i.trait_name {
                 Some(name) => out.push_str(&format!(
-                    "impl {} for {} {{\n",
+                    "impl{tparams} {} for {} {{\n",
                     name.name,
                     type_name_fmt(&i.target_type)
                 )),
-                None => out.push_str(&format!("impl {} {{\n", type_name_fmt(&i.target_type))),
+                None => out.push_str(&format!(
+                    "impl{tparams} {} {{\n",
+                    type_name_fmt(&i.target_type)
+                )),
             }
             for m in &i.methods {
                 format_fn_like(
                     false,
                     &m.name.name,
-                    &m.type_params,
+                    &bounded_params_fmt(&m.type_params, &m.type_bounds),
                     &m.params,
                     m.ret.as_ref(),
                     &m.body,
@@ -329,7 +333,7 @@ fn format_item(item: &Item, out: &mut String, level: usize) {
         Item::Fn(f) => format_fn_like(
             f.pub_,
             &f.name.name,
-            &f.type_params,
+            &bounded_params_fmt(&f.type_params, &f.type_bounds),
             &f.params,
             f.ret.as_ref(),
             &f.body,
@@ -341,7 +345,7 @@ fn format_item(item: &Item, out: &mut String, level: usize) {
         Item::RFn(f) => format_fn_like(
             f.pub_,
             &f.name.name,
-            &f.type_params,
+            &bounded_params_fmt(&f.type_params, &[]),
             &f.params,
             f.ret.as_ref(),
             &f.body,
@@ -414,11 +418,30 @@ fn format_item(item: &Item, out: &mut String, level: usize) {
     }
 }
 
+/// `[T: Ord + Display, U]`, or nothing without parameters.
+fn bounded_params_fmt(params: &[String], bounds: &[flux_syntax::TypeBound]) -> String {
+    if params.is_empty() {
+        return String::new();
+    }
+    let parts: Vec<String> = params
+        .iter()
+        .map(|p| match bounds.iter().find(|b| &b.param == p) {
+            Some(b) => {
+                let traits: Vec<&str> = b.traits.iter().map(|t| t.name.as_str()).collect();
+                format!("{p}: {}", traits.join(" + "))
+            }
+            None => p.clone(),
+        })
+        .collect();
+    format!("[{}]", parts.join(", "))
+}
+
+/// `tparams` is already written, as [`bounded_params_fmt`] gives it.
 #[allow(clippy::too_many_arguments)]
 fn format_fn_like(
     pub_: bool,
     name: &str,
-    type_params: &[String],
+    tparams: &str,
     params: &[flux_syntax::Param],
     ret: Option<&flux_syntax::TypeName>,
     body: &flux_syntax::Block,
@@ -435,11 +458,6 @@ fn format_fn_like(
         Some(flux_syntax::FnKind::Plain) => "fn",
         // `rfn` stays as written; `flux migrate` rewrites it.
         None => "rfn",
-    };
-    let tparams = if type_params.is_empty() {
-        String::new()
-    } else {
-        format!("[{}]", type_params.join(", "))
     };
     let ps = params_fmt(params, mut_self);
     let ret = ret

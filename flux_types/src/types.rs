@@ -180,6 +180,24 @@ impl Type {
         }
     }
 
+    /// Whether an unknown (`Error`) type is part of this one.
+    pub fn mentions_error(&self) -> bool {
+        match self {
+            Type::Error => true,
+            Type::Cell(t) | Type::Read(t) | Type::Array(t) | Type::Option(t) => t.mentions_error(),
+            Type::Result { ok, err } => ok.mentions_error() || err.mentions_error(),
+            Type::Map { key, value } => key.mentions_error() || value.mentions_error(),
+            Type::Tuple(elems) | Type::Event(elems) => elems.iter().any(Type::mentions_error),
+            Type::Struct { args, .. } | Type::Enum { args, .. } => {
+                args.iter().any(Type::mentions_error)
+            }
+            Type::Func { params, ret } => {
+                params.iter().any(Type::mentions_error) || ret.mentions_error()
+            }
+            _ => false,
+        }
+    }
+
     pub fn unwrap_reactive(&self) -> Option<&Type> {
         match self {
             Type::Cell(t) | Type::Read(t) => Some(t),

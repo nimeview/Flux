@@ -244,16 +244,13 @@ pub(super) fn parse_fn(
     let keyword = span_of(source_id, &inner.next().expect("fn keyword"));
     let name = parse_ident(source_id, inner.next().expect("fn name"));
     let mut type_params = Vec::new();
+    let mut type_bounds = Vec::new();
     let mut sig = None;
     let mut body = None;
     for child in inner {
         match child.as_rule() {
-            Rule::type_params => {
-                type_params = child
-                    .into_inner()
-                    .filter(|p| p.as_rule() == Rule::ident)
-                    .map(|p| parse_ident(source_id, p).name)
-                    .collect();
+            Rule::bounded_params => {
+                (type_params, type_bounds) = parse_bounded_params(source_id, child);
             }
             Rule::fn_sig => sig = Some(child),
             Rule::block => body = Some(parse_block(source_id, child)),
@@ -268,11 +265,41 @@ pub(super) fn parse_fn(
         keyword,
         name,
         type_params,
+        type_bounds,
         params,
         ret,
         body: body.expect("fn body"),
         span,
     }
+}
+
+/// `[T: Ord + Display, U]`: the parameter names, and the bounds of those
+/// that have any.
+fn parse_bounded_params(
+    source_id: SourceId,
+    pair: pest::iterators::Pair<'_, Rule>,
+) -> (Vec<String>, Vec<TypeBound>) {
+    let mut names = Vec::new();
+    let mut bounds = Vec::new();
+    for param in pair
+        .into_inner()
+        .filter(|p| p.as_rule() == Rule::type_param)
+    {
+        let mut parts = param.into_inner();
+        let name = parse_ident(source_id, parts.next().expect("type parameter")).name;
+        let traits: Vec<Ident> = parts
+            .filter(|p| p.as_rule() == Rule::trait_bound)
+            .map(|b| parse_ident(source_id, b.into_inner().next().expect("trait name")))
+            .collect();
+        if !traits.is_empty() {
+            bounds.push(TypeBound {
+                param: name.clone(),
+                traits,
+            });
+        }
+        names.push(name);
+    }
+    (names, bounds)
 }
 
 pub(super) fn parse_rfn(
@@ -361,6 +388,12 @@ pub(super) fn parse_impl(
     span: Span,
 ) -> ImplDecl {
     let mut inner = pair.into_inner().peekable();
+    let (type_params, type_bounds) =
+        if inner.peek().map(|p| p.as_rule()) == Some(Rule::bounded_params) {
+            parse_bounded_params(source_id, inner.next().expect("impl type parameters"))
+        } else {
+            (Vec::new(), Vec::new())
+        };
     // `impl Trait for Type`: a name, then `for`.
     let first = inner.next().expect("impl head");
     let (trait_name, target) = if inner.peek().map(|p| p.as_rule()) == Some(Rule::kw_for) {
@@ -402,6 +435,7 @@ pub(super) fn parse_impl(
                 pub_: false,
                 name: mname,
                 type_params: vec![],
+                type_bounds: vec![],
                 params,
                 ret,
                 body: block.expect("impl method body"),
@@ -410,6 +444,8 @@ pub(super) fn parse_impl(
         })
         .collect();
     ImplDecl {
+        type_params,
+        type_bounds,
         trait_name,
         target_type,
         methods,

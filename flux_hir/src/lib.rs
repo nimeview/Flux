@@ -22,7 +22,12 @@ pub use unused::check_unused_bindings;
 
 /// A name or path as the program wrote it: a type or function of an imported
 /// module is kept as `__mod_<index>__<Name>`, shown as `Name`.
+/// The prefix of a library trait's internal name (`Display` that a module
+/// neither declares nor imports), so that it never meets a program's own.
+pub const LIBRARY_TRAIT: &str = "\0lib:";
+
 pub fn display_path(name: &str) -> String {
+    let name = name.strip_prefix(LIBRARY_TRAIT).unwrap_or(name);
     name.split("::")
         .map(|part| {
             part.strip_prefix("__mod_")

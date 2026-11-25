@@ -210,3 +210,53 @@ pub(crate) fn bound_args(template: &Type, bound: &HashMap<String, Type>) -> Vec<
         .map(|p| bound.get(p).cloned().unwrap_or(Type::Empty))
         .collect()
 }
+
+/// The name a generic instance's own methods are found by: its type with
+/// canonical arguments (`Pair[Int]` for a `Pair[Int64]`). `None` for a type
+/// without type arguments.
+pub(crate) fn instance_tag(ty: &Type) -> Option<String> {
+    match ty {
+        Type::Struct { name, args, .. } | Type::Enum { name, args, .. }
+            if !name.is_empty() && !args.is_empty() =>
+        {
+            let args: Vec<String> = args.iter().map(|a| canonical(a).key()).collect();
+            Some(format!("{name}[{}]", args.join(", ")))
+        }
+        Type::Cell(t) | Type::Read(t) => instance_tag(t),
+        _ => None,
+    }
+}
+
+/// `ty` with `Int64`/`Float64` written `Int`/`Float` and user types as
+/// references, so that one type has one key.
+fn canonical(ty: &Type) -> Type {
+    let c = canonical;
+    match ty {
+        Type::Int64 => Type::Int,
+        Type::Float64 => Type::Float,
+        Type::Cell(t) | Type::Read(t) => c(t),
+        Type::Array(t) => Type::Array(Box::new(c(t))),
+        Type::Option(t) => Type::Option(Box::new(c(t))),
+        Type::Map { key, value } => Type::Map {
+            key: Box::new(c(key)),
+            value: Box::new(c(value)),
+        },
+        Type::Tuple(elems) => Type::Tuple(elems.iter().map(c).collect()),
+        Type::Result { ok, err } => Type::Result {
+            ok: Box::new(c(ok)),
+            err: Box::new(c(err)),
+        },
+        Type::Func { params, ret } => Type::Func {
+            params: params.iter().map(c).collect(),
+            ret: Box::new(c(ret)),
+        },
+        Type::Struct { name, args, .. } | Type::Enum { name, args, .. } if !name.is_empty() => {
+            Type::Enum {
+                name: name.clone(),
+                args: args.iter().map(c).collect(),
+                variants: vec![],
+            }
+        }
+        other => other.clone(),
+    }
+}

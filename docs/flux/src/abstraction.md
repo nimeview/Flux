@@ -230,4 +230,65 @@ fn main() {
 4.0 3.0
 ```
 
-An `impl` must define exactly the trait's methods with matching signatures. In a trait, `Self` is the type that implements it (`fn grow(self, by: Int) -> Self;`). There is no way yet to write a function that accepts "any type with this trait".
+An `impl` must define exactly the trait's methods with matching signatures. In a trait, `Self` is the type that implements it (`fn grow(self, by: Int) -> Self;`).
+
+## Bounds and generic impls
+
+A type parameter can say which traits it needs, so a function accepts "any type with this trait". Besides the traits a program declares, there are three library traits: `Eq` (values `==` can compare), `Ord` (numbers and `String`), and `Display` (library types, and a type with `impl Display`). A generic type gets methods with `impl[T]`, for all its instances at once:
+
+```flux
+import io { println }
+
+struct Point {
+    x: Int,
+    y: Int
+}
+
+struct Pair[T] {
+    a: T,
+    b: T
+}
+
+impl Display for Point {
+    fn to_string(self) -> String {
+        "({self.x}, {self.y})"
+    }
+}
+
+impl[T] Pair[T] {
+    fn swap(self) -> Pair[T] {
+        Pair { a: self.b, b: self.a }
+    }
+}
+
+impl[T: Display] Display for Pair[T] {
+    fn to_string(self) -> String {
+        "<{self.a.to_string()}, {self.b.to_string()}>"
+    }
+}
+
+fn largest[T: Ord](xs: [T]) -> T {
+    let mut best = xs[0]
+    for x in xs {
+        if x > best {
+            best = x
+        }
+    }
+    best
+}
+
+fn show[T: Display](x: T) -> String {
+    x.to_string()
+}
+
+fn main() {
+    let p = Pair { a: Point { x: 1, y: 2 }, b: Point { x: 3, y: 4 } }
+    println("{largest([3, 9, 2])} {show(p.swap())} {show(7)}")
+}
+```
+
+```output
+9 <(3, 4), (1, 2)> 7
+```
+
+`largest([Point { x: 1, y: 2 }])` is an error that says `Point` does not have `Ord`. Bounds are optional: without one, `T` can still be compared or have methods called, and a mistake shows up inside the function for the type that caused it. String interpolation shows a value's structure; call `to_string()` for the `Display` text.

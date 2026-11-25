@@ -6,6 +6,8 @@ Notable changes to Flux. The versioning policy is in [`RELEASE.md`](RELEASE.md).
 
 ### Added
 
+- Trait bounds: `fn largest[T: Ord](xs: [T]) -> T`, `[T: Ord + Display]`. A call whose type lacks a bound's trait is the new error E031. The library traits `Eq`, `Ord`, and `Display` can be named in bounds; a user type gets `Display` with `impl Display for P { fn to_string(self) -> String }`.
+- Impls for generic types: `impl[T] Pair[T] { … }`, `impl[T: Display] Display for Pair[T] { … }`, with type functions such as `Pair::new`.
 - Generic structs and enums: `struct Pair[T] { a: T, b: T }`, `enum Tree[T] { Leaf, Node(T) }`, written `Pair[Int]`. Type arguments come from the values and from context (an annotation, a parameter, a return type), never written at construction; `let t = Leaf` alone is an error that suggests an annotation.
 - Type names belong to their module: two modules may each declare `Point`. Another module's type is `geo::Point` or imported by name, and an imported enum's variants can be written bare.
 - Modules for command-line programs: `env` (`env_var`, `current_dir`), `fs` (`list_dir`, `is_dir`, `create_dir`, `remove_file`, `remove_dir`), `path` (`path_join`, `file_name`, `extension`, `parent`), and `process` (`exit`, `run`), and `read_stdin` in `io`. Expected failures are `Err` with a message, like `read_file`.

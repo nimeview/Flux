@@ -205,6 +205,27 @@ impl Rewrite<'_> {
         self.generics.extend(params.iter().cloned());
     }
 
+    /// The traits named in bounds (`[T: geo::Area]`) → their internal names.
+    /// The library traits `Eq`, `Ord`, and `Display` keep their names unless
+    /// the module has a trait of that name.
+    fn bounds(&mut self, bounds: &mut [flux_syntax::TypeBound]) {
+        for bound in bounds {
+            for t in &mut bound.traits {
+                t.name = self.trait_name(&t.name, t.span);
+            }
+        }
+    }
+
+    /// A trait's internal name. `Eq`, `Ord`, and `Display` that the module
+    /// neither declares nor imports are the library's ([`crate::LIBRARY_TRAIT`]).
+    fn trait_name(&mut self, name: &str, span: Span) -> String {
+        let library = matches!(name, "Eq" | "Ord" | "Display");
+        if library && !self.scope.types.contains_key(name) {
+            return format!("{}{name}", crate::LIBRARY_TRAIT);
+        }
+        self.type_name(name, span)
+    }
+
     /// A type name as written (`Point`, `geo::Point`) → its internal name.
     fn type_name(&mut self, name: &str, span: Span) -> String {
         self.reserved(name, span);
@@ -343,8 +364,12 @@ impl Rewrite<'_> {
             }
             Item::Impl(imp) => {
                 if let Some(t) = &mut imp.trait_name {
-                    t.name = self.type_name(&t.name, t.span);
+                    t.name = self.trait_name(&t.name, t.span);
                 }
+                let impl_outer = self.generics.len();
+                let impl_span = imp.trait_name.as_ref().map_or(imp.span, |t| t.span);
+                self.type_params(&imp.type_params, impl_span);
+                self.bounds(&mut imp.type_bounds);
                 self.ty(&mut imp.target_type);
                 for f in &mut imp.methods {
                     let outer = self.generics.len();
@@ -352,12 +377,14 @@ impl Rewrite<'_> {
                     self.fn_parts(&mut f.params, &mut f.ret, &mut f.body);
                     self.generics.truncate(outer);
                 }
+                self.generics.truncate(impl_outer);
             }
             Item::Event(e) => e.params.iter_mut().for_each(|p| self.ty(&mut p.ty)),
             Item::Fn(f) => {
                 self.reserved(&f.name.name, f.name.span);
                 let outer = self.generics.len();
                 self.type_params(&f.type_params, f.name.span);
+                self.bounds(&mut f.type_bounds);
                 self.fn_parts(&mut f.params, &mut f.ret, &mut f.body);
                 self.generics.truncate(outer);
             }
