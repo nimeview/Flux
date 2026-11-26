@@ -109,6 +109,30 @@ error: runtime error: integer division by zero in `main`
 
 The trace reads from the failure outward: which function failed, at which line and column, and who called it.
 
+To handle overflow or division by zero without stopping the program, use a checked integer method. Every integer type (`Int`, `Int8` to `Int64`, and `UInt8` to `UInt64`) has `checked_add(m)`, `checked_sub(m)`, `checked_mul(m)`, `checked_div(m)`, `checked_rem(m)`, `checked_neg()`, and `checked_pow(exponent)`. Each returns `Option[N]`, where `N` is the receiver's type: `Some(result)` in that type, or `None` where the plain operation would stop with a runtime error.
+
+```flux
+import io { println }
+
+fn main() {
+    let big = 9223372036854775807
+    let small = 120 as Int8
+    println("{big.checked_add(1)} {small.checked_add(7)} {small.checked_add(8)}")
+    println("{7.checked_div(0)} {7.checked_div(2)} {2.checked_pow(62)}")
+    println("{big.checked_add(5).unwrap_or(0)}")
+}
+```
+
+```output
+None Some(127) None
+None Some(3) Some(4611686018427387904)
+0
+```
+
+The argument may be any integer type. If its value does not fit the receiver's type, as in `120i8.checked_add(300)`, the result is `None`. A negative exponent for `checked_pow` also gives `None`. For a signed minimum, `checked_rem(-1)` gives `Some(0)`, just as `%` gives `0`.
+
+These methods need no import and are pure, so they work in derived values and `const` initializers too. They have no free-function forms. A float receiver is E005 ("`checked_` operations are for integer types"), and a float argument is E005 too. There are no `wrapping_` or `saturating_` forms.
+
 Mixing an `Int` and a `Float` gives a `Float`. To convert explicitly, use `as`. A conversion that does not fit is a runtime error too:
 
 ```flux

@@ -203,6 +203,34 @@ pub fn method_doc(receiver: Receiver, method: &str) -> Option<Doc> {
             "n.clamp(low: N, high: N) -> N",
             "`n` limited to the range from `low` to `high`.",
         ),
+        (Number, "checked_add") => d(
+            "n.checked_add(m: Int) -> Option[N]",
+            "`n + m` in `n`'s integer type, or `None` if it overflows.",
+        ),
+        (Number, "checked_sub") => d(
+            "n.checked_sub(m: Int) -> Option[N]",
+            "`n - m` in `n`'s integer type, or `None` if it overflows.",
+        ),
+        (Number, "checked_mul") => d(
+            "n.checked_mul(m: Int) -> Option[N]",
+            "`n * m` in `n`'s integer type, or `None` if it overflows.",
+        ),
+        (Number, "checked_div") => d(
+            "n.checked_div(m: Int) -> Option[N]",
+            "`n / m`, or `None` for division by zero or overflow.",
+        ),
+        (Number, "checked_rem") => d(
+            "n.checked_rem(m: Int) -> Option[N]",
+            "`n % m`, or `None` for division by zero.",
+        ),
+        (Number, "checked_neg") => d(
+            "n.checked_neg() -> Option[N]",
+            "`-n` in `n`'s integer type, or `None` if it overflows.",
+        ),
+        (Number, "checked_pow") => d(
+            "n.checked_pow(exponent: Int) -> Option[N]",
+            "`n` to the power `exponent`, or `None` if it overflows or `exponent` is negative.",
+        ),
         _ => None,
     }
 }

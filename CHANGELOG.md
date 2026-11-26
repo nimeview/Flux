@@ -4,6 +4,10 @@ Notable changes to Flux. The versioning policy is in [`RELEASE.md`](RELEASE.md).
 
 ## [Unreleased]
 
+### Added
+
+- Checked integer methods on every integer type: `checked_add(m)`, `checked_sub(m)`, `checked_mul(m)`, `checked_div(m)`, `checked_rem(m)`, `checked_neg()`, and `checked_pow(exponent)`. They return `Option` of the receiver's type: `Some(result)` on success, or `None` for overflow, division by zero, an integer argument that does not fit that type, or a negative exponent. They need no import and are pure, including in derived values and `const` initializers.
+
 ### Changes that can alter programs
 
 - A derived value, a `const` initializer, or a `track fn` may no longer run an `act fn` (E008), directly, through another function, or through a function value. An action's reads are not tracked, so a derived value computed through one could go stale even when the action only read sources. Migration: write `track fn` instead of `act fn` for a function that a derived value, `const` initializer, or `track fn` uses to compute from sources.

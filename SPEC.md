@@ -55,6 +55,7 @@ The VM is the reference; the JIT must produce the same value or error, or fall b
 
 - An integer and a float compare (`==`, `<`, …) by their exact values: `9007199254740993 == 9007199254740992.0` is `false`, though the integer rounds to that float. `NaN` is unordered with every number, so only `!=` is `true`.
 - Mixed integer and float arithmetic converts the integer to the float operand's type: `Float32` with a `Float32` operand (which may round a large integer: `16777217 + 0.0f32` is `16777216.0`), and `Float64` otherwise. Operators on two integers keep the integer type, so `Int / Int` is `Int`: division by zero is a runtime error rather than a value of another type.
+- To handle integer overflow or division by zero as a value, use the [checked integer methods](#library-methods): `checked_add`, `checked_sub`, `checked_mul`, `checked_div`, `checked_rem`, `checked_neg`, and `checked_pow` return `None` instead of stopping with a runtime error.
 - `<`, `<=`, `>`, `>=` also order two strings, by Unicode code point: `"a" < "b"`, and `"Z" < "a"`. A string and a number cannot be compared.
 - Casts are checked: an integer out of the target range, a negative value cast to an unsigned type, or a `NaN`/infinite/out-of-range float cast to an integer is the runtime error `numeric cast out of range`. Float → integer casts truncate toward zero.
 - A runtime error stops the current evaluation and is reported as `runtime error: <message> in <context>`, where the context names the binding, `watch`, or `on` handler, followed by what was running, innermost first: `  at <name> (<path>:<line>:<column>)`. The location is the failing statement in that frame, or the declaration of a derived binding; a statement directly in a `match` arm reports the `match`, and a module-level `if` has no location. A trace longer than 12 frames shows its 10 innermost and 2 outermost. Both engines report the same text: an error in compiled code replays on the VM, and the rest of the run stays there. Statements after the failing one do not run, and when settling a batch fails, no watch runs. If the error happens during module initialization, `flux run` exits non-zero. Out-of-range integer *literals* are rejected at parse time.
@@ -350,7 +351,11 @@ Values of library types have methods, which need no import: `text.split(",")` is
 | `Map[K, V]` | `len`, `get`, `has`, `keys`, `values`, `entries() -> [(K, V)]`, `get_or(k, default)` |
 | `Option[T]` | `unwrap_or(default)`, `map(f)`, `and_then(f)` (`f` returns an `Option`), `ok_or(err)`, `is_some()`, `is_none()` |
 | `Result[T, E]` | `unwrap_or(default)`, `map(f)`, `and_then(f)` (`f` returns a `Result` with error type `E`), `map_err(f)`, `is_ok()`, `is_err()` |
-| numbers | `abs`, `sqrt`, `floor`, `ceil`, `pow`, `min`, `max`, `clamp`, `to_string` |
+| numbers | `abs`, `sqrt`, `floor`, `ceil`, `pow`, `min`, `max`, `clamp`, `to_string`; integers only: `checked_add(m)`, `checked_sub(m)`, `checked_mul(m)`, `checked_div(m)`, `checked_rem(m)`, `checked_neg()`, `checked_pow(exponent)` |
+
+**Checked integer methods.** Every integer type (`Int`, `Int8`…`Int64`, `UInt8`…`UInt64`) has the `checked_` methods above. Each returns `Option[N]`, where `N` is the receiver's integer type: `Some(result)` in that type on success, or `None` when the plain operation would stop with integer overflow or division by zero. An argument may be any integer type, but a value that does not fit the receiver's type gives `None` (`120i8.checked_add(300)`), as does a negative exponent for `checked_pow`. For a signed minimum, `checked_rem(-1)` gives `Some(0)`, like `%`.
+
+A float receiver is **E005** ("`checked_` operations are for integer types"); a float argument is also **E005**. These are methods only, with no free functions or import needed. They are pure and may be used in derived values and `const` initializers. There are no `wrapping_` or `saturating_` forms.
 
 `sorted` and `sorted_by` sort numbers by value and strings by code point (`sorted_by(|p| p.age)` sorts by the key the function gives, keeping equal keys in order); other element types are a compile error. `a + b` joins two arrays of the same type.
 

@@ -37,6 +37,13 @@ pub const METHOD_FNS: &[&str] = &[
     "\0map_value",
     "\0and_then",
     "\0map_err",
+    "\0checked_add",
+    "\0checked_sub",
+    "\0checked_mul",
+    "\0checked_div",
+    "\0checked_rem",
+    "\0checked_neg",
+    "\0checked_pow",
 ];
 
 /// The ones that call a function argument; the VM runs them.
@@ -66,9 +73,53 @@ fn int(v: Option<&Value>) -> Option<i64> {
     v?.as_int()
 }
 
+/// `x.checked_add(y)` and kin: the result in `x`'s integer type, or `None`
+/// where the plain operation stops the program (overflow, division by zero),
+/// and for an argument outside that type.
+fn checked(name: &str, args: &[Value]) -> Option<Value> {
+    let Some(Value::Int { width, bits }) = args.first() else {
+        return None;
+    };
+    let width = *width;
+    let x = flux_value::int_to_i128(width, *bits);
+    let arg = || match args.get(1) {
+        Some(Value::Int { width, bits }) => Some(flux_value::int_to_i128(*width, *bits)),
+        _ => None,
+    };
+    let exact: Option<i128> = match name {
+        "\0checked_add" => arg().map(|y| x + y),
+        "\0checked_sub" => arg().map(|y| x - y),
+        "\0checked_mul" => arg().and_then(|y| x.checked_mul(y)),
+        "\0checked_div" => arg().filter(|y| *y != 0).map(|y| x / y),
+        "\0checked_rem" => arg().filter(|y| *y != 0).map(|y| x % y),
+        "\0checked_neg" => Some(-x),
+        "\0checked_pow" => arg().and_then(|n| {
+            let n = u32::try_from(n).ok()?;
+            let mut result: i128 = 1;
+            for _ in 0..n {
+                result = result.checked_mul(x)?;
+                // Past the type's range it can only grow (or flip sign).
+                flux_value::int_from_i128(width, result)?;
+            }
+            Some(result)
+        }),
+        _ => None,
+    };
+    // An argument outside `x`'s type has no result in it either.
+    if !matches!(name, "\0checked_neg")
+        && arg().is_some_and(|y| flux_value::int_from_i128(width, y).is_none())
+    {
+        return None;
+    }
+    exact.and_then(|n| flux_value::int_from_i128(width, n))
+}
+
 /// Runs a method-only library function that takes no function argument.
 pub fn call(name: &str, args: &[Value]) -> Option<Result<Value, ArithError>> {
     let ok = |v: Value| Some(Ok(v));
+    if name.starts_with("\0checked_") {
+        return ok(Value::Option(checked(name, args).map(Box::new)));
+    }
     match name {
         "\0contains" => {
             let xs = items(args.first())?;
@@ -286,6 +337,13 @@ pub fn library_method(receiver: Receiver, method: &str) -> Option<(&'static str,
         (Number, "min") => plain("min"),
         (Number, "max") => plain("max"),
         (Number, "clamp") => plain("clamp"),
+        (Number, "checked_add") => plain("\0checked_add"),
+        (Number, "checked_sub") => plain("\0checked_sub"),
+        (Number, "checked_mul") => plain("\0checked_mul"),
+        (Number, "checked_div") => plain("\0checked_div"),
+        (Number, "checked_rem") => plain("\0checked_rem"),
+        (Number, "checked_neg") => plain("\0checked_neg"),
+        (Number, "checked_pow") => plain("\0checked_pow"),
         _ => None,
     }
 }
@@ -352,6 +410,13 @@ pub const LIBRARY_METHOD_NAMES: &[&str] = &[
     "min",
     "max",
     "clamp",
+    "checked_add",
+    "checked_sub",
+    "checked_mul",
+    "checked_div",
+    "checked_rem",
+    "checked_neg",
+    "checked_pow",
 ];
 
 /// The library functions a method of this name can call, on any receiver,

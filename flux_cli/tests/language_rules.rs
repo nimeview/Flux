@@ -428,3 +428,26 @@ fn a_match_whose_arms_all_return_ends_a_function() {
         "expected `Int64`, found `String`",
     );
 }
+
+/// 0.4: `checked_` operations give `None` where the plain operation stops
+/// the program, in the receiver's integer type.
+#[test]
+fn checked_integer_operations_return_none_instead_of_stopping() {
+    prints(
+        "import io { println }\nfn main() {\n    let big = 9223372036854775807\n    let small = 120i8\n    let u = 3u8\n    let neg = -7\n    let lowest = -127i8 - 1i8\n    println(\"{big.checked_add(1)} {big.checked_sub(1)} {small.checked_add(7)} {small.checked_add(8)}\")\n    println(\"{u.checked_sub(4)} {u.checked_mul(85)} {u.checked_mul(86)} {small.checked_add(300)}\")\n    println(\"{7.checked_div(0)} {7.checked_rem(0)} {7.checked_div(2)} {neg.checked_rem(3)}\")\n    println(\"{2.checked_pow(62)} {2.checked_pow(63)} {3.checked_pow(0)} {2.checked_pow(-1)}\")\n    println(\"{lowest.checked_neg()} {small.checked_neg()} {lowest.checked_div(-1)}\")\n    println(\"{big.checked_add(5).unwrap_or(0)}\")\n}\n",
+        "None Some(9223372036854775806) Some(127) None\n\
+         None Some(255) None None\n\
+         None None Some(3) Some(-1)\n\
+         Some(4611686018427387904) None Some(1) None\n\
+         None Some(-120) None\n\
+         0\n",
+    );
+    rejects(
+        "fn main() {\n    let f = 1.5\n    let a = f.checked_add(1)\n}\n",
+        "`checked_` operations are for integer types",
+    );
+    rejects(
+        "fn main() {\n    let b = 3.checked_add(1.5)\n}\n",
+        "expected `an integer`, found `Float64`",
+    );
+}

@@ -57,6 +57,8 @@ best: ann
 
 `scores.push(40)` and `scores.sort()` change `scores` itself, so they go on their own line and `scores` must be `let mut`. The free functions such as `push(xs, v)` stay, and return a new array instead. The full list of methods is in the language reference.
 
+Every integer type has `checked_add(m)`, `checked_sub(m)`, `checked_mul(m)`, `checked_div(m)`, `checked_rem(m)`, `checked_neg()`, and `checked_pow(exponent)`. Each returns `Option[N]` for the receiver's integer type `N`: `Some(result)` on success, or `None` for overflow, division by zero, an integer argument that does not fit `N`, or a negative exponent. A signed minimum's `checked_rem(-1)` is `Some(0)`. These are pure methods with no import or free-function forms, and may be used in derived values and `const` initializers. Float receivers and arguments are E005. There are no `wrapping_` or `saturating_` forms. See [Arithmetic](./basics.md#arithmetic) for an example.
+
 ## io
 
 | Function | Returns | Notes |

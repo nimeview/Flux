@@ -1004,6 +1004,27 @@ fn infer_method_builtin(
     };
     let array = |t: Type| Type::Array(Box::new(t));
     Some(match name {
+        // `x.checked_add(y)`: `x`'s integer type, `None` instead of a stop.
+        "\0checked_neg" | "\0checked_add" | "\0checked_sub" | "\0checked_mul" | "\0checked_div"
+        | "\0checked_rem" | "\0checked_pow" => {
+            want_args(usize::from(name != "\0checked_neg"), diagnostics);
+            if !recv.is_error() && !recv.is_integer() {
+                mismatch(
+                    "an integer (`checked_` operations are for integer types)".into(),
+                    &recv,
+                    receiver.span(),
+                    diagnostics,
+                );
+                return Some(Type::Error);
+            }
+            for arg in rest {
+                let got = infer(arg, diagnostics);
+                if !got.is_error() && !got.is_integer() {
+                    mismatch("an integer".into(), &got, arg.span(), diagnostics);
+                }
+            }
+            Type::Option(Box::new(recv.clone()))
+        }
         "\0contains" => {
             want_args(1, diagnostics);
             if let Some(v) = rest.first() {
