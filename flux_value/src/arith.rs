@@ -71,6 +71,15 @@ pub enum ArithError {
     Exit = 12,
     /// `exit` with a code outside `0..=255`.
     BadExitStatus = 13,
+    /// A derived value read itself while it was being computed, through
+    /// instances the compiler could not see connected.
+    ReactiveCycle = 14,
+    /// A module binding was read, while modules initialize, before its
+    /// initial value was set: through an instance made for it.
+    ReadBeforeInit = 15,
+    /// An instance's member would hold the instance itself, directly or
+    /// through instances it holds: nothing could ever release it.
+    InstanceHoldsItself = 16,
 }
 
 impl ArithError {
@@ -88,6 +97,9 @@ impl ArithError {
             11 => Self::KeyNotFound,
             12 => Self::Exit,
             13 => Self::BadExitStatus,
+            14 => Self::ReactiveCycle,
+            15 => Self::ReadBeforeInit,
+            16 => Self::InstanceHoldsItself,
             _ => Self::InvalidOperands,
         }
     }
@@ -107,6 +119,11 @@ impl ArithError {
             Self::KeyNotFound => "key not found",
             Self::Exit => "exit",
             Self::BadExitStatus => "exit status must be 0..=255",
+            Self::ReactiveCycle => "a derived value depends on itself",
+            Self::ReadBeforeInit => "a binding was read before its initial value was set",
+            Self::InstanceHoldsItself => {
+                "an instance cannot hold itself, directly or through the instances it holds"
+            }
         }
     }
 }

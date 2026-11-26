@@ -7,6 +7,20 @@ pub struct Program {
     pub items: Vec<Item>,
 }
 
+impl Program {
+    /// Every item, followed by the members of each `live fn` after it.
+    pub fn all_items(&self) -> Vec<&Item> {
+        let mut out = Vec::with_capacity(self.items.len());
+        for item in &self.items {
+            out.push(item);
+            if let Item::Live(live) = item {
+                out.extend(live.items.iter());
+            }
+        }
+        out
+    }
+}
+
 /// Top-level item.
 #[derive(Debug, Clone)]
 pub enum Item {
@@ -18,6 +32,8 @@ pub enum Item {
     Impl(ImplDecl),
     Event(EventDecl),
     Fn(FnDecl),
+    /// `live fn Name(params) { … }`: a component.
+    Live(LiveDecl),
     RFn(RFnDecl),
     Derived(DerivedStmt),
     Const(ConstBinding),
@@ -148,6 +164,18 @@ pub struct FnDecl {
     pub params: Vec<Param>,
     pub ret: Option<TypeName>,
     pub body: Block,
+    pub span: Span,
+}
+
+/// `live fn Counter(start: Int) { … }`: a component. Each call makes an
+/// instance; `items` are its members (`let`, `let mut`, `derived`, `event`,
+/// `on`, `watch`, `fn`), each with its own `pub`.
+#[derive(Debug, Clone)]
+pub struct LiveDecl {
+    pub pub_: bool,
+    pub name: Ident,
+    pub params: Vec<Param>,
+    pub items: Vec<Item>,
     pub span: Span,
 }
 
@@ -300,6 +328,9 @@ pub enum PlaceStep {
 
 #[derive(Debug, Clone)]
 pub struct EmitStmt {
+    /// `emit a.engine.Stop`: the instance (`a.engine`) whose event this is;
+    /// empty for an event in scope.
+    pub target: Vec<Ident>,
     pub event: Ident,
     pub args: Vec<Expr>,
     pub span: Span,

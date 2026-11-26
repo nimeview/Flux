@@ -238,6 +238,20 @@ pub enum Inst {
     Cast {
         ty: String,
     },
+    /// `a.n`: pops an instance and pushes the current value of its member
+    /// (by the member's internal name), a reactive read of that instance.
+    Member(String),
+    /// Pops `argc` arguments and pushes a new instance of `templates[template]`.
+    Construct {
+        template: u32,
+        argc: usize,
+    },
+    /// `a.f(x)`: pops `argc` arguments, the first the instance, and calls
+    /// the component's function `name` on that instance with the rest.
+    CallMember {
+        name: String,
+        argc: usize,
+    },
 }
 
 /// One step of an assigned place.
@@ -297,6 +311,12 @@ pub enum IrStmt {
     },
     /// One code sequence per value the event carries.
     Emit {
+        event: String,
+        args: Vec<Vec<Inst>>,
+    },
+    /// `emit a.Inc(1)`: `args[0]` is the instance, the rest the values;
+    /// `event` is the component's event, by internal name.
+    EmitMember {
         event: String,
         args: Vec<Vec<Inst>>,
     },
@@ -376,6 +396,30 @@ pub struct CompiledProgram {
     /// watches. Empty: all statements, then all watches.
     #[serde(default)]
     pub init_groups: Vec<InitGroup>,
+    /// `live fn` components. Their nodes, watches, handlers, and events are
+    /// in the lists above, as templates: each instance gets copies.
+    #[serde(default)]
+    pub templates: Vec<CompiledTemplate>,
+}
+
+/// A `live fn` component.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct CompiledTemplate {
+    /// The internal name of the component (and of its instances' type).
+    pub name: String,
+    /// Its parameters' members, in order: an instance starts with the
+    /// constructor's arguments in them.
+    pub params: Vec<String>,
+    /// Its sources and derived values, by index into `nodes`.
+    pub nodes: Vec<usize>,
+    /// Its events, by name.
+    pub events: Vec<String>,
+    /// Its watches and `on` handlers, by index into `watches` and `on_handlers`.
+    pub watches: Vec<usize>,
+    pub on_handlers: Vec<usize>,
+    /// What runs when an instance is made, after its parameters are set:
+    /// its computed initial values, in dependency order.
+    pub init_stmts: Vec<IrStmt>,
 }
 
 /// One module's part of initialization.

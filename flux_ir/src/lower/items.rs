@@ -154,6 +154,13 @@ fn lower_stmt(stmt: &HirStmt, program: &HirProgram) -> Option<IrStmt> {
                 expr,
             })
         }
+        HirStmt::Emit(e) if e.member.is_some() => Some(IrStmt::EmitMember {
+            event: program
+                .names
+                .get(program.member_events.get(&e.span)?)?
+                .clone(),
+            args: e.args.iter().map(|a| lower_expr(a, program)).collect(),
+        }),
         HirStmt::Emit(e) => Some(IrStmt::Emit {
             event: program.names.get(&e.event)?.clone(),
             args: e.args.iter().map(|a| lower_expr(a, program)).collect(),

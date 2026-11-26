@@ -11,9 +11,39 @@ pub struct HirBound {
     pub traits: Vec<(String, Span)>,
 }
 
+/// A `live fn` component. Its members are ordinary module-level items with
+/// internal names (`__live_Counter__n`); each instance has its own copy.
+#[derive(Debug, Clone)]
+pub struct HirTemplate {
+    /// The constructor, an `act fn` that returns a new instance.
+    pub ctor: SymbolId,
+    /// The internal name of the constructor and of the instances' type.
+    pub name: String,
+    /// The parameters as members, in order, with their types.
+    pub params: Vec<(SymbolId, HirType)>,
+    /// The members by the names the body gives them, and whether each is `pub`.
+    pub members: Vec<(String, SymbolId, bool)>,
+    pub span: Span,
+}
+
 #[derive(Debug, Clone)]
 pub struct HirProgram {
     pub items: Vec<HirItem>,
+    /// `live fn` components.
+    pub templates: Vec<HirTemplate>,
+    /// Each component member's and parameter's template (index into `templates`).
+    pub template_members: std::collections::HashMap<SymbolId, usize>,
+    /// The span of each `watch` and `on` inside a component, with its template.
+    pub template_handlers: std::collections::HashMap<Span, usize>,
+    /// The event each `emit a.Inc(…)` names, by the `emit`'s span; filled in
+    /// by the type checker.
+    pub member_events: std::collections::HashMap<Span, SymbolId>,
+    /// `a.n` reads of an instance's member, by span; filled in by the type
+    /// checker.
+    pub member_reads: std::collections::HashMap<Span, SymbolId>,
+    /// `a.f(…)` calls of an instance's function, by span: after type
+    /// checking, `f(a, …)`, whose first argument is the instance.
+    pub member_calls: std::collections::HashSet<Span>,
     pub names: std::collections::HashMap<SymbolId, String>,
     /// Maps enum variant name → enum type name.
     pub enum_variants: std::collections::HashMap<String, String>,
@@ -27,6 +57,9 @@ pub struct HirProgram {
     /// Each generic specialization's template, so that a use of one is a use
     /// of the function as written (references, rename).
     pub specialized_from: std::collections::HashMap<SymbolId, SymbolId>,
+    /// Impl methods with type parameters of their own (`fn map[U](self, …)`),
+    /// and how many: each call is specialized for its own arguments.
+    pub method_own_params: std::collections::HashMap<SymbolId, usize>,
     /// The files of the modules in the order they initialize (dependencies
     /// first, the root last); empty for a program without modules.
     pub init_order: Vec<flux_diagnostics::SourceId>,
@@ -338,7 +371,12 @@ impl HirAssign {
 
 #[derive(Debug, Clone)]
 pub struct HirEmit {
+    /// For `emit a.Inc(1)`, a placeholder until the type checker resolves
+    /// the instance's event (`HirProgram::member_events`).
     pub event: SymbolId,
+    /// `emit a.Inc(1)`: the event's name in the instance's component; the
+    /// instance (`a`) is then the first of `args`.
+    pub member: Option<String>,
     pub args: Vec<HirExpr>,
     pub span: Span,
 }

@@ -347,6 +347,94 @@ after Other
 chosen=20
 ```
 
+## Components
+
+`live fn` declares a component. Calling it makes a new instance with its own sources, derived values, events, handlers, and watches. Members and parameters use their bare names inside the body. Outside, code uses `pub` members:
+
+```flux
+import io { println }
+
+event Tick
+
+live fn Counter(start: Int) {
+    pub let mut n = start
+    pub derived double = n * 2
+    pub event Inc(by: Int)
+
+    on Inc(by) {
+        n += by
+    }
+
+    on Tick {
+        n += 1
+    }
+
+    watch n {
+        println("n={n}")
+    }
+
+    pub act fn reset() {
+        n = 0
+    }
+}
+
+let a = Counter(0)
+
+let b = Counter(10)
+
+derived total = a.double + b.double
+
+watch total {
+    println("total={total}")
+}
+
+act fn main() {
+    emit a.Inc(5)
+    a.reset()
+    emit Tick()
+    println("{a.n} {b.double}")
+}
+```
+```output
+total=20
+n=0
+n=10
+1 22
+total=24
+n=1
+n=11
+```
+
+The module's watch runs first, then each instance's watch in creation order. `act fn main` is one batch, so its watches run after it returns. For `a`, `Inc` raises `n` to 5, `reset` puts it back to 0, and `Tick` adds 1. `b` receives only `Tick`, so its `n` becomes 11. The print in `main` sees these values before the watches run.
+
+A component may contain `let`, `let mut`, `derived`, `event`, `on`, `watch`, and functions (`fn`, `act fn`, `track fn`). Each member may be `pub`. A member names one value; it cannot use a destructuring pattern. A member function cannot have type parameters, `mut` parameters, or `mut self`. A component parameter cannot be `mut`. Each instance keeps its own copy of its parameters. They are fixed for its life, and reading them is not a reactive read.
+
+Making an instance is an action, like calling an `act fn`. Module initialization, `on` handlers, `act fn`s, and functions may make instances. A derived value, `const`, or `track fn` that makes one is E008. A module-level `let` whose value makes an instance runs once at startup. For example, `let label = Label(a, "a")` reads the module binding `a` then; it is not a derived value.
+
+The component's name is also the instance's type. Use it in arrays (`[Counter]`), function parameters (`fn total(xs: [Counter]) -> Int`), or another component's parameters (`live fn Label(c: Counter, name: String)`). An instance is a handle. `let b = a`, storing it in an array or field, and passing it all give the same instance. `==` and `!=` compare identity. Interpolation shows a name and number, such as `Counter#3`. The numbers count every instance the program made.
+
+Outside the component, read a public value with `a.n`, emit a public event with `emit a.Inc(1)`, or call a public function with `a.reset()`. `emit` names an instance by a chain of names, as in `emit car.engine.Faster()`. To emit to an element, bind it first: `let item = list.items[i]`, then `emit item.Toggle()`. A private member is E033. Assigning a member from outside, including `xs[0].n += 1`, is E032. Emit one of its `pub` events or call one of its `pub act fn`s to change it. An event or function cannot be read as a value: `let f = c.reset` is an error.
+
+A derived value or `track fn` that reads `a.double` follows that instance's member. If a mutable binding holding the instance changes, it follows the new instance. The same holds for an array of instances. Reads through a called function are followed too: `derived sum = total(all)` follows the `c.double` reads in `fn total(xs: [Counter])`. A plain function may read `a.n` for its current value. A watch without a target cannot read an instance's member. Give the read a name, as in `derived n = x.n`, then use `watch n { … }`.
+
+An instance's handler for its own event runs only when that instance receives it. A handler for a global event, such as `Tick`, runs for every instance. Module handlers run first, then instances in creation order. Each instance's handlers run in declaration order. An instance made during an event does not receive that event. Watches also run for modules first, then instances in creation order. A new instance's watches run once at the end of the batch that made it.
+
+An instance lives while a variable, field, array element, or another instance's member holds it. Global event handlers and watches do not keep it alive. What an instance's `watch` remembers to detect changes does not keep instances alive. A watch with `prev` keeps the values it hands back as `prev`. When its last handle is dropped, its handlers and watches stop no later than the end of the outermost batch. Making an instance and dropping the result as a statement warns, E030. Bind it instead, as in `let x = Counter(0)`.
+
+A component's `let mut` and `derived` members may hold instances. A list component can have `pub let mut items: [Item] = []` and `pub derived left: Int = items.filter(|i| !i.done).len()`. It can add an item with `on Push(text) { items.push(Item(text)) }`. It can remove one with `items = items.filter(|x| x != gone)`. An instance removed from the list and held nowhere else is dropped and stops reacting.
+
+An instance may never come to hold itself, directly or through the instances it holds. A tree node adopting its own ancestor would do this. Storing such a value in a member fails with the runtime error "an instance cannot hold itself, directly or through the instances it holds". This applies to assignment, `push`, and a derived value's new result. The error is reported where the store happens, such as "at on Adopt". The value is not stored. This includes a component's derived value that would hold a module array containing that same instance.
+
+Recursive components support trees whose children change. A node can have `pub let mut children: [Node] = []` and `pub derived size: Int = 1 + children.map(|c| c.size).reduce(0, |x, y| x + y)`. Such a member needs a type annotation because its type depends on itself.
+
+Chains of tens of thousands of instances are computed without exhausting the stack. This also holds when read from the far end inside a batch.
+
+A cycle among a component's own members read by their bare names is E010. A cycle through module bindings or other components is also E010, as in `C.d → total → C.d`. Members appear as `C.a` in cycle reports. The same cycle is reported every time.
+
+If a value comes to read itself at run time through instances, it fails with "a derived value depends on itself". It never returns an old value. During module initialization, reading a module binding that is not set yet fails with "a binding was read before its initial value was set".
+
+Export a component with `pub live fn`. Import it like a function: `import counter { Counter, Label }`. Its name is then also the type. Component code runs on the VM. With `--jit`, the results are the same.
+
 ## Limits
 
 - A module may have its own `on`, `watch`, and top-level `if`, but only the module that declares a source changes it (see [Modules](./modules.md)).

@@ -603,6 +603,7 @@ fn pub_export_names(program: &Program) -> Vec<String> {
 fn export_name_if_pub(item: &Item) -> Option<String> {
     match item {
         Item::Fn(f) if f.pub_ => Some(f.name.name.clone()),
+        Item::Live(l) if l.pub_ => Some(l.name.name.clone()),
         Item::RFn(f) if f.pub_ => Some(f.name.name.clone()),
         Item::Struct(s) if s.pub_ => Some(s.name.name.clone()),
         Item::Enum(e) if e.pub_ => Some(e.name.name.clone()),
@@ -627,6 +628,7 @@ fn declares_private(program: &Program, name: &str) -> bool {
     program.items.iter().any(|item| {
         let (pub_, declared) = match item {
             Item::Fn(f) => (f.pub_, Some(f.name.name.as_str())),
+            Item::Live(l) => (l.pub_, Some(l.name.name.as_str())),
             Item::RFn(f) => (f.pub_, Some(f.name.name.as_str())),
             Item::Struct(s) => (s.pub_, Some(s.name.name.as_str())),
             Item::Enum(e) => (e.pub_, Some(e.name.name.as_str())),

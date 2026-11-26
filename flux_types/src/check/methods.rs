@@ -16,6 +16,15 @@ pub fn resolve_method_calls(program: &mut HirProgram, typed: &TypedProgram) {
     program
         .changing_calls
         .extend(typed.changing_sites.iter().copied());
+    program
+        .member_reads
+        .extend(typed.member_reads.iter().map(|(s, id)| (*s, *id)));
+    program
+        .member_calls
+        .extend(typed.member_calls.iter().copied());
+    program
+        .member_events
+        .extend(typed.member_events.iter().map(|(s, id)| (*s, *id)));
     if typed.method_calls.is_empty()
         && typed.field_calls.is_empty()
         && typed.bit_not_sites.is_empty()

@@ -71,6 +71,16 @@ pub struct SymbolTable {
     closure_frames: Vec<ClosureFrame>,
     pub pending_fns: Vec<crate::nodes::HirItem>,
     pub pending_bindings: Vec<crate::nodes::HirItem>,
+    /// `live fn` components, in the order they were lowered.
+    pub templates: Vec<crate::nodes::HirTemplate>,
+    /// Each component member's and parameter's template (its index).
+    pub template_members: HashMap<SymbolId, usize>,
+    /// The span of each `watch` and `on` inside a component, with its template.
+    pub template_handlers: HashMap<Span, usize>,
+    /// The components' constructors.
+    pub live_ctors: std::collections::HashSet<SymbolId>,
+    /// Set when an expression being lowered calls a constructor.
+    pub makes_instance: bool,
     /// Every `impl` seen, checked against its trait once all traits are lowered.
     pub pending_impls: Vec<flux_syntax::ImplDecl>,
     /// Builtins the compiler uses without an import (e.g. `set` for
@@ -87,6 +97,8 @@ pub struct SymbolTable {
     /// Trait impl methods keyed by `(receiver type tag, method name)`, populated as
     /// `impl Trait for Type` blocks are lowered. Used for exact `x.method(...)` dispatch.
     pub trait_impl_index: HashMap<(String, String), SymbolId>,
+    /// Impl methods with type parameters of their own, and how many.
+    pub method_own_params: HashMap<SymbolId, usize>,
     /// The functions with `mut` parameters, by declared name.
     pub mut_params: HashMap<String, MutParams>,
     /// Calls of such functions written with their `mut` arguments, by span:
@@ -196,6 +208,11 @@ impl SymbolTable {
             closure_frames: Vec::new(),
             pending_fns: Vec::new(),
             pending_bindings: Vec::new(),
+            templates: Vec::new(),
+            template_members: HashMap::new(),
+            template_handlers: HashMap::new(),
+            live_ctors: std::collections::HashSet::new(),
+            makes_instance: false,
             pending_impls: Vec::new(),
             hidden_builtins: HashMap::new(),
             const_bindings: std::collections::HashSet::new(),
@@ -204,6 +221,7 @@ impl SymbolTable {
             trait_impl_index: HashMap::new(),
             type_bounds: HashMap::new(),
             mut_params: HashMap::new(),
+            method_own_params: HashMap::new(),
             mut_calls_ok: std::collections::HashSet::new(),
             lowering_callee: false,
             module_aliases: HashMap::new(),

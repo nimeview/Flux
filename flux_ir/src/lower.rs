@@ -18,12 +18,14 @@ use std::collections::HashMap;
 use flux_diagnostics::{span_to_miette, DiagnosticBag, FluxError, SourceId, Span};
 use flux_hir::{BindingKind, HirFn, HirItem, HirProgram, SymbolId, SymbolKind};
 
-use crate::{CompiledProgram, InitGroup, IrNode, IrStmt, NodeId, NodeKind, SourceMap};
+use crate::{
+    CompiledProgram, CompiledTemplate, InitGroup, Inst, IrNode, IrStmt, NodeId, NodeKind, SourceMap,
+};
 
 use codegen::lower_expr;
 use graph::{find_dependency_cycle, format_cycle, push_on_effect_node, push_watch_effect_node};
 use items::{const_expr, lower_fn, lower_if_stmt, lower_on, lower_watch, source_loc};
-use reads::collect_reads_expr;
+use reads::{collect_named_reads_expr, collect_reads_expr};
 
 /// Runtime key for a HIR symbol. Locals and parameters have unique slots so
 /// lexical shadowing cannot alias two different symbols with the same spelling.
@@ -68,6 +70,38 @@ pub fn lower_to_ir(
     let mut events = Vec::new();
     let mut symbol_to_node: HashMap<SymbolId, NodeId> = HashMap::new();
     let mut binding_spans: HashMap<SymbolId, Span> = HashMap::new();
+    // `live fn` components: their members are nodes, handlers, and watches
+    // like a module's, kept as templates (see `CompiledTemplate`).
+    let mut templates: Vec<CompiledTemplate> = program
+        .templates
+        .iter()
+        .map(|t| CompiledTemplate {
+            name: t.name.clone(),
+            ..Default::default()
+        })
+        .collect();
+    let mut recursive_edges: std::collections::HashSet<(NodeId, NodeId)> =
+        std::collections::HashSet::new();
+    let mut template_init: Vec<Vec<InitItem>> = templates.iter().map(|_| Vec::new()).collect();
+    for (index, template) in program.templates.iter().enumerate() {
+        for (param, _) in &template.params {
+            let Some(name) = program.names.get(param).cloned() else {
+                continue;
+            };
+            let id = NodeId(nodes.len() as u32);
+            symbol_to_node.insert(*param, id);
+            templates[index].params.push(name.clone());
+            templates[index].nodes.push(id.0 as usize);
+            nodes.push(IrNode {
+                name,
+                kind: NodeKind::Source,
+                deps: vec![],
+                init: None,
+                code: vec![],
+                effect: None,
+            });
+        }
+    }
 
     let reactive_fns: HashMap<String, &HirFn> = program
         .items
@@ -101,6 +135,9 @@ pub fn lower_to_ir(
             .unwrap_or_else(|| "?".into());
         let id = NodeId(nodes.len() as u32);
         symbol_to_node.insert(b.name, id);
+        if let Some(&t) = program.template_members.get(&b.name) {
+            templates[t].nodes.push(id.0 as usize);
+        }
         nodes.push(match b.kind {
             BindingKind::Source => IrNode {
                 name,
@@ -133,6 +170,19 @@ pub fn lower_to_ir(
             .iter()
             .filter_map(|sym| symbol_to_node.get(sym).copied())
             .collect();
+        // A component's value that reads a member of another instance of
+        // the same component (a tree's `total` reading its children's)
+        // reads instances made before it: no cycle (see below).
+        if let Some(&t) = program.template_members.get(&b.name) {
+            let named = collect_named_reads_expr(&b.value, program, &reactive_fns);
+            for sym in reads.difference(&named) {
+                if program.template_members.get(sym) == Some(&t) {
+                    if let Some(&to) = symbol_to_node.get(sym) {
+                        recursive_edges.insert((id, to));
+                    }
+                }
+            }
+        }
         let node = &mut nodes[id.0 as usize];
         node.deps = deps;
         node.code = lower_expr(&b.value, program);
@@ -148,6 +198,9 @@ pub fn lower_to_ir(
             .unwrap_or_else(|| "?".into());
         let id = NodeId(nodes.len() as u32);
         symbol_to_node.insert(ev.name, id);
+        if let Some(&t) = program.template_members.get(&ev.name) {
+            templates[t].events.push(name.clone());
+        }
         events.push(name.clone());
         nodes.push(IrNode {
             name,
@@ -167,7 +220,12 @@ pub fn lower_to_ir(
                 if b.kind == BindingKind::Source && const_expr(&b.value).is_none() =>
             {
                 if let Some(target) = program.names.get(&b.name) {
-                    init_items.push(InitItem {
+                    // A component's member starts when an instance is made.
+                    let list = match program.template_members.get(&b.name) {
+                        Some(&t) => &mut template_init[t],
+                        None => &mut init_items,
+                    };
+                    list.push(InitItem {
                         stmt: IrStmt::Assign {
                             target: target.clone(),
                             slot: None,
@@ -209,11 +267,28 @@ pub fn lower_to_ir(
                             renamed_functions.insert(source.clone(), name.clone());
                         }
                     }
-                    functions.push(lower_fn(f, &name, program));
+                    let mut compiled = lower_fn(f, &name, program);
+                    // A component's constructor makes an instance.
+                    if let Some(t) = program.templates.iter().position(|t| t.ctor == f.name) {
+                        let mut code: Vec<Inst> = compiled
+                            .params
+                            .iter()
+                            .map(|p| Inst::Load(p.clone()))
+                            .collect();
+                        code.push(Inst::Construct {
+                            template: t as u32,
+                            argc: compiled.params.len(),
+                        });
+                        compiled.body = vec![IrStmt::Return { expr: Some(code) }].into();
+                    }
+                    functions.push(compiled);
                 }
             }
             HirItem::Watch(w) => {
                 let watch_idx = watches.len();
+                if let Some(&t) = program.template_handlers.get(&w.span) {
+                    templates[t].watches.push(watch_idx);
+                }
                 let compiled = lower_watch(w, program, &reactive_fns);
                 watches.push(compiled);
                 watch_groups.push(group_of(w.span));
@@ -228,6 +303,9 @@ pub fn lower_to_ir(
             }
             HirItem::On(o) => {
                 let on_idx = on_handlers.len();
+                if let Some(&t) = program.template_handlers.get(&o.span) {
+                    templates[t].on_handlers.push(on_idx);
+                }
                 on_handlers.push(lower_on(o, program));
                 push_on_effect_node(&mut nodes, on_idx, o, program, &symbol_to_node);
             }
@@ -249,8 +327,29 @@ pub fn lower_to_ir(
         Vec::new()
     };
     let init_stmts: Vec<IrStmt> = ordered.into_iter().map(|(_, stmt)| stmt).collect();
+    for (template, items) in templates.iter_mut().zip(template_init) {
+        let ordered = order_init_stmts(items, program, &binding_spans, diagnostics)?;
+        template.init_stmts = ordered.into_iter().map(|(_, stmt)| stmt).collect();
+    }
 
-    if let Some(cycle) = find_dependency_cycle(&nodes) {
+    // The components' graph: a recursive component's edges to its own
+    // members through other instances do not count, as those instances
+    // were made before (a cycle through `let mut` holders is found at run
+    // time). Any other cycle is an error, however many instances there are.
+    let checked: Vec<IrNode> = nodes
+        .iter()
+        .enumerate()
+        .map(|(i, n)| IrNode {
+            deps: n
+                .deps
+                .iter()
+                .copied()
+                .filter(|d| !recursive_edges.contains(&(NodeId(i as u32), *d)))
+                .collect(),
+            ..n.clone()
+        })
+        .collect();
+    if let Some(cycle) = find_dependency_cycle(&checked) {
         let cycle_names: Vec<String> = cycle.iter().map(|&idx| nodes[idx].name.clone()).collect();
         let cycle_text = format_cycle(&cycle_names);
         let name_to_symbol: HashMap<&str, SymbolId> = program
@@ -296,6 +395,7 @@ pub fn lower_to_ir(
         on_handlers,
         events,
         renamed_functions,
+        templates,
     };
     crate::resolve_locals(&mut program);
     Some(program)

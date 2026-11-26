@@ -275,6 +275,47 @@ pub(super) fn parse_fn(
     }
 }
 
+/// `live fn Name(params) { members }`.
+pub(super) fn parse_live(
+    source_id: SourceId,
+    pair: pest::iterators::Pair<'_, Rule>,
+    span: Span,
+) -> LiveDecl {
+    let mut inner = pair.into_inner().peekable();
+    let pub_ = take_pub(&mut inner);
+    let _live = inner.next().expect("live keyword");
+    let _fn = inner.next().expect("fn keyword");
+    let name = parse_ident(source_id, inner.next().expect("live fn name"));
+    let mut params = Vec::new();
+    let mut items = Vec::new();
+    for child in inner {
+        match child.as_rule() {
+            Rule::param_list => params = parse_param_list(source_id, child),
+            Rule::live_body => {
+                for member in child.into_inner() {
+                    if member.as_rule() != Rule::live_item {
+                        continue;
+                    }
+                    let Some(decl) = member.into_inner().next() else {
+                        continue;
+                    };
+                    if let Some(item) = super::parse_item(source_id, decl) {
+                        items.push(item);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    LiveDecl {
+        pub_,
+        name,
+        params,
+        items,
+        span,
+    }
+}
+
 /// `[T: Ord + Display, U]`: the parameter names, and the bounds of those
 /// that have any.
 fn parse_bounded_params(
@@ -416,8 +457,13 @@ pub(super) fn parse_impl(
             let mut mname = None;
             let mut sig = None;
             let mut block = None;
+            let mut type_params = Vec::new();
+            let mut type_bounds = Vec::new();
             for child in m.into_inner() {
                 match child.as_rule() {
+                    Rule::bounded_params => {
+                        (type_params, type_bounds) = parse_bounded_params(source_id, child);
+                    }
                     Rule::ident => mname = Some(parse_ident(source_id, child)),
                     Rule::fn_sig => sig = Some(child),
                     Rule::block => block = Some(parse_block(source_id, child)),
@@ -436,8 +482,8 @@ pub(super) fn parse_impl(
                 },
                 pub_: false,
                 name: mname,
-                type_params: vec![],
-                type_bounds: vec![],
+                type_params,
+                type_bounds,
                 params,
                 ret,
                 body: block.expect("impl method body"),

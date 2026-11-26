@@ -11,7 +11,7 @@ pub use arith::{
     promote_int, values_equal, ArithError, BitOp, NumOp,
 };
 pub use convert::{is_tag_representable, tagged_to_value, value_to_tagged};
-pub use display::{render, type_display_name};
+pub use display::{binding_display_name, render, type_display_name};
 pub use heap::{
     array_finish, array_get, array_len, array_push, clear_for_tests, concat_strings, enum_payload,
     enum_variant_is, get_array, get_enum, get_string, heap_scope, heap_stats, int_range,
@@ -59,7 +59,66 @@ pub enum Value {
     /// Raw bytes (`read_bytes`, `bytes([…])`): one byte each, shared and
     /// copied on write like arrays.
     Bytes(std::sync::Arc<Vec<u8>>),
+    /// An instance of a `live fn` component: a handle. Copies are the same
+    /// instance; when the last one goes, the executor that made it drops
+    /// the instance's state and subscriptions (see [`InstanceRef`]).
+    Instance(std::sync::Arc<InstanceRef>),
     Unit,
+}
+
+/// Where dropped instances are reported: the executor that owns their
+/// state empties it at its next safe point.
+#[derive(Debug, Default)]
+pub struct InstanceMailbox {
+    dropped: std::sync::Mutex<Vec<u64>>,
+}
+
+impl InstanceMailbox {
+    /// The instances dropped since the last call.
+    pub fn take(&self) -> Vec<u64> {
+        std::mem::take(&mut *self.dropped.lock().unwrap_or_else(|e| e.into_inner()))
+    }
+
+    /// Whether instance `id` was dropped and not yet taken.
+    pub fn contains(&self, id: u64) -> bool {
+        self.dropped
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .contains(&id)
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.dropped
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .is_empty()
+    }
+}
+
+/// The identity of a component instance. Dropping the last handle tells its
+/// executor, through the mailbox, to release the instance.
+#[derive(Debug)]
+pub struct InstanceRef {
+    pub id: u64,
+    /// The component's internal name.
+    pub type_name: String,
+    pub mailbox: std::sync::Arc<InstanceMailbox>,
+}
+
+impl Drop for InstanceRef {
+    fn drop(&mut self) {
+        self.mailbox
+            .dropped
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .push(self.id);
+    }
+}
+
+impl PartialEq for InstanceRef {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -114,6 +173,7 @@ impl Value {
                 | Self::Char(_)
                 | Self::Bool(_)
                 | Self::String(_)
+                | Self::Instance(_)
                 | Self::Unit
         )
     }
@@ -252,6 +312,7 @@ impl Value {
             Self::Result(_) => "Result",
             Self::Map(_) => "Map",
             Self::Bytes(_) => "Bytes",
+            Self::Instance(_) => "Instance",
             Self::Unit => "Unit",
         }
     }

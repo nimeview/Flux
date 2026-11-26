@@ -959,18 +959,48 @@ fn lower_stmt(
                 _ => assign(value, steps, *op),
             }
         }
-        Stmt::Emit(EmitStmt { event, args, span }) => {
-            let event_id =
-                super::exprs::resolve_event(&event.name, event.span, symbols, diagnostics)?;
+        Stmt::Emit(EmitStmt {
+            target,
+            event,
+            args,
+            span,
+        }) => {
             let mut reads_reactive = false;
             let scope = tracking_scope(ctx);
-            let args = args
-                .iter()
-                .filter_map(|a| lower_expr(a, symbols, scope, diagnostics, &mut reads_reactive))
-                .collect();
+            // `emit a.engine.Stop(…)`: the instance `a.engine` goes first.
+            let (event_id, member, mut lowered) = if let Some((base, fields)) = target.split_first()
+            {
+                let mut expr = flux_syntax::Expr::Ident {
+                    name: base.name.clone(),
+                    span: base.span,
+                };
+                for field in fields {
+                    expr = flux_syntax::Expr::Field {
+                        base: Box::new(expr),
+                        field: field.name.clone(),
+                        span: flux_diagnostics::Span {
+                            end: field.span.end,
+                            ..base.span
+                        },
+                    };
+                }
+                let instance = lower_expr(&expr, symbols, scope, diagnostics, &mut reads_reactive)?;
+                let placeholder = symbols.hidden_builtin("\0member_event", event.span);
+                (placeholder, Some(event.name.clone()), vec![instance])
+            } else {
+                let id =
+                    super::exprs::resolve_event(&event.name, event.span, symbols, diagnostics)?;
+                (id, None, Vec::new())
+            };
+            lowered.extend(
+                args.iter().filter_map(|a| {
+                    lower_expr(a, symbols, scope, diagnostics, &mut reads_reactive)
+                }),
+            );
             Some(vec![HirStmt::Emit(HirEmit {
                 event: event_id,
-                args,
+                member,
+                args: lowered,
                 span: *span,
             })])
         }

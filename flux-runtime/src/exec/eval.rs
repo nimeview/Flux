@@ -134,6 +134,23 @@ impl Executor {
                         return RuntimeValue::Unit;
                     }
                 },
+                Inst::Member(name) => {
+                    let handle = stack_pop(stack, "Member instance");
+                    let value = self.read_member(&handle, name);
+                    stack.push(value);
+                }
+                Inst::Construct { template, argc } => {
+                    let at = stack.len().saturating_sub(*argc);
+                    let args = stack.split_off(at);
+                    let value = self.construct(*template as usize, args);
+                    stack.push(value);
+                }
+                Inst::CallMember { name, argc } => {
+                    let at = stack.len().saturating_sub(*argc);
+                    let args = stack.split_off(at);
+                    let value = self.call_member(name, &args);
+                    stack.push(value);
+                }
                 Inst::Take(name) => match self.load_global(name) {
                     Some(v) => stack.push(v),
                     None => return self.unbound(name),
@@ -476,6 +493,12 @@ impl Executor {
             self.refresh(id);
             return Some(self.graph.get(id).clone());
         }
+        // A component's member: the receiver's.
+        if let Some(id) = self.member_node(name) {
+            self.record_dep(id);
+            self.refresh(id);
+            return Some(self.graph.get(id).clone());
+        }
         is_bound(name, &self.graph, &self.functions)
             .then(|| resolve_load(name, &self.graph, &self.functions))
     }
@@ -663,7 +686,9 @@ impl Executor {
         // tracked depends on the reads of what it calls.
         // While some value is stale, compiled code could read its old slot.
         let reads_graph = self.reactive_stale() && self.graph_readers.contains(name);
-        if !self.vm_only && !self.is_tracking() && !reads_graph {
+        // A component's code reads the receiver's members, which compiled
+        // code does not know.
+        if !self.vm_only && !self.is_tracking() && !reads_graph && self.receiver.is_none() {
             match self
                 .backend
                 .try_call_fn(name, args, &self.graph, self.call_depth)

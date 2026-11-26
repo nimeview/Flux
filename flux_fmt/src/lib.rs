@@ -144,6 +144,7 @@ fn item_span(item: &Item) -> Span {
         Item::Impl(d) => d.span,
         Item::Event(d) => d.span,
         Item::Fn(d) => d.span,
+        Item::Live(d) => d.span,
         Item::RFn(d) => d.span,
         Item::Derived(d) => d.span,
         Item::Const(d) => d.span,
@@ -416,6 +417,26 @@ fn format_item(item: &Item, out: &mut String, level: usize) {
             out.push_str("}\n");
         }
         Item::If(i) => format_if_stmt(i, out, level),
+        Item::Live(l) => {
+            indent(out, level);
+            out.push_str(&format!(
+                "{}live fn {}({}) {{\n",
+                pub_prefix(l.pub_),
+                l.name.name,
+                params_fmt(&l.params, false)
+            ));
+            // A blank line sets off members with a body.
+            let block = |item: &Item| matches!(item, Item::Fn(_) | Item::On(_) | Item::Watch(_));
+            for (i, member) in l.items.iter().enumerate() {
+                if i > 0 && (block(member) || block(&l.items[i - 1])) {
+                    out.push('\n');
+                }
+                format_item(member, out, level + 1);
+            }
+            LEVEL.with(|lv| lv.set(level));
+            indent(out, level);
+            out.push_str("}\n");
+        }
     }
 }
 
@@ -567,7 +588,8 @@ fn format_stmt(stmt: &Stmt, out: &mut String, level: usize) {
         Stmt::Emit(e) => {
             indent(out, level);
             let args = e.args.iter().map(expr_fmt).collect::<Vec<_>>().join(", ");
-            out.push_str(&format!("emit {}({})\n", e.event.name, args));
+            let target: String = e.target.iter().map(|t| format!("{}.", t.name)).collect();
+            out.push_str(&format!("emit {target}{}({})\n", e.event.name, args));
         }
         Stmt::Expr(e) => {
             indent(out, level);

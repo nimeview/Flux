@@ -13,6 +13,7 @@ item = {
   | trait_decl
   | impl_decl
   | event_decl
+  | live_decl
   | fn_decl
   | rfn_decl
   | watch_stmt
@@ -73,7 +74,7 @@ trait_method = { "fn" ~ ident ~ fn_sig ~ ";" }
 impl_decl = { "impl" ~ bounded_params? ~ ((path_ident | ident) ~ kw_for)? ~ type_name ~ impl_body }
 kw_for = @{ "for" ~ kw_end }
 impl_body = { "{" ~ impl_method* ~ "}" }
-impl_method = { "fn" ~ ident ~ fn_sig ~ block }
+impl_method = { "fn" ~ ident ~ bounded_params? ~ fn_sig ~ block }
 
 // `track fn` reads reactive values and tracks them; `act fn` changes state.
 fn_decl = { pub_modifier? ~ fn_kind? ~ kw_fn ~ ident ~ bounded_params? ~ fn_sig ~ block }
@@ -81,6 +82,12 @@ fn_kind = { kw_track | kw_act }
 kw_fn = @{ "fn" ~ kw_end }
 kw_track = @{ "track" ~ kw_end }
 kw_act = @{ "act" ~ kw_end }
+// `live fn Counter(start: Int) { … }`: a component; each call makes an
+// instance with its own state, derived values, events, handlers, and watches.
+live_decl = { pub_modifier? ~ kw_live ~ kw_fn ~ ident ~ "(" ~ param_list? ~ ")" ~ live_body }
+kw_live = @{ "live" ~ kw_end }
+live_body = { "{" ~ (live_item | ";")* ~ "}" }
+live_item = { event_decl | fn_decl | watch_stmt | on_stmt | derived_binding | let_binding }
 // The older spelling of `track fn`.
 rfn_decl = { pub_modifier? ~ kw_rfn ~ ident ~ type_params? ~ fn_sig ~ block }
 kw_rfn = @{ "rfn" ~ kw_end }
@@ -135,7 +142,9 @@ place_step = { assign_index | assign_field }
 assign_index = { "[" ~ expr ~ "]" }
 assign_field = { "." ~ (ident | tuple_index) }
 assign_op = { "+=" | "-=" | "*=" | "/=" | "%=" | "=" }
-emit_stmt = { "emit" ~ (path_ident | ident) ~ emit_args? }
+emit_stmt = { "emit" ~ (emit_member | path_ident | ident) ~ emit_args? }
+// `emit a.Inc(1)`, `emit car.engine.Stop`: an instance's event.
+emit_member = ${ ident ~ ("." ~ ident)+ }
 emit_args = { "(" ~ expr_list? ~ ")" }
 expr_stmt = { expr }
 

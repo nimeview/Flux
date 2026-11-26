@@ -26,6 +26,12 @@ fn write_value(out: &mut String, value: &Value) {
             out.push('"');
         }
         Value::Unit => out.push_str("()"),
+        // `Counter#3`: the component and the instance's number.
+        Value::Instance(instance) => {
+            out.push_str(crate::type_display_name(&instance.type_name));
+            out.push('#');
+            out.push_str(&instance.id.to_string());
+        }
         // `Bytes[1, 2, 255]`: each byte as a number.
         Value::Bytes(bytes) => {
             out.push_str("Bytes[");
@@ -142,6 +148,20 @@ pub const VARIANT_FIELDS_TYPE: &str = "\0fields";
 
 /// The name a type is declared with: a type of an imported module is kept
 /// as `__mod_<index>__<Name>`, which prints as `Name`.
+/// A binding's name as the source wrote it: a component's member
+/// `__live_Counter__n` (of an instance, `__live_Counter__n#3`) is
+/// `Counter.n`; any other name is itself, without a module prefix.
+pub fn binding_display_name(name: &str) -> String {
+    let name = name.split('#').next().unwrap_or(name);
+    match name
+        .strip_prefix("__live_")
+        .and_then(|rest| rest.rsplit_once("__"))
+    {
+        Some((component, member)) => format!("{}.{member}", type_display_name(component)),
+        None => type_display_name(name).to_string(),
+    }
+}
+
 pub fn type_display_name(name: &str) -> &str {
     name.strip_prefix("__mod_")
         .and_then(|rest| rest.split_once("__"))

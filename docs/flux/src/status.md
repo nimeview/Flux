@@ -27,7 +27,6 @@ These may change or disappear, with no compatibility promise:
 - A package registry, and dependencies by version.
 - Windows support.
 - Rerunning a cycle of watches until values stop changing.
-- Private fields.
 - Catching a runtime error from inside the language.
 
 ## Known limits

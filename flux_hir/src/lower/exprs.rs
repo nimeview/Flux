@@ -302,6 +302,11 @@ pub(super) fn lower_expr(
             let lowered_callee = lower_expr(callee, symbols, scope, diagnostics, reads_reactive);
             symbols.lowering_callee = was;
             let lowered_callee = lowered_callee?;
+            if let HirExpr::Ident { symbol, .. } = &lowered_callee {
+                if symbols.live_ctors.contains(symbol) {
+                    symbols.makes_instance = true;
+                }
+            }
             let lowered_args = args
                 .iter()
                 .map(|a| lower_expr(a, symbols, scope, diagnostics, reads_reactive))

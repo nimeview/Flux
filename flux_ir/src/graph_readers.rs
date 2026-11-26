@@ -55,7 +55,7 @@ fn stmts_names<'a>(stmts: &'a [IrStmt], names: &mut HashSet<&'a str>, dynamic: &
             IrStmt::Assign { expr, .. }
             | IrStmt::Let { expr, .. }
             | IrStmt::Expr { code: expr } => code_names(expr, names, dynamic),
-            IrStmt::Emit { args, .. } => {
+            IrStmt::Emit { args, .. } | IrStmt::EmitMember { args, .. } => {
                 for code in args {
                     code_names(code, names, dynamic);
                 }

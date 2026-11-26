@@ -156,6 +156,24 @@ pub(super) fn code_has_lazy_if(code: &[flux_ir::Inst]) -> bool {
     })
 }
 
+/// Whether code may read an instance's member: it does (`a.n`), or it calls
+/// a function, which may.
+pub(super) fn code_may_read_members(code: &[flux_ir::Inst]) -> bool {
+    use flux_ir::Inst;
+    code.iter().any(|inst| match inst {
+        Inst::Member(_) | Inst::Call { .. } | Inst::CallValue { .. } | Inst::CallMember { .. } => {
+            true
+        }
+        Inst::LazyIf {
+            then_branch,
+            else_branch,
+        } => code_may_read_members(then_branch) || code_may_read_members(else_branch),
+        Inst::ShortAnd(inner) | Inst::ShortOr(inner) => code_may_read_members(inner),
+        Inst::Block(_) => true,
+        _ => false,
+    })
+}
+
 pub(super) fn eval_const(expr: &Option<IrValue>) -> Option<RuntimeValue> {
     expr.as_ref().map(to_runtime)
 }

@@ -23,14 +23,18 @@ pub(super) fn find_derived_cycle(program: &HirProgram) -> Option<Vec<SymbolId>> 
         }
         let mut refs = HashSet::new();
         collect_refs(&binding.value, &mut refs);
-        edges.insert(
-            binding.name,
-            refs.into_iter().filter(|id| derived.contains(id)).collect(),
-        );
+        let mut next: Vec<SymbolId> = refs.into_iter().filter(|id| derived.contains(id)).collect();
+        next.sort_by_key(|id| id.0);
+        edges.insert(binding.name, next);
     }
     let mut completed = HashSet::new();
     let mut path = Vec::new();
-    for &start in &derived {
+    // In declaration order, so the cycle reported is always the same.
+    let starts = program.items.iter().filter_map(|item| match item {
+        HirItem::Binding(binding) if binding.kind == BindingKind::Derived => Some(binding.name),
+        _ => None,
+    });
+    for start in starts {
         if let Some(cycle) = visit(start, &edges, &mut completed, &mut path) {
             return Some(cycle);
         }

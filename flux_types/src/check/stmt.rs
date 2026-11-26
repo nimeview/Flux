@@ -594,6 +594,15 @@ pub(super) fn check_stmt(
             let HirAssign {
                 name, value, span, ..
             } = assign;
+            if let Some(ty) = instance_on_path(ctx, assign, scope) {
+                diagnostics.push(FluxError::InstanceMemberWrite {
+                    name: names.get(name).cloned().unwrap_or_default(),
+                    ty: flux_value::type_display_name(&ty).to_string(),
+                    span: span_to_miette(*span),
+                    source_id: span.source,
+                });
+                break 'assign;
+            }
             // `x.m(…)` written as a statement on a place: it stores the
             // receiver back only when `m` is a `mut self` method; otherwise it
             // is just the call.
@@ -684,7 +693,69 @@ pub(super) fn check_stmt(
                 }
             }
         }
-        HirStmt::Emit(HirEmit { event, args, span }) => match module.get(event) {
+        HirStmt::Emit(HirEmit {
+            member: Some(event),
+            args,
+            span,
+            ..
+        }) => {
+            // `emit a.Inc(…)`: the instance is the first argument.
+            let instance = infer_expr(ctx, &args[0], scope, names, source, diagnostics)
+                .map(|t| unwrap_value_type(&t))
+                .unwrap_or(Type::Error);
+            let values = match &instance {
+                Type::Live(ty) => ctx
+                    .live_member(ty, event, *span, diagnostics)
+                    .and_then(|id| match module.get(&id) {
+                        Some(Type::Event(values)) => Some((id, values.clone())),
+                        _ => {
+                            diagnostics.push(FluxError::UnknownEvent {
+                                name: format!("{}.{event}", instance.display()),
+                                span: span_to_miette(*span),
+                                source_id: span.source,
+                            });
+                            None
+                        }
+                    }),
+                Type::Error => None,
+                other => {
+                    diagnostics.push(FluxError::TypeMismatch {
+                        expected: "an instance of a `live fn`, whose event to emit".into(),
+                        found: other.display(),
+                        span: span_to_miette(args[0].span()),
+                        source_id: args[0].span().source,
+                    });
+                    None
+                }
+            };
+            if let Some((id, values)) = values {
+                ctx.member_events.borrow_mut().insert(*span, id);
+                let given = &args[1..];
+                if given.len() != values.len() {
+                    diagnostics.push(FluxError::TypeMismatch {
+                        expected: crate::check::count(values.len(), "value"),
+                        found: crate::check::count(given.len(), "value"),
+                        span: span_to_miette(*span),
+                        source_id: span.source,
+                    });
+                }
+                for (arg, want) in given.iter().zip(&values) {
+                    let got = infer_expr(ctx, arg, scope, names, source, diagnostics)
+                        .unwrap_or(Type::Error);
+                    if !want.is_error() && !got.is_error() && !types_compatible(want, &got) {
+                        diagnostics.push(FluxError::TypeMismatch {
+                            expected: want.display(),
+                            found: got.display(),
+                            span: span_to_miette(arg.span()),
+                            source_id: arg.span().source,
+                        });
+                    }
+                }
+            }
+        }
+        HirStmt::Emit(HirEmit {
+            event, args, span, ..
+        }) => match module.get(event) {
             Some(Type::Event(values)) => {
                 if args.len() != values.len() {
                     diagnostics.push(FluxError::TypeMismatch {
@@ -952,4 +1023,32 @@ pub(super) fn reject_empty_array_binding(
         source_id: span.source,
     });
     Type::Array(Box::new(Type::Error))
+}
+
+/// The component of an instance whose member `assign` changes (`a.n = 1`,
+/// `xs[0].n += 1`), if it changes one.
+fn instance_on_path(
+    ctx: &TypeCheckContext,
+    assign: &HirAssign,
+    scope: &Scope<'_>,
+) -> Option<String> {
+    let mut ty = unwrap_value_type(scope.get(&assign.name)?);
+    for step in &assign.path {
+        let inner = ctx.expand(ty.clone());
+        if let Type::Live(name) = &inner {
+            return Some(name.clone());
+        }
+        ty = match (step, inner) {
+            (flux_hir::HirPlaceStep::Field { name, .. }, Type::Struct { fields, .. }) => {
+                fields.into_iter().find(|(f, _)| f == name)?.1
+            }
+            (flux_hir::HirPlaceStep::Field { name, .. }, Type::Tuple(elems)) => {
+                elems.get(flux_hir::tuple_index(name)?)?.clone()
+            }
+            (flux_hir::HirPlaceStep::Index(_), Type::Array(inner)) => *inner,
+            (flux_hir::HirPlaceStep::Index(_), Type::Map { value, .. }) => *value,
+            _ => return None,
+        };
+    }
+    None
 }

@@ -360,3 +360,26 @@ fn fields_of_generic_instances_keep_their_types() {
         &["expected `[fn() -> O[String]]`, found `[fn() -> O[Int64]]`"],
     );
 }
+
+/// 0.4: a generic call's missing type arguments come from the place it is
+/// in (an annotated `let`, a result, a parameter, a field, an assignment, an
+/// `if` branch); and impl methods take type parameters of their own.
+#[test]
+fn expected_types_and_generic_methods() {
+    prints(
+        "import io { println }\nstruct Bag[T] {\n    items: [T]\n}\nimpl[T] Bag[T] {\n    fn new() -> Self {\n        Bag { items: [] }\n    }\n}\nstruct Cart {\n    names: [String]\n}\nfn empty[T]() -> [T] {\n    []\n}\nfn none[T]() -> Option[T] {\n    None\n}\nfn names() -> [String] {\n    empty()\n}\nfn count(xs: [Int]) -> Int {\n    xs.len()\n}\nfn main() {\n    let mut a: [Int] = empty()\n    a.push(1)\n    let b: Bag[Int] = Bag::new()\n    let c = Cart { names: empty() }\n    let mut list = [1]\n    list = empty()\n    let n = count(empty())\n    let flag = true\n    let o: Option[Int] = if flag { none() } else { Some(3) }\n    println(\"{a} {b.items} {c.names} {list} {n} {names()} {o}\")\n}\n",
+        "[1] [] [] [] 0 [] None\n",
+    );
+    prints(
+        "import io { println }\nstruct Box[T] {\n    value: T\n}\nstruct Point {\n    x: Int,\n    y: Int\n}\nimpl[T] Box[T] {\n    fn map[U](self, f: fn(T) -> U) -> Box[U] {\n        Box { value: f(self.value) }\n    }\n    fn pair[U](self, other: U) -> (T, U) {\n        (self.value, other)\n    }\n}\nimpl Point {\n    fn scaled[N: Ord](self, by: N, f: fn(Int, N) -> Int) -> Point {\n        Point { x: f(self.x, by), y: f(self.y, by) }\n    }\n}\nfn main() {\n    let b = Box { value: 3 }\n    let s = b.map(|n| \"#{n}\")\n    let l = s.map(|t| t.len())\n    let p = Point { x: 1, y: 2 }.scaled(3, |a, k| a * k)\n    let word = \"w\"\n    println(\"{b.value} {s.value} {l.value} {b.pair(word)} {p.x} {p.y}\")\n}\n",
+        "3 #3 2 (3, \"w\") 3 6\n",
+    );
+    rejects(
+        "fn empty[T]() -> [T] {\n    []\n}\nfn main() {\n    let c = empty()\n}\n",
+        &["type arguments for `empty` from its arguments or from where the call is"],
+    );
+    rejects(
+        "struct C {\n    n: Int\n}\nimpl C {\n    fn set[T](mut self, v: T) {\n        self.n = 1\n    }\n}\nfn main() {\n}\n",
+        &["method `set` has type parameters and cannot be `mut self`"],
+    );
+}

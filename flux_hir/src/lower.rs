@@ -14,6 +14,7 @@ mod constfold;
 mod decls;
 mod exprs;
 mod funcs;
+mod live;
 mod modules;
 mod stdlib;
 mod stmts;
@@ -148,7 +149,9 @@ pub(super) fn collect_reassigned_sources(program: &Program) -> HashSet<String> {
             Item::Derived(d) => collector.expr(&d.value, &locals),
             Item::Const(c) => collector.expr(&c.value, &locals),
             Item::If(s) => collector.if_stmt(s, &locals),
-            Item::Import(_)
+            // A component's members are its own (`live::lower_live`).
+            Item::Live(_)
+            | Item::Import(_)
             | Item::TypeAlias(_)
             | Item::Struct(_)
             | Item::Enum(_)
@@ -516,7 +519,11 @@ fn lower_program_inner(
 
     // Pass 1: declare all top-level names (events, functions, bindings).
     for item in &program.items {
-        if let Some(err) = declare_item(item, &mut symbols) {
+        let declared = match item {
+            Item::Live(l) => live::declare_live(l, &l.name.name, &mut symbols, diagnostics),
+            _ => declare_item(item, &mut symbols),
+        };
+        if let Some(err) = declared {
             let (name, span) = item_name_span(item);
             if symbols.imported_names.contains(&name) {
                 diagnostics.push(FluxError::ImportedNameTaken {
@@ -605,11 +612,18 @@ fn lower_program_inner(
     } else {
         let hir = HirProgram {
             items,
+            templates: std::mem::take(&mut symbols.templates),
+            template_members: std::mem::take(&mut symbols.template_members),
+            template_handlers: std::mem::take(&mut symbols.template_handlers),
+            member_events: HashMap::new(),
+            member_reads: HashMap::new(),
+            member_calls: HashSet::new(),
             names,
             enum_variants: symbols.enum_variants.clone(),
             trait_impls,
             type_bounds: symbols.type_bounds.clone(),
             specialized_from: Default::default(),
+            method_own_params: symbols.method_own_params.clone(),
             init_order: Vec::new(),
             generic_fns,
             type_aliases,
@@ -854,6 +868,8 @@ pub(super) fn declare_item(item: &Item, symbols: &mut SymbolTable) -> Option<Sym
             None
         }
         Item::Watch(_) | Item::On(_) | Item::If(_) | Item::Import(_) | Item::TypeAlias(_) => None,
+        // Declared with its diagnostics by `declare_root_item`.
+        Item::Live(_) => None,
     }
 }
 
@@ -871,6 +887,7 @@ fn item_name_span(item: &Item) -> (String, flux_diagnostics::Span) {
     match item {
         Item::Event(e) => (e.name.name.clone(), e.span),
         Item::Fn(f) => (f.name.name.clone(), f.span),
+        Item::Live(l) => (l.name.name.clone(), l.span),
         Item::RFn(f) => (f.name.name.clone(), f.span),
         Item::Const(c) => (c.name.name.clone(), c.span),
         Item::Let(l) => (
@@ -910,6 +927,7 @@ pub(super) fn lower_item(
         Item::Derived(stmt) => lower_derived(stmt, symbols, diagnostics),
         Item::Let(let_stmt) => lower_module_let(let_stmt, symbols, diagnostics, reassigned_sources),
         Item::Fn(decl) => lower_fn(decl, symbols, diagnostics, false).map(HirItem::Fn),
+        Item::Live(decl) => live::lower_live(decl, &decl.name.name, symbols, diagnostics),
         Item::RFn(decl) => lower_rfn(decl, symbols, diagnostics).map(HirItem::Fn),
         Item::Watch(stmt) => lower_watch(stmt, symbols, diagnostics).map(HirItem::Watch),
         Item::On(stmt) => lower_on(stmt, symbols, diagnostics).map(HirItem::On),

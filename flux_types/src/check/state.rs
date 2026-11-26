@@ -122,6 +122,20 @@ pub struct TypeCheckContext {
     /// Declared return type of the function being checked, if it has one;
     /// checks a `return` wherever it appears, including inside match arms.
     pub(crate) fn_return: std::cell::RefCell<Option<Type>>,
+    /// `live fn` components by internal name: each member by the name its
+    /// body gives it, with whether it is `pub`.
+    pub(crate) live: HashMap<String, HashMap<String, (SymbolId, bool)>>,
+    /// The components' constructors, whose (empty) bodies are not checked.
+    pub(crate) live_ctors: std::collections::HashSet<SymbolId>,
+    /// `a.n` reads of an instance's member, by span.
+    pub(crate) member_reads: std::cell::RefCell<HashMap<flux_diagnostics::Span, SymbolId>>,
+    /// `a.f(…)` calls of an instance's function, by span.
+    pub(crate) member_calls: std::cell::RefCell<std::collections::HashSet<flux_diagnostics::Span>>,
+    /// `emit a.Inc(…)`: the instance's event, by the `emit`'s span.
+    pub(crate) member_events: std::cell::RefCell<HashMap<flux_diagnostics::Span, SymbolId>>,
+    /// While a `watch` without a target is checked: it follows the names its
+    /// body reads, which cannot include an instance's member.
+    pub(crate) in_untargeted_watch: std::cell::Cell<bool>,
 }
 
 impl TypeCheckContext {
@@ -132,6 +146,19 @@ impl TypeCheckContext {
             ..Self::default()
         };
 
+        for template in &program.templates {
+            ctx.user_types
+                .insert(template.name.clone(), Type::Live(template.name.clone()));
+            ctx.live_ctors.insert(template.ctor);
+            ctx.live.insert(
+                template.name.clone(),
+                template
+                    .members
+                    .iter()
+                    .map(|(name, id, public)| (name.clone(), (*id, *public)))
+                    .collect(),
+            );
+        }
         for item in &program.items {
             if let HirItem::Fn(f) = item {
                 ctx.defaulted_closure_params.get_mut().extend(
@@ -277,6 +304,38 @@ impl TypeCheckContext {
     pub fn enum_payload(&self, enum_name: &str, variant: &str) -> Option<&Type> {
         self.enum_payloads
             .get(&(enum_name.to_string(), variant.to_string()))
+    }
+
+    /// The member `name` of component `ty` as code outside it sees it: its
+    /// symbol, or an error (no such member, or not `pub`).
+    pub(crate) fn live_member(
+        &self,
+        ty: &str,
+        name: &str,
+        span: flux_diagnostics::Span,
+        diagnostics: &mut flux_diagnostics::DiagnosticBag,
+    ) -> Option<SymbolId> {
+        let shown = flux_value::type_display_name(ty).to_string();
+        let Some(&(id, public)) = self.live.get(ty).and_then(|m| m.get(name)) else {
+            diagnostics.push(flux_diagnostics::FluxError::TypeMismatch {
+                expected: format!("a member of `{shown}`"),
+                found: format!("`{name}`, which `{shown}` does not declare"),
+                span: flux_diagnostics::span_to_miette(span),
+                source_id: span.source,
+            });
+            return None;
+        };
+        if !public {
+            diagnostics.push(flux_diagnostics::FluxError::PrivateField {
+                field: name.to_string(),
+                ty: shown.clone(),
+                help: format!("mark it `pub` in `live fn {shown}` to use it outside"),
+                span: flux_diagnostics::span_to_miette(span),
+                source_id: span.source,
+            });
+            return None;
+        }
+        Some(id)
     }
 
     pub fn user_type(&self, name: &str) -> Option<&Type> {

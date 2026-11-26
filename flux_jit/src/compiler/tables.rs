@@ -51,7 +51,7 @@ fn walk_stmts(strings: &mut HashMap<String, u64>, stmts: &[IrStmt]) {
             IrStmt::Expr { code }
             | IrStmt::Let { expr: code, .. }
             | IrStmt::Assign { expr: code, .. } => walk_code(strings, code),
-            IrStmt::Emit { args, .. } => {
+            IrStmt::Emit { args, .. } | IrStmt::EmitMember { args, .. } => {
                 for code in args {
                     walk_code(strings, code);
                 }

@@ -33,6 +33,9 @@ pub fn resolve_locals(program: &mut CompiledProgram) {
         resolve_stmts(w.prev.as_slice(), &mut w.body, &sources);
     }
     resolve_stmts(&[], &mut program.init_stmts, &sources);
+    for template in &mut program.templates {
+        resolve_stmts(&[], &mut template.init_stmts, &sources);
+    }
     for node in &mut program.nodes {
         let mut slots = Slots::new(&[], &sources);
         slots.collect_code(&node.code);
@@ -93,7 +96,7 @@ impl<'a> Slots<'a> {
                     self.collect_code(expr);
                     self.bind(name);
                 }
-                IrStmt::Emit { args, .. } => {
+                IrStmt::Emit { args, .. } | IrStmt::EmitMember { args, .. } => {
                     for arg in args {
                         self.collect_code(arg);
                     }
@@ -185,7 +188,7 @@ impl<'a> Slots<'a> {
                     self.rewrite_code(expr);
                     *slot = self.slot(name);
                 }
-                IrStmt::Emit { args, .. } => {
+                IrStmt::Emit { args, .. } | IrStmt::EmitMember { args, .. } => {
                     for arg in args {
                         self.rewrite_code(arg);
                     }

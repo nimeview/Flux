@@ -55,6 +55,12 @@ pub struct TypedProgram {
     pub field_calls: std::collections::HashSet<(Option<SymbolId>, flux_diagnostics::Span)>,
     /// The types of locals and parameters, for hover and inlay hints.
     pub local_types: HashMap<SymbolId, Type>,
+    /// `a.n` reads of instance members, by span.
+    pub member_reads: HashMap<flux_diagnostics::Span, SymbolId>,
+    /// `a.f(…)` calls of instance functions, by span.
+    pub member_calls: HashSet<flux_diagnostics::Span>,
+    /// The event of each `emit a.Inc(…)`, by span.
+    pub member_events: HashMap<flux_diagnostics::Span, SymbolId>,
 }
 
 pub fn typecheck_program(
@@ -97,7 +103,12 @@ fn typecheck_with_context(
         diagnostics.push(FluxError::CyclicDependency {
             cycle: cycle
                 .iter()
-                .map(|id| program.names.get(id).map(String::as_str).unwrap_or("?"))
+                .map(|id| {
+                    program
+                        .names
+                        .get(id)
+                        .map_or("?".to_string(), |n| flux_value::binding_display_name(n))
+                })
                 .collect::<Vec<_>>()
                 .join(" -> "),
             span: span_to_miette(span),
@@ -132,6 +143,14 @@ fn typecheck_with_context(
                 BindingKind::Derived => Type::Read(Box::new(inner)),
             },
         );
+    }
+
+    // A component's parameters are fixed values of the declared types.
+    for template in &program.templates {
+        for (id, ty) in &template.params {
+            let ty = resolve_hir_type(ctx, ty, diagnostics).unwrap_or(Type::Error);
+            types.insert(*id, Type::Cell(Box::new(ty)));
+        }
     }
 
     // Register Event/Fn/Struct/Enum types first, in a dedicated pass, so that bindings
@@ -410,7 +429,9 @@ fn typecheck_with_context(
                 ctx.generic_parameters.borrow_mut().clear();
             }
             HirItem::Fn(f)
-                if f.type_params.is_empty() && ctx.capturing_closure(f.name).is_none() =>
+                if f.type_params.is_empty()
+                    && ctx.capturing_closure(f.name).is_none()
+                    && !ctx.live_ctors.contains(&f.name) =>
             {
                 ctx.current_function.set(Some(f.name));
                 let mut local = Scope::new(&types);
@@ -491,6 +512,7 @@ fn typecheck_with_context(
                     }
                 }
                 let mut immutable_locals = HashSet::new();
+                ctx.in_untargeted_watch.set(w.target.is_none());
                 check_block(
                     ctx,
                     &w.body,
@@ -502,6 +524,7 @@ fn typecheck_with_context(
                     diagnostics,
                     &mut immutable_locals,
                 );
+                ctx.in_untargeted_watch.set(false);
             }
             HirItem::On(o) => {
                 match types.get(&o.event) {
@@ -601,6 +624,9 @@ fn typecheck_with_context(
             bit_not_sites: ctx.bit_not_sites.borrow().clone(),
             field_calls: ctx.field_calls.borrow().clone(),
             local_types,
+            member_reads: ctx.member_reads.borrow().clone(),
+            member_calls: ctx.member_calls.borrow().clone(),
+            member_events: ctx.member_events.borrow().clone(),
         })
     }
 }

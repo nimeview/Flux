@@ -71,6 +71,12 @@ fn type_decls(program: &Program) -> Vec<TypeDecl> {
                 public: t.pub_,
                 variants: Vec::new(),
             }),
+            // A component's instances have its name as their type.
+            Item::Live(l) => Some(TypeDecl {
+                name: l.name.name.clone(),
+                public: l.pub_,
+                variants: Vec::new(),
+            }),
             _ => None,
         })
         .collect()
@@ -374,6 +380,7 @@ impl Rewrite<'_> {
                 for f in &mut imp.methods {
                     let outer = self.generics.len();
                     self.type_params(&f.type_params, f.name.span);
+                    self.bounds(&mut f.type_bounds);
                     self.fn_parts(&mut f.params, &mut f.ret, &mut f.body);
                     self.generics.truncate(outer);
                 }
@@ -411,6 +418,14 @@ impl Rewrite<'_> {
             Item::Watch(w) => self.block(&mut w.body),
             Item::On(o) => self.block(&mut o.body),
             Item::If(i) => self.if_stmt(i),
+            // The name stays: it is the constructor's, which a module
+            // renames like its other functions (to the type's internal name).
+            Item::Live(l) => {
+                l.params.iter_mut().for_each(|p| self.ty(&mut p.ty));
+                for member in &mut l.items {
+                    self.item(member);
+                }
+            }
         }
     }
 

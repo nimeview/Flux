@@ -64,6 +64,9 @@ pub enum Type {
         params: Vec<Type>,
         ret: Box<Type>,
     },
+    /// An instance of the `live fn` component with this internal name: a
+    /// handle, so copies are the same instance and `==` compares identity.
+    Live(String),
     Error,
 }
 
@@ -177,6 +180,13 @@ impl Type {
                     .collect::<Vec<_>>()
                     .join(", ");
                 format!("fn({ps}) -> {}", ret.render(internal))
+            }
+            Type::Live(name) => {
+                if internal {
+                    name.clone()
+                } else {
+                    flux_value::type_display_name(name).to_string()
+                }
             }
             Type::Error => "<error>".into(),
             Type::Empty => "_".into(),

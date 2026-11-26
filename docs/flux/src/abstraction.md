@@ -113,6 +113,30 @@ fn main() {
 6 a!
 ```
 
+A call's arguments decide its type arguments. When they leave one unknown, it comes from the type the call's place expects:
+
+```flux
+import io { println }
+
+fn empty[T]() -> [T] {
+    []
+}
+
+fn main() {
+    let mut xs: [Int] = empty()
+    xs.push(1)
+    println("{xs}")
+}
+```
+
+```output
+[1]
+```
+
+Here the annotation supplies `T` as `Int`. A function's declared return type also supplies the expected type, for a tail expression or `return`. So does a parameter of known type (`count(empty())` where `fn count(xs: [Int])`), a struct literal field (`Cart { names: empty() }` where `names: [String]`), or an assignment to a variable of known type (`list = empty()`). The expected type also reaches branches of an `if` or `match`, as in `let o: Option[Int] = if flag { none() } else { Some(3) }`. Type functions of generic types work the same way: `let b: Bag[Int] = Bag::new()`.
+
+Flux has no explicit type arguments at call sites; `f::[T]()` is not supported. If nothing fixes a type argument, as in `let c = empty()`, compilation fails with a type mismatch: expected "type arguments for `empty` from its arguments or from where the call is", found "type arguments that nothing fixes". The help is "give the call's place a type, as in `let xs: [Int] = empty()`, or pass arguments of known types".
+
 Structs and enums take type parameters too. The values decide the type arguments, so you never write them when building a value; where the values leave one open (`Leaf` has no `T`), the type comes from context, such as an annotation or a return type:
 
 ```flux
@@ -296,3 +320,36 @@ fn main() {
 ```
 
 `largest([Point { x: 1, y: 2 }])` is an error that says `Point` does not have `Ord`. Bounds are optional: without one, `T` can still be compared or have methods called, and a mistake shows up inside the function for the type that caused it. String interpolation shows a value's structure; call `to_string()` for the `Display` text.
+
+## Generic methods
+
+A method can declare type parameters of its own after its name, with optional bounds, like a function. Here `T` belongs to the impl, and `U` belongs to `map`:
+
+```flux
+import io { println }
+
+struct Box[T] {
+    value: T
+}
+
+impl[T] Box[T] {
+    fn map[U](self, f: fn(T) -> U) -> Box[U] {
+        Box { value: f(self.value) }
+    }
+}
+
+fn main() {
+    let b = Box { value: 3 }
+    let s = b.map(|n| "#{n}")
+    let l = s.map(|t| t.len())
+    println("{b.value} {s.value} {l.value}")
+}
+```
+
+```output
+3 #3 2
+```
+
+The method's type arguments are inferred at each call from the arguments and the expected type. Each distinct instantiation is specialized. A method in a non-generic impl can have its own type parameters too: `fn scaled[N: Ord](self, by: N, f: fn(Int, N) -> Int) -> Point` inside `impl Point`.
+
+A method with its own type parameters cannot take `mut self`. For a method named `set`, the error is "method `set` has type parameters and cannot be `mut self`".

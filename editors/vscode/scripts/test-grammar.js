@@ -72,6 +72,8 @@ function files(dir, out = []) {
         ["track fn scale(x: Int) { x }", "track", "storage.modifier.kind"],
         ["act fn pay(n: Int) { }", "act", "storage.modifier.kind"],
         ["act fn pay(n: Int) { }", "pay", "entity.name.function"],
+        ["live fn Counter(start: Int) { }", "live", "storage.modifier.kind"],
+        ["live fn Counter(start: Int) { }", "Counter", "entity.name.function"],
         ["struct Point { x: Int }", "Point", "entity.name.type"],
         ["struct Account { pub owner: String }", "pub", "storage.modifier"],
         ["enum Light { Red, Green(Int) }", "enum", "storage.type"],

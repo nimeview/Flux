@@ -186,7 +186,17 @@ pub(super) fn parse_stmt(
         }
         Rule::emit_stmt => {
             let mut inner = pair.into_inner();
-            let event = parse_ident(source_id, inner.next().expect("emit event"));
+            let head = inner.next().expect("emit event");
+            let (target, event) = if head.as_rule() == Rule::emit_member {
+                let mut parts: Vec<Ident> = head
+                    .into_inner()
+                    .map(|p| parse_ident(source_id, p))
+                    .collect();
+                let event = parts.pop().expect("event name");
+                (parts, event)
+            } else {
+                (Vec::new(), parse_ident(source_id, head))
+            };
             let args = inner
                 .next()
                 .map(|emit_args| {
@@ -197,7 +207,12 @@ pub(super) fn parse_stmt(
                         .unwrap_or_default()
                 })
                 .unwrap_or_default();
-            Some(Stmt::Emit(EmitStmt { event, args, span }))
+            Some(Stmt::Emit(EmitStmt {
+                target,
+                event,
+                args,
+                span,
+            }))
         }
         Rule::expr_stmt => {
             let expr = parse_expr(source_id, pair.into_inner().next().expect("expr"));

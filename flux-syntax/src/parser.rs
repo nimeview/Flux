@@ -24,7 +24,8 @@ use crate::ast::*;
 
 use decls::{
     parse_const_binding, parse_derived_binding, parse_enum, parse_event, parse_fn, parse_impl,
-    parse_import, parse_let_binding, parse_rfn, parse_struct, parse_trait, parse_type_alias,
+    parse_import, parse_let_binding, parse_live, parse_rfn, parse_struct, parse_trait,
+    parse_type_alias,
 };
 use stmts::{parse_if_stmt, parse_on, parse_watch};
 
@@ -257,7 +258,10 @@ fn invalid_integer_literal(
         .find_map(|child| invalid_integer_literal(source_id, child, allow_child_i64_min))
 }
 
-fn parse_item(source_id: SourceId, pair: pest::iterators::Pair<'_, Rule>) -> Option<Item> {
+pub(super) fn parse_item(
+    source_id: SourceId,
+    pair: pest::iterators::Pair<'_, Rule>,
+) -> Option<Item> {
     let span = span_of(source_id, &pair);
     let inner = match pair.as_rule() {
         Rule::item => pair.into_inner().next()?,
@@ -272,6 +276,7 @@ fn parse_item(source_id: SourceId, pair: pest::iterators::Pair<'_, Rule>) -> Opt
         Rule::impl_decl => Some(Item::Impl(parse_impl(source_id, inner, span))),
         Rule::event_decl => Some(Item::Event(parse_event(source_id, inner, span))),
         Rule::fn_decl => Some(Item::Fn(parse_fn(source_id, inner, span))),
+        Rule::live_decl => Some(Item::Live(parse_live(source_id, inner, span))),
         Rule::rfn_decl => Some(Item::RFn(parse_rfn(source_id, inner, span))),
         Rule::watch_stmt => Some(Item::Watch(parse_watch(source_id, inner, span))),
         Rule::on_stmt => Some(Item::On(parse_on(source_id, inner, span))),

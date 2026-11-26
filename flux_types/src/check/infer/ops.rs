@@ -31,6 +31,7 @@ fn equatable(ty: &Type) -> bool {
         | Type::Bytes
         | Type::Unit
         | Type::Empty
+        | Type::Live(_)
         | Type::Var(_) => true,
         Type::Array(inner) | Type::Option(inner) => equatable(&inner),
         Type::Result { ok, err }

@@ -116,6 +116,17 @@ fn check(e: &HirExpr, hir: &HirProgram, diagnostics: &mut DiagnosticBag) {
     let HirExpr::Ident { symbol, .. } = callee.as_ref() else {
         return;
     };
+    // An instance nobody holds is dropped at once, with its handlers.
+    if let Some(t) = hir.templates.iter().find(|t| t.ctor == *symbol) {
+        let shown = crate::display_path(&t.name);
+        diagnostics.push_warning(FluxWarning::UnusedResult {
+            name: shown.clone(),
+            help: format!("an instance lives while something holds it: write `let x = {shown}(…)`"),
+            span: span_to_miette(*span),
+            source_id: span.source,
+        });
+        return;
+    }
     let Some(name) = collection_fn(*symbol, hir) else {
         return;
     };

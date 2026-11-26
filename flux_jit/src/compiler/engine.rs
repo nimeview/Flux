@@ -916,7 +916,7 @@ fn loads_in_stmts(stmts: &[IrStmt], set: &mut HashSet<String>) {
                 loads_in_code(expr, set);
             }
             IrStmt::Expr { code } => loads_in_code(code, set),
-            IrStmt::Emit { args, .. } => {
+            IrStmt::Emit { args, .. } | IrStmt::EmitMember { args, .. } => {
                 for code in args {
                     loads_in_code(code, set);
                 }
@@ -994,7 +994,9 @@ fn stmts_assign_place(stmts: &[IrStmt]) -> bool {
         IrStmt::Assign { expr, .. } | IrStmt::Let { expr, .. } | IrStmt::Expr { code: expr } => {
             code_has(expr)
         }
-        IrStmt::Emit { args, .. } => args.iter().any(|code| code_has(code)),
+        IrStmt::Emit { args, .. } | IrStmt::EmitMember { args, .. } => {
+            args.iter().any(|code| code_has(code))
+        }
         IrStmt::Return { expr } => expr.as_ref().is_some_and(|code| code_has(code)),
         IrStmt::If {
             cond,
@@ -1014,7 +1016,7 @@ fn stmts_assign_place(stmts: &[IrStmt]) -> bool {
 /// Whether `stmts` contain an `emit` (at any depth).
 fn stmts_emit(stmts: &[IrStmt]) -> bool {
     stmts.iter().any(|s| match s {
-        IrStmt::Emit { .. } => true,
+        IrStmt::Emit { .. } | IrStmt::EmitMember { .. } => true,
         IrStmt::If {
             then_body,
             else_body,
@@ -1075,7 +1077,9 @@ fn stmts_assign_node(stmts: &[IrStmt], nodes: &HashMap<String, u32>) -> bool {
                     .any(|code| code_assigns(code, nodes))
         }
         IrStmt::Let { expr, .. } | IrStmt::Expr { code: expr } => code_assigns(expr, nodes),
-        IrStmt::Emit { args, .. } => args.iter().any(|code| code_assigns(code, nodes)),
+        IrStmt::Emit { args, .. } | IrStmt::EmitMember { args, .. } => {
+            args.iter().any(|code| code_assigns(code, nodes))
+        }
         IrStmt::Return { expr: arg } => arg.as_ref().is_some_and(|code| code_assigns(code, nodes)),
         IrStmt::If {
             cond,
@@ -1131,7 +1135,9 @@ fn stmts_call_any(stmts: &[IrStmt], names: &HashSet<&str>) -> bool {
                     .filter_map(|step| step.code())
                     .any(|code| code_calls(code, names))
         }
-        IrStmt::Emit { args, .. } => args.iter().any(|code| code_calls(code, names)),
+        IrStmt::Emit { args, .. } | IrStmt::EmitMember { args, .. } => {
+            args.iter().any(|code| code_calls(code, names))
+        }
         IrStmt::Return { expr: arg } => arg.as_ref().is_some_and(|code| code_calls(code, names)),
         IrStmt::If {
             cond,

@@ -365,6 +365,45 @@ pub(crate) fn infer_expr(
         HirExpr::Call { callee, args, span } => {
             if let HirExpr::Field { base, field, .. } = callee.as_ref() {
                 let base_ty = infer_expr(ctx, base, types, names, source, diagnostics)?;
+                // `a.reset()`: a function of the instance's component.
+                if let Type::Live(ty) = unwrap_value_type(&base_ty) {
+                    let id = ctx.live_member(&ty, field, *span, diagnostics)?;
+                    let Some(Type::Func { params, ret }) = types.get(&id).cloned() else {
+                        diagnostics.push(FluxError::TypeMismatch {
+                            expected: format!("a function of `{}`", base_ty.display()),
+                            found: format!("`{field}`, which is not a function"),
+                            span: span_to_miette(*span),
+                            source_id: span.source,
+                        });
+                        return Some(Type::Error);
+                    };
+                    if params.len() != args.len() {
+                        diagnostics.push(FluxError::TypeMismatch {
+                            expected: format!("{} arguments", params.len()),
+                            found: format!("{} arguments", args.len()),
+                            span: span_to_miette(*span),
+                            source_id: span.source,
+                        });
+                    }
+                    for (p, a) in params.iter().zip(args.iter()) {
+                        let got =
+                            infer_expr_expected(ctx, a, Some(p), types, names, source, diagnostics)
+                                .unwrap_or(Type::Error);
+                        if !p.is_error() && !got.is_error() && !types_compatible(p, &got) {
+                            diagnostics.push(FluxError::TypeMismatch {
+                                expected: p.display(),
+                                found: got.display(),
+                                span: span_to_miette(a.span()),
+                                source_id: a.span().source,
+                            });
+                        }
+                    }
+                    ctx.method_calls
+                        .borrow_mut()
+                        .insert((ctx.current_function.get(), *span), id);
+                    ctx.member_calls.borrow_mut().insert(*span);
+                    return Some(*ret);
+                }
                 let type_tag = trait_dispatch_tag(&base_ty);
                 // A generic instance's methods are specializations, found by
                 // the instance (`Pair[Int]`); its type's is the template.
@@ -1144,6 +1183,38 @@ pub(crate) fn infer_expr(
             let inner = ctx.expand(unwrap_value_type(&base_ty));
             if inner.is_error() {
                 return Some(Type::Error);
+            }
+            // `a.n`: a member of an instance, which must be a value.
+            if let Type::Live(ref ty) = inner {
+                let id = ctx.live_member(ty, field, *span, diagnostics)?;
+                let member = types.get(&id).cloned().unwrap_or(Type::Error);
+                if matches!(member, Type::Func { .. } | Type::Event(_)) {
+                    let what = if matches!(member, Type::Event(_)) {
+                        format!("`emit x.{field}(…)`")
+                    } else {
+                        format!("a call, `x.{field}(…)`")
+                    };
+                    diagnostics.push(FluxError::TypeMismatch {
+                        expected: what,
+                        found: format!("`{field}` read as a value"),
+                        span: span_to_miette(*span),
+                        source_id: span.source,
+                    });
+                    return Some(Type::Error);
+                }
+                if ctx.in_untargeted_watch.get() {
+                    diagnostics.push(FluxError::TypeMismatchWithHelp {
+                        expected: "a name the watch can follow".into(),
+                        found: format!("`.{field}` of an instance, in a `watch` without a target"),
+                        span: span_to_miette(*span),
+                        source_id: span.source,
+                        help: format!(
+                            "give it a name and follow that: `derived {field} = x.{field}`, then `watch {field} {{ … }}`"
+                        ),
+                    });
+                }
+                ctx.member_reads.borrow_mut().insert(*span, id);
+                return Some(unwrap_value_type(&member));
             }
             if let Type::Struct {
                 ref name,

@@ -37,6 +37,7 @@ pub fn value_to_tagged(v: &Value) -> TaggedVal {
         | Value::Option(_)
         | Value::Result(_)
         | Value::Map(_)
+        | Value::Instance(_)
         | Value::Bytes(_) => TaggedVal::UNIT,
     }
 }
@@ -61,6 +62,7 @@ pub fn is_tag_representable(v: &Value) -> bool {
         | Value::Option(_)
         | Value::Result(_)
         | Value::Map(_)
+        | Value::Instance(_)
         | Value::Bytes(_) => false,
     }
 }

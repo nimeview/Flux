@@ -66,7 +66,7 @@ pub(crate) fn lower_stmts(
                 last = (unit_tag, unit_data);
             }
             // Ineligible: the VM runs handlers at the `emit` (see `numeric.rs`).
-            IrStmt::Emit { .. } => return None,
+            IrStmt::Emit { .. } | IrStmt::EmitMember { .. } => return None,
             IrStmt::If {
                 cond,
                 then_body,

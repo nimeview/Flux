@@ -114,7 +114,7 @@ pub(super) fn tree_depth_exceeds(program: &Program) -> Option<Span> {
         If(&'a IfStmt),
     }
     let mut work: Vec<(Node<'_>, usize)> = Vec::new();
-    for item in &program.items {
+    for item in program.all_items() {
         match item {
             Item::Fn(f) => work.push((Node::Block(&f.body), 1)),
             Item::RFn(f) => work.push((Node::Block(&f.body), 1)),
@@ -134,6 +134,7 @@ pub(super) fn tree_depth_exceeds(program: &Program) -> Option<Span> {
             | Item::Struct(_)
             | Item::Enum(_)
             | Item::Trait(_)
+            | Item::Live(_)
             | Item::Event(_) => {}
         }
     }

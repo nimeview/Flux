@@ -682,6 +682,7 @@ dependencies = [
  "flux_hir",
  "flux_std",
  "flux_syntax",
+ "flux_value",
  "serde",
 ]
 

@@ -143,10 +143,10 @@ pub(super) fn lower_impl_fns(
             );
             continue;
         }
-        if !method.type_params.is_empty() {
+        if !method.type_params.is_empty() && method.mut_self {
             fail(
                 format!(
-                    "method `{}` cannot have type parameters yet",
+                    "method `{}` has type parameters and cannot be `mut self`",
                     method.name.name
                 ),
                 diagnostics,
@@ -154,9 +154,12 @@ pub(super) fn lower_impl_fns(
             continue;
         }
         let mut m = method.clone();
-        // A generic impl's methods are generic functions over its parameters.
+        // A generic impl's methods are generic functions over its parameters,
+        // then the method's own (`fn map[U](self, …)`).
         m.type_params = decl.type_params.clone();
+        m.type_params.extend(method.type_params.iter().cloned());
         m.type_bounds = decl.type_bounds.clone();
+        m.type_bounds.extend(method.type_bounds.iter().cloned());
         // `Self` in the signature is the type the impl is for.
         for p in &mut m.params {
             p.ty = subst_self(&p.ty, &decl.target_type);
@@ -247,6 +250,12 @@ pub(super) fn lower_impl_fns(
         if let Some(f) = lowered {
             if method.mut_self && takes_self(method) {
                 symbols.mut_methods.insert(f.name);
+            }
+            // Its own type parameters make each call its own specialization.
+            if !method.type_params.is_empty() {
+                symbols
+                    .method_own_params
+                    .insert(f.name, method.type_params.len());
             }
             // A method added to a library type is seen only where its file is.
             if decl.trait_name.is_none() && is_library_type(&target_name) && has_receiver(method) {
@@ -885,15 +894,20 @@ pub(super) fn lower_binding(
 ) -> Option<HirBinding> {
     let sym_id = symbols.lookup(&name.name)?.id;
     let mut reads_reactive = false;
-    let mut lowered = lower_expr(
+    let made = std::mem::replace(&mut symbols.makes_instance, false);
+    let lowered = lower_expr(
         value,
         symbols,
         ScopeKind::Module,
         diagnostics,
         &mut reads_reactive,
-    )?;
+    );
+    // A `let` that makes an instance runs once, when the module starts,
+    // reading what it reads then: it is not a derived value.
+    let makes_instance = std::mem::replace(&mut symbols.makes_instance, made);
+    let mut lowered = lowered?;
 
-    let kind = if force_derived || (!mutable && reads_reactive) {
+    let kind = if force_derived || (!mutable && reads_reactive && !makes_instance) {
         BindingKind::Derived
     } else {
         if let Some(folded) = fold_const_hir_expr(&lowered) {

@@ -65,7 +65,16 @@ pub(super) fn declare_module_items(
                     let Some(name) = item_export_name(item) else {
                         continue;
                     };
-                    if let Some(err) = declare_item_renamed(item, &mangled(index, &name), symbols) {
+                    let declared = match item {
+                        Item::Live(l) => super::live::declare_live(
+                            l,
+                            &mangled(index, &name),
+                            symbols,
+                            diagnostics,
+                        ),
+                        _ => declare_item_renamed(item, &mangled(index, &name), symbols),
+                    };
+                    if let Some(err) = declared {
                         push_duplicate(diagnostics, item, err);
                     }
                 }
@@ -238,9 +247,10 @@ fn pub_items(program: &Program) -> Vec<&Item> {
         .collect()
 }
 
-fn item_is_pub(item: &Item) -> bool {
+pub(super) fn item_is_pub(item: &Item) -> bool {
     match item {
         Item::Fn(f) => f.pub_,
+        Item::Live(l) => l.pub_,
         Item::RFn(f) => f.pub_,
         Item::Struct(s) => s.pub_,
         Item::Enum(e) => e.pub_,
@@ -253,9 +263,10 @@ fn item_is_pub(item: &Item) -> bool {
     }
 }
 
-fn item_export_name(item: &Item) -> Option<String> {
+pub(super) fn item_export_name(item: &Item) -> Option<String> {
     match item {
         Item::Fn(f) => Some(f.name.name.clone()),
+        Item::Live(l) => Some(l.name.name.clone()),
         Item::RFn(f) => Some(f.name.name.clone()),
         Item::Struct(s) => Some(s.name.name.clone()),
         Item::Enum(e) => Some(e.name.name.clone()),
@@ -268,7 +279,7 @@ fn item_export_name(item: &Item) -> Option<String> {
     }
 }
 
-fn declare_item_renamed(
+pub(super) fn declare_item_renamed(
     item: &Item,
     mangled: &str,
     symbols: &mut SymbolTable,
@@ -321,7 +332,7 @@ fn declare_item_renamed(
     }
 }
 
-fn lower_item_renamed(
+pub(super) fn lower_item_renamed(
     item: &Item,
     mangled: &str,
     symbols: &mut SymbolTable,
@@ -379,6 +390,7 @@ fn lower_item_renamed(
             super::decls::lower_const_binding(&renamed, symbols, diagnostics).map(HirItem::Binding)
         }
         Item::Event(decl) => super::decls::lower_event(decl, symbols, diagnostics),
+        Item::Live(decl) => super::live::lower_live(decl, mangled, symbols, diagnostics),
         Item::Impl(_) | Item::Watch(_) | Item::On(_) | Item::If(_) | Item::Import(_) => None,
         Item::TypeAlias(_) | Item::Struct(_) | Item::Enum(_) | Item::Trait(_) => None,
     }

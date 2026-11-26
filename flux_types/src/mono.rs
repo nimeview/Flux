@@ -68,6 +68,7 @@ pub fn monomorphize_program(
             };
             let symbol_types = collect_symbol_types(program);
             let calls = collect_all_call_sites(program, base_name);
+            let expected = expected_types(program, &symbol_types);
 
             for (args, span) in calls {
                 if args.len() != template.fn_item.params.len() {
@@ -88,16 +89,19 @@ pub fn monomorphize_program(
                     program,
                     _source,
                     &mut call_diagnostics,
+                    expected.get(&span),
                 );
                 let Some(substitutions) = inferred else {
                     pending.extend(call_diagnostics);
-                    pending.push(FluxError::TypeMismatch {
+                    pending.push(FluxError::TypeMismatchWithHelp {
                         expected: format!(
-                            "all generic parameters of `{base_name}` to be inferable from its parameters"
+                            "type arguments for `{}` from its arguments or from where the call is",
+                            flux_hir::display_path(base_name)
                         ),
-                        found: "generic type arguments could not be unified".into(),
+                        found: "type arguments that nothing fixes".into(),
                         span: span_to_miette(span),
                         source_id: span.source,
+                        help: "give the call's place a type, as in `let xs: [Int] = empty()`, or pass arguments of known types".into(),
                     });
                     continue;
                 };
@@ -136,7 +140,9 @@ pub fn monomorphize_program(
                     Specialized::Unmet => continue,
                     Specialized::Limit => return,
                 };
+                REWRITE_AT.with(|at| at.set(Some(span)));
                 rewrite_matching_calls(program, base_name, &inst_name, &concrete, &symbol_types);
+                REWRITE_AT.with(|at| at.set(None));
             }
         }
 
@@ -323,6 +329,213 @@ fn bounds_hold(
     ok
 }
 
+/// The type each call's place expects, by the call's span: an annotated
+/// `let` or binding, a function's result (its last value and `return`), a
+/// parameter of a known type, a struct field, an assignment to a typed
+/// variable, and the branches of an `if` or `match` in such a place.
+fn expected_types(
+    program: &HirProgram,
+    symbols: &HashMap<SymbolId, Type>,
+) -> HashMap<flux_diagnostics::Span, Type> {
+    let mut walk = ExpectedWalk {
+        program,
+        symbols,
+        out: HashMap::new(),
+        ret: None,
+    };
+    for item in &program.items {
+        match item {
+            HirItem::Fn(f) if f.type_params.is_empty() => {
+                walk.ret = f.ret.as_ref().and_then(|t| walk.concrete(t));
+                let ret = walk.ret.clone();
+                walk.block(&f.body, ret);
+            }
+            HirItem::Binding(b) => {
+                walk.ret = None;
+                let ty = b.ty.as_ref().and_then(|t| walk.concrete(t));
+                walk.expr(&b.value, ty);
+            }
+            _ => {}
+        }
+    }
+    walk.out
+}
+
+struct ExpectedWalk<'a> {
+    program: &'a HirProgram,
+    symbols: &'a HashMap<SymbolId, Type>,
+    out: HashMap<flux_diagnostics::Span, Type>,
+    /// The enclosing function's declared result.
+    ret: Option<Type>,
+}
+
+impl ExpectedWalk<'_> {
+    /// `ty` as a type, if it names no type parameter.
+    fn concrete(&self, ty: &HirType) -> Option<Type> {
+        let t = hir_type_to_mono_type(ty, self.program)?;
+        (!mentions_var(&t)).then_some(t)
+    }
+
+    /// `tail`: what the block's last value is expected to be.
+    fn block(&mut self, block: &flux_hir::HirBlock, tail: Option<Type>) {
+        let last = block.stmts.len().saturating_sub(1);
+        for (i, stmt) in block.stmts.iter().enumerate() {
+            let at_end = i == last;
+            match stmt {
+                HirStmt::Let(l) => {
+                    let ty = l.ty.as_ref().and_then(|t| self.concrete(t));
+                    self.expr(&l.value, ty);
+                }
+                HirStmt::Assign(a) => {
+                    let ty = if a.path.is_empty() {
+                        self.symbols.get(&a.name).map(|t| match t {
+                            Type::Cell(inner) | Type::Read(inner) => (**inner).clone(),
+                            other => other.clone(),
+                        })
+                    } else {
+                        None
+                    };
+                    self.expr(&a.value, ty);
+                }
+                HirStmt::Return(r) => {
+                    if let Some(v) = &r.value {
+                        self.expr(v, self.ret.clone());
+                    }
+                }
+                HirStmt::Expr(e) => self.expr(e, if at_end { tail.clone() } else { None }),
+                HirStmt::If(i) => self.if_stmt(i, if at_end { tail.clone() } else { None }),
+                HirStmt::While(w) => {
+                    self.expr(&w.cond, None);
+                    self.block(&w.body, None);
+                }
+                HirStmt::For(f) => {
+                    self.expr(&f.iter, None);
+                    self.block(&f.body, None);
+                }
+                _ => {}
+            }
+        }
+    }
+
+    fn if_stmt(&mut self, i: &flux_hir::HirIf, tail: Option<Type>) {
+        self.expr(&i.cond, None);
+        self.block(&i.then_branch, tail.clone());
+        match &i.else_branch {
+            Some(flux_hir::HirElse::If(inner)) => self.if_stmt(inner, tail),
+            Some(flux_hir::HirElse::Block(b)) => self.block(b, tail),
+            None => {}
+        }
+    }
+
+    fn expr(&mut self, expr: &HirExpr, expected: Option<Type>) {
+        match expr {
+            HirExpr::Call { callee, args, span } => {
+                if let Some(t) = expected {
+                    self.out.insert(*span, t);
+                }
+                // A non-generic function's parameters say what its
+                // arguments should be.
+                let params = match callee.as_ref() {
+                    HirExpr::Ident { symbol, .. } => {
+                        self.program.items.iter().find_map(|item| match item {
+                            HirItem::Fn(f) if f.name == *symbol && f.type_params.is_empty() => {
+                                Some(f.params.iter().map(|p| self.concrete(&p.ty)).collect())
+                            }
+                            _ => None,
+                        })
+                    }
+                    _ => None,
+                };
+                let params: Vec<Option<Type>> = params.unwrap_or_default();
+                if !matches!(callee.as_ref(), HirExpr::Ident { .. }) {
+                    self.expr(callee, None);
+                }
+                for (i, arg) in args.iter().enumerate() {
+                    self.expr(arg, params.get(i).cloned().flatten());
+                }
+            }
+            HirExpr::If {
+                cond,
+                then_expr,
+                else_expr,
+                ..
+            } => {
+                self.expr(cond, None);
+                self.expr(then_expr, expected.clone());
+                self.expr(else_expr, expected);
+            }
+            HirExpr::Match {
+                scrutinee, arms, ..
+            } => {
+                self.expr(scrutinee, None);
+                for arm in arms {
+                    if let Some(guard) = &arm.guard {
+                        self.expr(guard, None);
+                    }
+                    self.block(&arm.body, None);
+                    self.expr(&arm.expr, expected.clone());
+                }
+            }
+            HirExpr::StructLit { name, fields, .. } => {
+                let declared = match resolve_type_name(name, self.program) {
+                    Some(Type::Struct { fields, .. }) => fields,
+                    _ => Vec::new(),
+                };
+                for (field, value) in fields {
+                    let ty = declared
+                        .iter()
+                        .find(|(n, _)| n == field)
+                        .map(|(_, t)| t.clone())
+                        .filter(|t| !mentions_var(t));
+                    self.expr(value, ty);
+                }
+            }
+            HirExpr::Array { elems, .. } => {
+                let elem = match expected {
+                    Some(Type::Array(e)) => Some(*e),
+                    _ => None,
+                };
+                for e in elems {
+                    self.expr(e, elem.clone());
+                }
+            }
+            HirExpr::Binary { left, right, .. }
+            | HirExpr::Index {
+                base: left,
+                index: right,
+                ..
+            } => {
+                self.expr(left, None);
+                self.expr(right, None);
+            }
+            HirExpr::Unary { expr: inner, .. }
+            | HirExpr::Field { base: inner, .. }
+            | HirExpr::Snap { expr: inner, .. }
+            | HirExpr::Cast { expr: inner, .. }
+            | HirExpr::ToText { expr: inner, .. }
+            | HirExpr::Try { expr: inner, .. } => self.expr(inner, None),
+            HirExpr::EnumVariant {
+                payload: Some(p), ..
+            } => self.expr(p, None),
+            _ => {}
+        }
+    }
+}
+
+/// Whether `ty` mentions a type parameter.
+fn mentions_var(ty: &Type) -> bool {
+    match ty {
+        Type::Var(_) => true,
+        Type::Array(t) | Type::Option(t) | Type::Cell(t) | Type::Read(t) => mentions_var(t),
+        Type::Result { ok, err } => mentions_var(ok) || mentions_var(err),
+        Type::Map { key, value } => mentions_var(key) || mentions_var(value),
+        Type::Tuple(elems) => elems.iter().any(mentions_var),
+        Type::Struct { args, .. } | Type::Enum { args, .. } => args.iter().any(mentions_var),
+        Type::Func { params, ret } => params.iter().any(mentions_var) || mentions_var(ret),
+        _ => false,
+    }
+}
+
 /// A call `base.method(args)`, to a method a generic impl may define.
 struct MethodSite {
     base: HirExpr,
@@ -483,13 +696,6 @@ fn specialize_methods(
         if crate::check::mentions_empty(&receiver) {
             continue;
         }
-        let Some(tag) = crate::generic::instance_tag(&receiver) else {
-            continue;
-        };
-        let key = (tag.clone(), site.method.clone());
-        if program.trait_impls.contains_key(&key) {
-            continue;
-        }
         let base_tag = crate::check::trait_dispatch_tag(&receiver);
         let Some(template_symbol) = program
             .trait_impls
@@ -497,6 +703,22 @@ fn specialize_methods(
             .copied()
         else {
             continue;
+        };
+        // A method with type parameters of its own (`fn map[U](self, …)`)
+        // is specialized for each call, which then calls it directly; one
+        // that has only its type's is found by the instance (`Pair[Int]`).
+        let own = program.method_own_params.contains_key(&template_symbol);
+        let key = if own {
+            None
+        } else {
+            let Some(tag) = crate::generic::instance_tag(&receiver) else {
+                continue;
+            };
+            let key = (tag, site.method.clone());
+            if program.trait_impls.contains_key(&key) {
+                continue;
+            }
+            Some(key)
         };
         let Some(base_name) = program.names.get(&template_symbol).cloned() else {
             continue;
@@ -507,6 +729,7 @@ fn specialize_methods(
         let mut all_args = vec![site.base.clone()];
         all_args.extend(site.args.iter().cloned());
         let mut scratch = DiagnosticBag::new();
+        let expected = expected_types(program, &symbol_types);
         let Some(substitutions) = infer_generic_substitutions(
             &template.fn_item,
             &template.type_params,
@@ -515,6 +738,7 @@ fn specialize_methods(
             program,
             source,
             &mut scratch,
+            expected.get(&site.span),
         ) else {
             continue;
         };
@@ -538,13 +762,154 @@ fn specialize_methods(
                 ..
             } => {
                 created |= new;
-                program.trait_impls.insert(key, symbol);
+                match key {
+                    Some(key) => {
+                        program.trait_impls.insert(key, symbol);
+                    }
+                    None => created |= rewrite_method_call(program, site.span, symbol),
+                }
             }
             Specialized::Unmet => {}
             Specialized::Limit => return None,
         }
     }
     Some(created)
+}
+
+/// The call `recv.m(args)` at `at` as `to(recv, args)`. Whether it found it.
+fn rewrite_method_call(program: &mut HirProgram, at: flux_diagnostics::Span, to: SymbolId) -> bool {
+    let mut done = false;
+    let mut visit = |e: &mut HirExpr| {
+        if let HirExpr::Call { callee, args, span } = e {
+            if *span == at {
+                if let HirExpr::Field { base, .. } = callee.as_mut() {
+                    let receiver = std::mem::replace(
+                        base.as_mut(),
+                        HirExpr::Bool {
+                            value: false,
+                            span: at,
+                        },
+                    );
+                    args.insert(0, receiver);
+                    **callee = HirExpr::Ident {
+                        symbol: to,
+                        span: at,
+                    };
+                    done = true;
+                }
+            }
+        }
+    };
+    for item in &mut program.items {
+        match item {
+            HirItem::Fn(f) => each_in_block_mut(&mut f.body, &mut visit),
+            HirItem::Binding(b) => each_expr_mut(&mut b.value, &mut visit),
+            HirItem::SourceAssign(a) => each_expr_mut(&mut a.value, &mut visit),
+            HirItem::Watch(w) => each_in_block_mut(&mut w.body, &mut visit),
+            HirItem::On(o) => each_in_block_mut(&mut o.body, &mut visit),
+            HirItem::InitIf(i) => each_in_if_mut(i, &mut visit),
+            _ => {}
+        }
+    }
+    done
+}
+
+fn each_in_if_mut(i: &mut flux_hir::HirIf, f: &mut dyn FnMut(&mut HirExpr)) {
+    each_expr_mut(&mut i.cond, f);
+    each_in_block_mut(&mut i.then_branch, f);
+    match &mut i.else_branch {
+        Some(flux_hir::HirElse::If(inner)) => each_in_if_mut(inner, f),
+        Some(flux_hir::HirElse::Block(b)) => each_in_block_mut(b, f),
+        None => {}
+    }
+}
+
+fn each_in_block_mut(block: &mut flux_hir::HirBlock, f: &mut dyn FnMut(&mut HirExpr)) {
+    for stmt in &mut block.stmts {
+        match stmt {
+            HirStmt::Expr(e) => each_expr_mut(e, f),
+            HirStmt::Let(s) => each_expr_mut(&mut s.value, f),
+            HirStmt::Assign(a) => {
+                for index in a.indices_mut() {
+                    each_expr_mut(index, f);
+                }
+                each_expr_mut(&mut a.value, f);
+            }
+            HirStmt::Return(r) => {
+                if let Some(v) = &mut r.value {
+                    each_expr_mut(v, f);
+                }
+            }
+            HirStmt::If(i) => each_in_if_mut(i, f),
+            HirStmt::While(w) => {
+                each_expr_mut(&mut w.cond, f);
+                each_in_block_mut(&mut w.body, f);
+            }
+            HirStmt::For(l) => {
+                each_expr_mut(&mut l.iter, f);
+                each_in_block_mut(&mut l.body, f);
+            }
+            HirStmt::Watch(w) => each_in_block_mut(&mut w.body, f),
+            HirStmt::On(o) => each_in_block_mut(&mut o.body, f),
+            HirStmt::Emit(e) => e.args.iter_mut().for_each(|a| each_expr_mut(a, f)),
+            HirStmt::Break(_) | HirStmt::Continue(_) => {}
+        }
+    }
+}
+
+fn each_expr_mut(expr: &mut HirExpr, f: &mut dyn FnMut(&mut HirExpr)) {
+    f(expr);
+    match expr {
+        HirExpr::Call { callee, args, .. } => {
+            each_expr_mut(callee, f);
+            args.iter_mut().for_each(|a| each_expr_mut(a, f));
+        }
+        HirExpr::Binary { left, right, .. }
+        | HirExpr::Index {
+            base: left,
+            index: right,
+            ..
+        } => {
+            each_expr_mut(left, f);
+            each_expr_mut(right, f);
+        }
+        HirExpr::If {
+            cond,
+            then_expr,
+            else_expr,
+            ..
+        } => {
+            each_expr_mut(cond, f);
+            each_expr_mut(then_expr, f);
+            each_expr_mut(else_expr, f);
+        }
+        HirExpr::Match {
+            scrutinee, arms, ..
+        } => {
+            each_expr_mut(scrutinee, f);
+            for arm in arms {
+                if let Some(guard) = &mut arm.guard {
+                    each_expr_mut(guard, f);
+                }
+                each_in_block_mut(&mut arm.body, f);
+                each_expr_mut(&mut arm.expr, f);
+            }
+        }
+        HirExpr::Unary { expr: inner, .. }
+        | HirExpr::Field { base: inner, .. }
+        | HirExpr::Snap { expr: inner, .. }
+        | HirExpr::Cast { expr: inner, .. }
+        | HirExpr::ToText { expr: inner, .. }
+        | HirExpr::Try { expr: inner, .. } => each_expr_mut(inner, f),
+        HirExpr::Array { elems, .. } => elems.iter_mut().for_each(|e| each_expr_mut(e, f)),
+        HirExpr::StructLit { fields, .. } => {
+            fields.iter_mut().for_each(|(_, e)| each_expr_mut(e, f))
+        }
+        HirExpr::EnumVariant {
+            payload: Some(p), ..
+        } => each_expr_mut(p, f),
+        _ => {}
+    }
 }
 
 /// The library traits a bound can name, unless the program declares a
@@ -1496,6 +1861,7 @@ fn infer_generic_substitutions(
     program: &mut HirProgram,
     source: SourceId,
     diagnostics: &mut DiagnosticBag,
+    expected: Option<&Type>,
 ) -> Option<HashMap<String, Type>> {
     if function.params.len() != args.len() {
         return None;
@@ -1506,6 +1872,14 @@ fn infer_generic_substitutions(
         if !matches!(arg, HirExpr::Closure { .. }) {
             let actual = infer_mono_type(arg, symbols, program)?;
             unify_generic_type(&param.ty, &actual, type_params, program, &mut substitutions)?;
+        }
+    }
+    // What the call's place expects fixes what the arguments leave open
+    // (`let xs: [Int] = empty()`); a conflict is the checker's to report.
+    if let (Some(expected), Some(ret)) = (expected, function.ret.as_ref()) {
+        let mut tried = substitutions.clone();
+        if unify_generic_type(ret, expected, type_params, program, &mut tried).is_some() {
+            substitutions = tried;
         }
     }
     for (param, arg) in function.params.iter().zip(args) {
@@ -2727,6 +3101,14 @@ fn call_matches_types(
         .all(|(arg, ty)| infer_mono_type(arg, symbols, program).as_ref() == Some(ty))
 }
 
+thread_local! {
+    /// The call a specialization is for: its arguments' types alone do not
+    /// tell calls apart whose expected types differ (`empty()` as `[Int]`
+    /// here and `[String]` there).
+    static REWRITE_AT: std::cell::Cell<Option<flux_diagnostics::Span>> =
+        const { std::cell::Cell::new(None) };
+}
+
 fn rewrite_matching_calls(
     program: &mut HirProgram,
     from: &str,
@@ -2946,9 +3328,13 @@ fn rewrite_expr_matching_calls(
     symbol_types: &HashMap<SymbolId, Type>,
     program: &HirProgram,
 ) {
-    if let HirExpr::Call { callee, args, .. } = expr {
+    if let HirExpr::Call { callee, args, span } = expr {
+        let here = REWRITE_AT.with(|at| at.get().is_none_or(|at| at == *span));
         if let HirExpr::Ident { symbol, .. } = callee.as_mut() {
-            if *symbol == from && call_matches_types(args, match_types, symbol_types, program) {
+            if *symbol == from
+                && here
+                && call_matches_types(args, match_types, symbol_types, program)
+            {
                 *symbol = to;
             }
         }

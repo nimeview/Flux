@@ -189,7 +189,7 @@ fn validate_stmt(stmt: &IrStmt, allowed: &mut Allowed<'_>, context: &str) -> Res
             allowed.insert(name.clone());
         }
         IrStmt::Expr { code } => validate_code(code, allowed.clone(), context)?,
-        IrStmt::Emit { args, .. } => {
+        IrStmt::Emit { args, .. } | IrStmt::EmitMember { args, .. } => {
             for expr in args {
                 validate_code(expr, allowed.clone(), context)?;
             }

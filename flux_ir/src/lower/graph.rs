@@ -194,6 +194,10 @@ pub(super) fn format_cycle(names: &[String]) -> String {
     if names.is_empty() {
         return String::new();
     }
+    let names: Vec<String> = names
+        .iter()
+        .map(|n| flux_value::binding_display_name(n))
+        .collect();
     let mut text = names.join(" → ");
     if names.first() != names.last() {
         if let Some(first) = names.first() {

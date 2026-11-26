@@ -9,6 +9,7 @@
 //! - [`values`] — pure value helpers (operators, conversions, predicates)
 
 mod eval;
+mod live;
 mod place;
 mod stmts;
 mod values;
@@ -103,10 +104,14 @@ struct ReactiveState {
     /// Watch bodies, shared so a run does not copy them.
     watch_bodies: Vec<std::sync::Arc<flux_ir::StmtBlock>>,
     watch_keys: Vec<String>,
-    /// Runnable watches in graph order, with the nodes that trigger each.
+    /// Runnable watches in graph order, with the nodes that trigger each:
+    /// the modules', then each instance's, in the order instances were made.
     watch_triggers: Vec<(usize, Vec<NodeId>)>,
-    /// Per watch: the values of its triggers when it last ran, or `None`
-    /// before its first run. A watch runs only when one of them differs.
+    /// Per entry of `watch_triggers`: the instance it belongs to, if any.
+    watch_receivers: Vec<Option<u64>>,
+    /// Per entry of `watch_triggers`: the values of its triggers when it last
+    /// ran, or `None` before its first run. A watch runs only when one of
+    /// them differs.
     watch_memory: Vec<Option<Vec<RuntimeValue>>>,
     /// Reused while finding what a write dirtied.
     /// Per graph node: a source it reads has changed since it was computed. Set
@@ -116,6 +121,11 @@ struct ReactiveState {
     stale_count: usize,
     /// Scratch marks for what a flush's sources reach.
     reached: Vec<bool>,
+    /// Per graph node: being computed now. Reading one then is a cycle.
+    evaluating: Vec<bool>,
+    /// While modules initialize (in a program with components): the sources
+    /// whose computed initial value is not set yet.
+    unset: HashSet<NodeId>,
     dirty_stack: Vec<NodeId>,
     dirty_order: Vec<NodeId>,
 }
@@ -158,6 +168,11 @@ pub struct Executor {
     pending_flow: Option<(RuntimeValue, FlowControl)>,
     /// Active user function calls (bounded by `flux_value::MAX_CALL_DEPTH`).
     call_depth: u64,
+    /// Components and their instances.
+    live: Box<live::LiveState>,
+    /// The instance whose component code is running, if any: member names
+    /// mean its members.
+    receiver: Option<u64>,
 }
 
 impl Executor {
@@ -183,7 +198,13 @@ impl Executor {
 
         let mut graph = ReactiveGraph::new();
         let mut pending_derived_deps = Vec::new();
-        for node in &program.nodes {
+        // A component's members are templates: only instances are wired.
+        let live_state = live::LiveState::new(&program);
+        let wired = |i: usize, d: &flux_ir::NodeId| {
+            !live_state.template_nodes.contains(&i)
+                && !live_state.template_nodes.contains(&(d.0 as usize))
+        };
+        for (i, node) in program.nodes.iter().enumerate() {
             match node.kind {
                 IrNodeKind::Source => {
                     let value = eval_const(&node.init).unwrap_or(RuntimeValue::Unit);
@@ -193,6 +214,7 @@ impl Executor {
                     let deps: Vec<_> = node
                         .deps
                         .iter()
+                        .filter(|d| wired(i, d))
                         .map(|d| crate::graph::NodeId(d.0))
                         .collect();
                     let id = graph.add_derived(&node.name, Vec::new());
@@ -226,11 +248,21 @@ impl Executor {
             ));
         }
 
+        let (template_handlers, template_watches) = live::LiveState::template_handlers(&program);
+        for &proto in &live_state.template_nodes {
+            graph.name_to_id.remove(&program.nodes[proto].name);
+        }
+        for event in live_state.member_events.keys() {
+            graph.name_to_id.remove(event);
+        }
         let node_index: HashMap<String, usize> = program
             .nodes
             .iter()
             .enumerate()
-            .filter(|(_, n)| matches!(n.kind, IrNodeKind::Source | IrNodeKind::Derived))
+            .filter(|(i, n)| {
+                matches!(n.kind, IrNodeKind::Source | IrNodeKind::Derived)
+                    && !live_state.template_nodes.contains(i)
+            })
             .map(|(i, n)| (n.name.clone(), i))
             .collect();
         let node_code = program
@@ -239,10 +271,16 @@ impl Executor {
             .map(|n| std::sync::Arc::from(n.code.as_slice()))
             .collect();
 
+        // A value that may read an instance's member (directly, or through a
+        // function) records what it reads as it runs.
+        let has_templates = !program.templates.is_empty();
         let node_dynamic = program
             .nodes
             .iter()
-            .map(|n| code_has_lazy_if(&n.code))
+            .map(|n| {
+                code_has_lazy_if(&n.code)
+                    || (has_templates && values::code_may_read_members(&n.code))
+            })
             .collect();
         let node_of = graph
             .nodes
@@ -255,7 +293,10 @@ impl Executor {
                 .effects_for_event(id)
                 .iter()
                 .filter_map(|&effect_id| match &graph.nodes[effect_id.0 as usize].kind {
-                    NodeKind::Effect { meta } if meta.handler_kind == HandlerKind::On => {
+                    NodeKind::Effect { meta }
+                        if meta.handler_kind == HandlerKind::On
+                            && !template_handlers.contains(&meta.handler_index) =>
+                    {
                         Some(meta.handler_index)
                     }
                     _ => None,
@@ -265,14 +306,16 @@ impl Executor {
                 event_handlers.insert(name.clone(), handlers.into());
             }
         }
-        let watch_triggers = graph
+        let watch_triggers: Vec<(usize, Vec<NodeId>)> = graph
             .nodes
             .iter()
             .filter_map(|node| {
                 let NodeKind::Effect { meta } = &node.kind else {
                     return None;
                 };
-                if meta.handler_kind != HandlerKind::Watch {
+                if meta.handler_kind != HandlerKind::Watch
+                    || template_watches.contains(&meta.handler_index)
+                {
                     return None;
                 }
                 let watch = &program.watches[meta.handler_index];
@@ -304,7 +347,7 @@ impl Executor {
             .map(|i| format!("__watch_{i}"))
             .collect();
         let node_count = graph.nodes.len();
-        let program_watch_count = program.watches.len();
+        let module_watch_count = watch_triggers.len();
         let graph_readers =
             flux_ir::graph_readers(&program, |name| graph.name_to_id.contains_key(name));
 
@@ -332,10 +375,13 @@ impl Executor {
                 watch_bodies,
                 watch_keys,
                 watch_triggers,
-                watch_memory: vec![None; program_watch_count],
+                watch_receivers: vec![None; module_watch_count],
+                watch_memory: vec![None; module_watch_count],
                 stale: vec![false; node_count],
                 stale_count: 0,
                 reached: vec![false; node_count],
+                evaluating: vec![false; node_count],
+                unset: HashSet::new(),
                 dirty_stack: Vec::new(),
                 dirty_order: Vec::new(),
             }),
@@ -345,6 +391,11 @@ impl Executor {
             locals_pool: Vec::new(),
             pending_flow: None,
             call_depth: 0,
+            live: Box::new(live::LiveState {
+                node_receiver: vec![None; node_count],
+                ..live_state
+            }),
+            receiver: None,
             trap: None,
             vm_only: false,
             initial_watches: None,
@@ -364,6 +415,28 @@ impl Executor {
         } else {
             this.program.init_groups.clone()
         };
+        // An instance made while modules initialize computes its derived
+        // values at once, and they may read the modules' derived values:
+        // those are computed when first read (and all of them at the end).
+        if !this.program.templates.is_empty() {
+            for stmt in &stmts {
+                if let flux_ir::IrStmt::Assign {
+                    target, slot: None, ..
+                } = stmt
+                {
+                    if let Some(&id) = this.graph.name_to_id.get(target) {
+                        this.reactive.unset.insert(id);
+                    }
+                }
+            }
+            for at in 0..this.graph.nodes.len() {
+                let derived = matches!(this.graph.nodes[at].kind, NodeKind::Derived { .. });
+                if derived && this.reactive.node_of[at].is_some() && !this.reactive.stale[at] {
+                    this.reactive.stale[at] = true;
+                    this.reactive.stale_count += 1;
+                }
+            }
+        }
         let mut start = 0;
         let mut scope: HashSet<usize> = HashSet::new();
         let last = groups.len() - 1;
@@ -405,9 +478,11 @@ impl Executor {
                 break;
             }
         }
+        this.reactive.unset.clear();
         if let Some(err) = this.trap.take() {
             return Err(ExecutorError::Runtime(*err));
         }
+        this.drop_dead_instances();
         Ok(this)
     }
 
@@ -485,6 +560,9 @@ impl Executor {
         let runtime_name = self.program.function_name(name).to_string();
         let value = self.call_function(&runtime_name, args);
         self.set_trap_context(&format!("`{name}`"), None);
+        if self.trap.is_none() && !self.defer_propagation && !self.in_watch {
+            self.drop_dead_instances();
+        }
         match &self.trap {
             Some(err) => Err((**err).clone()),
             None => Ok(value),
@@ -544,32 +622,26 @@ impl Executor {
     }
 
     fn run_event_handlers(&mut self, event: &str, values: &[RuntimeValue]) {
-        let Some(handlers) = self.reactive.event_handlers.get(event).cloned() else {
+        // A component's own event: the receiver's handlers.
+        if self.run_member_handlers(event, values) {
             return;
-        };
+        }
+        let handlers = self.reactive.event_handlers.get(event).cloned();
+        let subscribed = self.live.subscriptions.contains_key(event);
+        if handlers.is_none() && !subscribed {
+            return;
+        }
         let opened = self.begin_batch();
-        for &idx in handlers.iter() {
-            let body = self.reactive.handler_bodies[idx].clone();
-            let mut locals = self.locals_pool.pop().unwrap_or_default();
-            // A handler's values are slots `0..n`.
-            let named = self.program.on_handlers[idx].params.len().min(values.len());
-            for (slot, value) in values[..named].iter().enumerate() {
-                locals.set(slot as u32, value.clone());
-            }
-            if !self.try_run_jit_on(idx, &body, &mut locals, &values[..named]) {
-                self.run_stmts(&body, &mut locals);
-                if self.trap.is_some() {
-                    self.push_trace_frame(format!("on {event}"), None);
-                }
-            }
-            locals.clear();
-            if self.locals_pool.len() < LOCALS_POOL_LIMIT {
-                self.locals_pool.push(locals);
-            }
-            if self.trap.is_some() {
-                self.set_trap_context(&format!("`on {event}`"), None);
+        // The modules' handlers, then the instances'.
+        let mut ok = true;
+        for &idx in handlers.iter().flat_map(|h| h.iter()) {
+            if !self.run_handler(idx, event, values, None) {
+                ok = false;
                 break;
             }
+        }
+        if ok && subscribed {
+            self.run_instance_subscriptions(event, values);
         }
         self.end_batch(opened);
     }
@@ -597,17 +669,26 @@ impl Executor {
         if self.trap.is_none() {
             self.flush_propagation();
         }
+        if self.trap.is_none() {
+            self.drop_dead_instances();
+        }
     }
 
     pub fn set_source(&mut self, name: &str, value: RuntimeValue) {
         if self.trap.is_some() {
             return;
         }
-        let Some(&id) = self.graph.name_to_id.get(name) else {
+        let Some(id) = self.resolve_node(name) else {
             return;
         };
         if !matches!(self.graph.nodes[id.0 as usize].kind, NodeKind::Source) {
             return;
+        }
+        if !self.may_store(id, &value) {
+            return;
+        }
+        if !self.reactive.unset.is_empty() {
+            self.reactive.unset.remove(&id);
         }
         self.graph.set_source(id, value);
         self.mark_stale(id);
@@ -631,6 +712,10 @@ impl Executor {
 
     fn flush_propagation(&mut self) {
         if self.reactive.mutated_sources.is_empty() {
+            // New instances' watches run once.
+            if self.live.first_runs && !self.in_watch {
+                self.run_watches();
+            }
             return;
         }
         let mut sources = std::mem::take(&mut self.reactive.mutated_sources);
@@ -648,10 +733,9 @@ impl Executor {
         let wanted: HashSet<NodeId> = ids.iter().copied().collect();
         let derived: Vec<_> = self
             .graph
-            .topo_order
-            .iter()
+            .topo()
             .filter(|id| wanted.contains(id))
-            .filter_map(|&id| self.reactive.node_of[id.0 as usize].map(|idx| (id, idx)))
+            .filter_map(|id| self.reactive.node_of[id.0 as usize].map(|idx| (id, idx)))
             .collect();
         for (id, idx) in derived {
             let value = self.eval_derived(id, idx);
@@ -660,15 +744,15 @@ impl Executor {
                 return;
             }
             self.graph.nodes[id.0 as usize].value = value;
+            self.clear_stale(id);
         }
     }
 
     fn recompute_all(&mut self) {
         let derived: Vec<_> = self
             .graph
-            .topo_order
-            .iter()
-            .filter_map(|&id| {
+            .topo()
+            .filter_map(|id| {
                 let node = &self.graph.nodes[id.0 as usize];
                 if !matches!(node.kind, NodeKind::Derived { .. }) {
                     return None;
@@ -683,19 +767,33 @@ impl Executor {
                 return;
             }
             self.graph.nodes[id.0 as usize].value = value;
+            self.clear_stale(id);
         }
     }
 
     #[cold]
     fn note_derived_failure(&mut self, id: NodeId) {
         let name = self.graph.nodes[id.0 as usize].name.clone();
-        let declared = self.program.source_map.bindings.get(&name).copied();
-        self.push_trace_frame(name.clone(), declared);
-        self.set_trap_context(&format!("`{name}`"), Some(&name));
+        let proto = name.split('#').next().unwrap_or(&name).to_string();
+        let declared = self.program.source_map.bindings.get(&proto).copied();
+        let shown = flux_value::binding_display_name(&name);
+        self.push_trace_frame(shown.clone(), declared);
+        self.set_trap_context(&format!("`{shown}`"), Some(&proto));
     }
 
     /// Evaluate one derived node via the active backend, falling back to VM bytecode.
     fn eval_derived(&mut self, id: NodeId, idx: usize) -> RuntimeValue {
+        let at = id.0 as usize;
+        self.reactive.evaluating[at] = true;
+        let value = self.eval_derived_marked(id, idx);
+        self.reactive.evaluating[at] = false;
+        if !self.may_store(id, &value) {
+            return RuntimeValue::Unit;
+        }
+        value
+    }
+
+    fn eval_derived_marked(&mut self, id: NodeId, idx: usize) -> RuntimeValue {
         let dynamic = self.reactive.node_dynamic[idx];
         // A static node records nothing, and hides its reads from an outer one.
         self.tracking.push(dynamic.then(Vec::new));
@@ -706,8 +804,15 @@ impl Executor {
             node_index: &self.node_index,
         };
         let name = &self.graph.nodes[id.0 as usize].name;
-        // Compiled code reads slot values, which are stale until recomputed.
-        let native = if self.vm_only || self.reactive.stale_count > 0 {
+        let receiver = self
+            .live
+            .node_receiver
+            .get(id.0 as usize)
+            .copied()
+            .flatten();
+        // Compiled code reads slot values, which are stale until recomputed;
+        // an instance's values run on the VM.
+        let native = if self.vm_only || self.reactive.stale_count > 0 || receiver.is_some() {
             None
         } else {
             self.backend.try_eval_derived(name, &ctx)
@@ -715,10 +820,10 @@ impl Executor {
         let value = match native {
             Some(Err(_)) => {
                 self.replay_on_vm();
-                self.eval_derived_vm(idx)
+                self.with_receiver(receiver, |this| this.eval_derived_vm(idx))
             }
             Some(Ok(v)) => v,
-            None => self.eval_derived_vm(idx),
+            None => self.with_receiver(receiver, |this| this.eval_derived_vm(idx)),
         };
 
         if let Some(Some(tracked)) = self.tracking.pop() {
@@ -747,6 +852,15 @@ impl Executor {
         self.graph.set_derived_deps(id, new_deps);
     }
 
+    /// Marks `id` current, if it was stale.
+    fn clear_stale(&mut self, id: NodeId) {
+        let at = id.0 as usize;
+        if self.reactive.stale[at] {
+            self.reactive.stale[at] = false;
+            self.reactive.stale_count -= 1;
+        }
+    }
+
     /// Whether a derived value is stale right now.
     pub(super) fn reactive_stale(&self) -> bool {
         self.reactive.stale_count > 0
@@ -757,8 +871,17 @@ impl Executor {
         matches!(self.tracking.last(), Some(Some(_)))
     }
 
-    /// Records a read of graph node `id` by the value being computed.
+    /// Records a read of graph node `id` by the value being computed. A
+    /// value that reads itself while being computed is a cycle.
     pub(super) fn record_dep(&mut self, id: NodeId) {
+        if self.reactive.evaluating[id.0 as usize] {
+            self.raise(flux_value::ArithError::ReactiveCycle);
+            return;
+        }
+        if !self.reactive.unset.is_empty() && self.reactive.unset.contains(&id) {
+            self.raise(flux_value::ArithError::ReadBeforeInit);
+            return;
+        }
         if let Some(Some(tracked)) = self.tracking.last_mut() {
             if !tracked.contains(&id) {
                 tracked.push(id);
@@ -804,7 +927,9 @@ impl Executor {
         let Some(idx) = self.reactive.node_of[at] else {
             return;
         };
-        let value = self.eval_derived(id, idx);
+        // A chain of instances (a list, a tree) can be read from its far
+        // end, each value reading the next: grow the stack when low.
+        let value = stacker::maybe_grow(64 * 1024, 2 * 1024 * 1024, || self.eval_derived(id, idx));
         if self.trap.is_some() {
             self.note_derived_failure(id);
             return;
@@ -838,7 +963,7 @@ impl Executor {
         self.reactive.dirty_stack = stack;
         // Recomputing can rewrite `topo_order`, so the order is fixed first.
         let mut order = std::mem::take(&mut self.reactive.dirty_order);
-        for &id in &self.graph.topo_order {
+        for id in self.graph.topo() {
             let at = id.0 as usize;
             if reached[at] {
                 reached[at] = false;
@@ -859,10 +984,8 @@ impl Executor {
     }
 
     pub(super) fn is_source_binding(&self, name: &str) -> bool {
-        self.graph
-            .name_to_id
-            .get(name)
-            .is_some_and(|&id| matches!(self.graph.nodes[id.0 as usize].kind, NodeKind::Source))
+        self.resolve_node(name)
+            .is_some_and(|id| matches!(self.graph.nodes[id.0 as usize].kind, NodeKind::Source))
     }
 
     fn try_run_jit_on(
@@ -957,16 +1080,23 @@ impl Executor {
     /// last. If so, remembers the current values and returns the old value
     /// of the first trigger (its target), or the current one on a first run.
     fn watch_seen_change(&mut self, at: usize) -> Option<RuntimeValue> {
-        let (idx, triggers) = {
-            let (idx, triggers) = &self.reactive.watch_triggers[at];
-            (*idx, triggers.clone())
-        };
+        let (idx, triggers) = self.reactive.watch_triggers[at].clone();
+        let receiver = self.reactive.watch_receivers[at];
+        // An instance's watch remembers instances by number, so that what it
+        // saw does not keep them (or the instance itself) alive. One with
+        // `prev` keeps them, to hand them back.
+        let by_number = receiver.is_some() && self.program.watches[idx].prev.is_none();
         let mut current = Vec::with_capacity(triggers.len());
         for &id in &triggers {
-            self.refresh(id);
-            current.push(self.graph.get(id).clone());
+            self.with_receiver(receiver, |this| this.refresh(id));
+            let value = self.graph.get(id);
+            current.push(if by_number {
+                live::without_handles(value)
+            } else {
+                value.clone()
+            });
         }
-        let memory = &mut self.reactive.watch_memory[idx];
+        let memory = &mut self.reactive.watch_memory[at];
         let prev = match memory {
             Some(seen) => {
                 let same = seen.len() == current.len()
@@ -987,21 +1117,24 @@ impl Executor {
 
     /// Runs the watches affected by `changed_nodes`, then those affected by
     /// what they wrote, until nothing is left to run. Each watch runs at most
-    /// once per call, so a cycle of watches ends.
+    /// once per call, so a cycle of watches ends. A new instance's watches
+    /// run once, whatever changed.
     fn run_watches(&mut self) {
         if self.trap.is_some() {
             return;
         }
         if self.reactive.watch_triggers.is_empty() {
             self.reactive.changed_nodes.clear();
+            self.live.first_runs = false;
             return;
         }
         self.in_watch = true;
         // Nothing changed means the first run: every watch runs once.
-        let mut run_all = self.reactive.changed_nodes.is_empty();
+        let mut run_all = self.reactive.changed_nodes.is_empty() && !self.live.first_runs;
         let mut ran = HashSet::new();
         loop {
-            if !run_all && self.reactive.changed_nodes.is_empty() {
+            let first_runs = std::mem::take(&mut self.live.first_runs);
+            if !run_all && !first_runs && self.reactive.changed_nodes.is_empty() {
                 break;
             }
             std::mem::swap(
@@ -1011,52 +1144,56 @@ impl Executor {
             for id in &self.reactive.changed_spare {
                 self.reactive.changed_marks[id.0 as usize] = true;
             }
-            let watch_indices: Vec<usize> = self
-                .reactive
-                .watch_triggers
-                .iter()
-                .enumerate()
-                .filter(|(_, (idx, triggers))| {
-                    !ran.contains(idx)
-                        && self
+            let watch_indices: Vec<usize> = (0..self.reactive.watch_triggers.len())
+                .filter(|&at| {
+                    let (idx, triggers) = &self.reactive.watch_triggers[at];
+                    let receiver = self.reactive.watch_receivers[at];
+                    let fresh = self.reactive.watch_memory[at].is_none();
+                    let in_scope = receiver.is_some()
+                        || self
                             .initial_watches
                             .as_ref()
-                            .is_none_or(|w| w.contains(idx))
-                        && (run_all
-                            // While modules initialize, a watch that has not
-                            // run yet runs, whatever else changed.
-                            || (self.initial_watches.is_some()
-                                && self.reactive.watch_memory[*idx].is_none())
+                            .is_none_or(|w| w.contains(idx));
+                    !ran.contains(&at)
+                        && in_scope
+                        && receiver.is_none_or(|r| self.is_alive(r))
+                        && ((run_all && receiver.is_none())
+                            // A new instance's watch, or (while modules
+                            // initialize) one that has not run yet, runs.
+                            || (fresh && (receiver.is_some() || self.initial_watches.is_some()))
                             || triggers
                                 .iter()
                                 .any(|dep| self.reactive.changed_marks[dep.0 as usize]))
                 })
-                .map(|(at, _)| at)
                 .collect();
             for id in self.reactive.changed_spare.drain(..) {
                 self.reactive.changed_marks[id.0 as usize] = false;
             }
             run_all = false;
             if watch_indices.is_empty() {
+                if self.live.first_runs {
+                    continue;
+                }
                 break;
             }
             for at in watch_indices {
                 let idx = self.reactive.watch_triggers[at].0;
+                let receiver = self.reactive.watch_receivers[at];
                 // Compared right before running: an earlier watch may have
                 // changed a value back.
                 let Some(prev) = self.watch_seen_change(at) else {
                     continue;
                 };
-                ran.insert(idx);
+                ran.insert(at);
                 let body = self.reactive.watch_bodies[idx].clone();
                 let prev = self.program.watches[idx].prev.as_ref().map(|_| prev);
-                if !self.try_run_jit_watch(idx, &body, prev.clone()) {
+                if receiver.is_some() || !self.try_run_jit_watch(idx, &body, prev.clone()) {
                     let mut locals = Locals::default();
                     if let Some(prev) = prev {
                         // `prev` is slot 0.
                         locals.set(0, prev);
                     }
-                    self.run_stmts(&body, &mut locals);
+                    self.with_receiver(receiver, |this| this.run_stmts(&body, &mut locals));
                     if self.trap.is_some() {
                         self.push_trace_frame("watch".to_string(), None);
                     }

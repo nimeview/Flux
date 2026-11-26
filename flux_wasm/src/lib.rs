@@ -35,6 +35,7 @@ mod tests {
             on_handlers: vec![],
             events: vec![],
             renamed_functions: Default::default(),
+            templates: Default::default(),
             init_groups: Default::default(),
         });
         assert_eq!(status, WasmBackendStatus::Stub);

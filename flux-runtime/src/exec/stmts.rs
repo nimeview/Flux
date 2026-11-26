@@ -125,7 +125,7 @@ impl Executor {
                     Some(_) => {
                         let root = match slot {
                             Some(slot) => locals.get(*slot),
-                            None => self.graph.get_by_name(target),
+                            None => self.resolve_node(target).map(|id| self.graph.get(id)),
                         };
                         let old = root.map_or(Err(flux_value::ArithError::Internal), |root| {
                             super::place::get(root, &keys)
@@ -162,9 +162,8 @@ impl Executor {
                     }
                     None => {
                         let mut root = self
-                            .graph
-                            .get_by_name(target)
-                            .cloned()
+                            .resolve_node(target)
+                            .map(|id| self.graph.get(id).clone())
                             .unwrap_or(RuntimeValue::Unit);
                         let result = super::place::update(&mut root, &keys, value);
                         if result.is_ok() {
@@ -190,6 +189,20 @@ impl Executor {
                     return stop;
                 }
                 locals.set(*slot, value);
+                StmtResult {
+                    value: RuntimeValue::Unit,
+                    flow: FlowControl::None,
+                }
+            }
+            IrStmt::EmitMember { event, args } => {
+                let mut values = Vec::with_capacity(args.len());
+                for code in args {
+                    values.push(self.eval_expr(code, locals));
+                    if let Some(stop) = self.interrupted() {
+                        return stop;
+                    }
+                }
+                self.emit_member(event, values);
                 StmtResult {
                     value: RuntimeValue::Unit,
                     flow: FlowControl::None,

@@ -213,7 +213,22 @@ fn emit_expr(expr: &HirExpr, program: &HirProgram, code: &mut Vec<Inst>) {
                 else_branch,
             });
         }
-        HirExpr::Call { callee, args, .. } => {
+        HirExpr::Call { callee, args, span } => {
+            // `a.f(x)`, now `f(a, x)`: the component's function on instance `a`.
+            if program.member_calls.contains(span) {
+                if let HirExpr::Ident { symbol, .. } = callee.as_ref() {
+                    if let Some(name) = runtime_symbol_name(program, symbol) {
+                        for arg in args {
+                            emit_expr(arg, program, code);
+                        }
+                        code.push(Inst::CallMember {
+                            name,
+                            argc: args.len(),
+                        });
+                        return;
+                    }
+                }
+            }
             // A tuple is a struct with fields "0", "1", …
             if let HirExpr::Ident { symbol, .. } = callee.as_ref() {
                 // A destructuring check is only for the type checker.
@@ -407,9 +422,17 @@ fn emit_expr(expr: &HirExpr, program: &HirProgram, code: &mut Vec<Inst>) {
                 argc: 1,
             });
         }
-        HirExpr::Field { base, field, .. } => {
+        HirExpr::Field { base, field, span } => {
             emit_expr(base, program, code);
-            code.push(Inst::FieldGet(field.clone()));
+            // `a.n` of an instance: its member, by internal name.
+            match program
+                .member_reads
+                .get(span)
+                .and_then(|id| program.names.get(id))
+            {
+                Some(member) => code.push(Inst::Member(member.clone())),
+                None => code.push(Inst::FieldGet(field.clone())),
+            }
         }
         HirExpr::Closure {
             fn_symbol,

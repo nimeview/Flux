@@ -48,7 +48,10 @@ pub(crate) fn is_numeric_code(code: &[Inst], jit_fns: &HashSet<String>) -> bool 
         | Inst::Block(_)
         | Inst::Try
         | Inst::MakeClosure { .. }
-        | Inst::CallValue { .. } => false,
+        | Inst::CallValue { .. }
+        | Inst::Member(_)
+        | Inst::Construct { .. }
+        | Inst::CallMember { .. } => false,
         Inst::MakeUserEnum { .. } => true,
         Inst::MakeUserStruct { .. } | Inst::FieldGet(_) => false,
         // Bit operations run on the VM.
@@ -63,7 +66,7 @@ pub(crate) fn stmts_numeric(stmts: &[IrStmt], jit_fns: &HashSet<String>) -> bool
         IrStmt::Assign { expr, .. } => is_numeric_code(expr, jit_fns),
         IrStmt::AssignPlace { .. } => false,
         // Handlers run at the `emit`; compiled code could not do that.
-        IrStmt::Emit { .. } => false,
+        IrStmt::Emit { .. } | IrStmt::EmitMember { .. } => false,
         IrStmt::If {
             cond,
             then_body,
@@ -126,7 +129,7 @@ pub(crate) fn max_call_argc_in_stmts(stmts: &[IrStmt]) -> u32 {
                 .filter_map(|step| step.code())
                 .map(|c| max_call_argc_in_code(c))
                 .fold(max_call_argc_in_code(expr), u32::max),
-            IrStmt::Emit { args, .. } => args
+            IrStmt::Emit { args, .. } | IrStmt::EmitMember { args, .. } => args
                 .iter()
                 .map(|c| max_call_argc_in_code(c))
                 .max()

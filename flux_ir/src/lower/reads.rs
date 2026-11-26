@@ -15,6 +15,24 @@ thread_local! {
     static INLINING: std::cell::RefCell<HashSet<String>> = std::cell::RefCell::new(HashSet::new());
 }
 
+thread_local! {
+    /// Set while collecting a value's own reads, without instances' members.
+    static SKIP_MEMBERS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// The bindings `expr` reads by name, leaving out instances' members
+/// (`a.n`): what one instance's value reads of its own and of globals.
+pub(super) fn collect_named_reads_expr(
+    expr: &HirExpr,
+    program: &HirProgram,
+    reactive_fns: &HashMap<String, &HirFn>,
+) -> HashSet<SymbolId> {
+    SKIP_MEMBERS.with(|s| s.set(true));
+    let set = collect_reads_expr(expr, program, reactive_fns);
+    SKIP_MEMBERS.with(|s| s.set(false));
+    set
+}
+
 pub(super) fn collect_reads_expr(
     expr: &HirExpr,
     program: &HirProgram,
@@ -209,8 +227,15 @@ fn collect_expr_reads(
                 collect_expr_reads(&arm.expr, program, reactive_fns, set);
             }
         }
-        HirExpr::Field { base, .. } => {
+        HirExpr::Field { base, span, .. } => {
             collect_expr_reads(base, program, reactive_fns, set);
+            // `a.n` reads the member of a component: an edge of the
+            // components' graph, which must have no cycle.
+            if let Some(member) = program.member_reads.get(span) {
+                if !SKIP_MEMBERS.with(|s| s.get()) {
+                    set.insert(*member);
+                }
+            }
         }
         HirExpr::Cast { expr, .. } | HirExpr::ToText { expr, .. } | HirExpr::Try { expr, .. } => {
             collect_expr_reads(expr, program, reactive_fns, set);

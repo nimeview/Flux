@@ -370,6 +370,20 @@ pub enum FluxError {
         source_id: SourceId,
     },
 
+    /// Code outside a component assigns a member of one of its instances.
+    #[error("`{name}` belongs to an instance of `{ty}`; only the instance's own code changes it")]
+    #[diagnostic(
+        code(flux::E032),
+        help("emit one of its `pub` events, or call one of its `pub act fn`s")
+    )]
+    InstanceMemberWrite {
+        name: String,
+        ty: String,
+        #[label("changes an instance's member")]
+        span: miette::SourceSpan,
+        source_id: SourceId,
+    },
+
     /// A generic call's type argument lacks a trait its parameter's bound names.
     #[error("`{ty}` does not have trait `{trait_name}`, which `{function}` needs for `{param}`")]
     #[diagnostic(code(flux::E031), help("{help}"))]
@@ -418,6 +432,7 @@ impl FluxError {
             | Self::WriteOutsideAct { source_id, .. }
             | Self::UnsatisfiedBound { source_id, .. }
             | Self::ForeignSourceWrite { source_id, .. }
+            | Self::InstanceMemberWrite { source_id, .. }
             | Self::ActInPureContext { source_id, .. }
             | Self::PrivateField { source_id, .. } => *source_id,
         }
@@ -456,6 +471,7 @@ impl FluxError {
             Self::WriteOutsideAct { .. } => "E027",
             Self::UnsatisfiedBound { .. } => "E031",
             Self::ForeignSourceWrite { .. } => "E032",
+            Self::InstanceMemberWrite { .. } => "E032",
             Self::ActInPureContext { .. } => "E008",
             Self::PrivateField { .. } => "E033",
         }
@@ -494,6 +510,7 @@ impl FluxError {
             | Self::WriteOutsideAct { span, .. }
             | Self::UnsatisfiedBound { span, .. }
             | Self::ForeignSourceWrite { span, .. }
+            | Self::InstanceMemberWrite { span, .. }
             | Self::ActInPureContext { span, .. }
             | Self::PrivateField { span, .. }
             | Self::DuplicateDefinition { span, .. } => *span,
