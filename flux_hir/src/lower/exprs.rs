@@ -18,6 +18,18 @@ pub(super) fn lower_expr(
     reads_reactive: &mut bool,
 ) -> Option<HirExpr> {
     match expr {
+        // A call with `mut` arguments is rewritten where it is a statement or
+        // a `let` value (`lower_mut_call`); anywhere else it cannot store
+        // its changes back.
+        Expr::MutArg { span, .. } => {
+            diagnostics.push(FluxError::Parse {
+                message: "a call with `mut` arguments must be a statement, or the value of a `let`"
+                    .into(),
+                span: span_to_miette(*span),
+                source_id: span.source,
+            });
+            None
+        }
         Expr::Int { value, span } => Some(HirExpr::Int {
             value: *value,
             span: *span,
@@ -70,6 +82,16 @@ pub(super) fn lower_expr(
             }
         }
         Expr::Ident { name, span } => {
+            // Called as a value, it could not store its changes back.
+            let callee = std::mem::replace(&mut symbols.lowering_callee, false);
+            if !callee && super::stmts::mut_callee(expr, symbols).is_some() {
+                diagnostics.push(FluxError::Parse {
+                    message: format!("`{name}` has `mut` parameters and cannot be used as a value"),
+                    span: span_to_miette(*span),
+                    source_id: span.source,
+                });
+                return None;
+            }
             if let Some(enum_name) = symbols.enum_variants.get(name) {
                 return Some(HirExpr::EnumVariant {
                     enum_name: enum_name.clone(),
@@ -129,6 +151,23 @@ pub(super) fn lower_expr(
             })
         }
         Expr::Call { callee, args, span } => {
+            // A function with `mut` parameters is called with `mut` before
+            // them, which stores their changes back (`stmts::mut_call_stmts`).
+            if super::stmts::mut_callee(callee, symbols).is_some()
+                && !symbols.mut_calls_ok.contains(span)
+            {
+                let written = args.iter().any(|a| matches!(a, Expr::MutArg { .. }));
+                diagnostics.push(FluxError::Parse {
+                    message: if written {
+                        "a call with `mut` arguments must be a statement, or the value of a `let`".into()
+                    } else {
+                        "this function has `mut` parameters: call it on its own line or as a `let` value, with `mut` before each of those arguments".into()
+                    },
+                    span: span_to_miette(*span),
+                    source_id: span.source,
+                });
+                return None;
+            }
             // `Shape::Circle(2)` is `Circle(2)` once the path is checked.
             if let Expr::Ident {
                 name,
@@ -167,8 +206,11 @@ pub(super) fn lower_expr(
                     if let PathTarget::Name(plain) = target {
                         if plain == *name {
                             // A type function: the callee resolves as a name.
+                            let was = std::mem::replace(&mut symbols.lowering_callee, true);
                             let callee =
-                                lower_expr(callee, symbols, scope, diagnostics, reads_reactive)?;
+                                lower_expr(callee, symbols, scope, diagnostics, reads_reactive);
+                            symbols.lowering_callee = was;
+                            let callee = callee?;
                             let args = args
                                 .iter()
                                 .map(|a| lower_expr(a, symbols, scope, diagnostics, reads_reactive))
@@ -256,7 +298,10 @@ pub(super) fn lower_expr(
                     });
                 }
             }
-            let lowered_callee = lower_expr(callee, symbols, scope, diagnostics, reads_reactive)?;
+            let was = std::mem::replace(&mut symbols.lowering_callee, true);
+            let lowered_callee = lower_expr(callee, symbols, scope, diagnostics, reads_reactive);
+            symbols.lowering_callee = was;
+            let lowered_callee = lowered_callee?;
             let lowered_args = args
                 .iter()
                 .map(|a| lower_expr(a, symbols, scope, diagnostics, reads_reactive))
@@ -595,6 +640,7 @@ fn lower_closure(
     let fn_params: Vec<flux_syntax::Param> = params
         .iter()
         .map(|p| flux_syntax::Param {
+            mutable: false,
             name: p.name.clone(),
             // The checker replaces this placeholder from context, or confirms Int fallback.
             ty: p.ty.clone().unwrap_or_else(|| fallback.clone()),

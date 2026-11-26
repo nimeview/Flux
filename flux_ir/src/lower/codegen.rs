@@ -150,6 +150,14 @@ fn emit_expr(expr: &HirExpr, program: &HirProgram, code: &mut Vec<Inst>) {
             emit_expr(expr, program, code);
             code.push(Inst::Not);
         }
+        HirExpr::Unary {
+            op: flux_syntax::UnaryOp::BitNot,
+            expr,
+            ..
+        } => {
+            emit_expr(expr, program, code);
+            code.push(Inst::BitNot);
+        }
         HirExpr::Binary {
             op, left, right, ..
         } => {
@@ -179,6 +187,11 @@ fn emit_expr(expr: &HirExpr, program: &HirProgram, code: &mut Vec<Inst>) {
                         BinaryOp::Le => Inst::CmpLe,
                         BinaryOp::Gt => Inst::CmpGt,
                         BinaryOp::Ge => Inst::CmpGe,
+                        BinaryOp::BitAnd => Inst::BitAnd,
+                        BinaryOp::BitOr => Inst::BitOr,
+                        BinaryOp::BitXor => Inst::BitXor,
+                        BinaryOp::Shl => Inst::Shl,
+                        BinaryOp::Shr => Inst::Shr,
                         BinaryOp::And | BinaryOp::Or => unreachable!(),
                     });
                 }

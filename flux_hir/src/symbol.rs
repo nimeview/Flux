@@ -87,6 +87,13 @@ pub struct SymbolTable {
     /// Trait impl methods keyed by `(receiver type tag, method name)`, populated as
     /// `impl Trait for Type` blocks are lowered. Used for exact `x.method(...)` dispatch.
     pub trait_impl_index: HashMap<(String, String), SymbolId>,
+    /// The functions with `mut` parameters, by declared name.
+    pub mut_params: HashMap<String, MutParams>,
+    /// Calls of such functions written with their `mut` arguments, by span:
+    /// the only calls of them that store changes back.
+    pub mut_calls_ok: std::collections::HashSet<Span>,
+    /// Whether the expression being lowered is a call's callee.
+    pub lowering_callee: bool,
     /// Bounds of generic functions' type parameters, by function.
     pub type_bounds: HashMap<SymbolId, Vec<crate::HirBound>>,
     /// The library functions that methods on library values may call
@@ -196,6 +203,9 @@ impl SymbolTable {
             immutable_lets: std::collections::HashSet::new(),
             trait_impl_index: HashMap::new(),
             type_bounds: HashMap::new(),
+            mut_params: HashMap::new(),
+            mut_calls_ok: std::collections::HashSet::new(),
+            lowering_callee: false,
             module_aliases: HashMap::new(),
             qualified_symbols: HashMap::new(),
             writers: Vec::new(),
@@ -438,4 +448,12 @@ impl SymbolTable {
             sym.kind = kind;
         }
     }
+}
+
+/// Where a function's `mut` parameters are, and whether it declares a
+/// result (then its value is `(result, p1, …)`, else `(p1, …)` or `p1`).
+#[derive(Debug, Clone)]
+pub struct MutParams {
+    pub positions: Vec<usize>,
+    pub has_result: bool,
 }

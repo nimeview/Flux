@@ -63,6 +63,7 @@ false true
 | `Float` | 64-bit floating point, the same as `Float64`; also `Float32` |
 | `Bool` | `true`, `false` |
 | `String` | UTF-8 text |
+| `Bytes` | raw bytes, one byte each; see [Bytes](./data.md#bytes) |
 | `Unit` | "no value", written `()` |
 
 Numbers can be written in several ways. A literal with an exponent is always a `Float`:
@@ -147,6 +148,32 @@ fn main() {
 1.5 7.0 2 200
 ```
 
+## Bit operations
+
+Integers support bitwise AND (`&`), OR (`|`), XOR (`^`), left shift (`<<`), right shift (`>>`), and bitwise NOT (`!x`). On a `Bool`, `!` still means logical NOT; `||`, `&&`, and closures `|x|` keep their meaning.
+
+```flux
+import io { println }
+
+const READ = 1
+
+const WRITE = 2
+
+fn main() {
+    let flags = READ | WRITE
+    let word = 0x1234
+    println("{flags} {flags & WRITE} {word >> 8} {word & 0xff} {!(0 as UInt8)}")
+}
+```
+
+```output
+3 2 18 52 255
+```
+
+Precedence follows Rust: from lowest to highest, `|`, then `^`, then `&`, then shifts, then `+` / `-`, then `*` / `/` / `%`. Comparisons apply to the result, so `6 & 3 == 2` is `true`; `1 + 2 << 3` is `24`.
+
+`&`, `|`, and `^` take the wider of the two integer types. Shifts keep the left operand's type and drop bits shifted out. A right shift of a signed value keeps its sign: `-8 >> 1` is `-4`. A negative shift amount, or one at least as large as that type's width, is the runtime error `integer overflow`. Non-integer operands are E005 ("integer types for a bit operation"). There are no compound forms such as `&=`. The JIT runs code with bit operations on the VM.
+
 ## Strings
 
 Any string can include expressions in braces. For a literal brace, write `\{`:
@@ -228,6 +255,49 @@ fn main() {
     let _a = five()
 }
 ```
+
+### Mutable parameters
+
+A parameter marked `mut` starts as the argument's value, can change inside the function, and writes its final value back to the caller. Write `mut` at the call too:
+
+```flux
+import io { println }
+
+import collections { range }
+
+fn add_tax(mut prices: [Int], pct: Int) {
+    for i in range(prices.len()) {
+        prices[i] += prices[i] * pct / 100
+    }
+}
+
+fn swap(mut a: Int, mut b: Int) {
+    let t = a
+    a = b
+    b = t
+}
+
+fn main() {
+    let mut list = [100, 200]
+    add_tax(mut list, 10)
+    let mut x = 1
+    let mut y = 2
+    swap(mut x, mut y)
+    println("{list} {x} {y}")
+}
+```
+
+```output
+[110, 220] 2 1
+```
+
+The argument must be a place: a `let mut` variable, or a field or element of one, such as `mut cart.items` or `mut grid[i]`. Each index is evaluated once, before the call. Several arguments can be `mut`, as in `swap` above. These parameters work in generic functions and across modules (`lib::grow(mut a, 3)`).
+
+A call with `mut` arguments must be a statement or the value of a `let`. To return a value as well as changing its arguments, the function must declare `-> T`; then `let first = take_first(mut list)` binds that value. Without a declared result, the function returns nothing and its call cannot be bound to a variable.
+
+Leaving out `mut` at the call is E000: "this function has `mut` parameters: call it on its own line or as a `let` value, with `mut` before each of those arguments". Putting such a call inside a larger expression is also E000: "a call with `mut` arguments must be a statement, or the value of a `let`". So are marking an argument whose parameter is not `mut`, binding a call with no declared result, or passing something that is not a place. An immutable variable gives the existing "cannot assign to immutable local" error (E009).
+
+A function with `mut` parameters cannot be stored or passed as a value: E000 ("`grow` has `mut` parameters and cannot be used as a value"). Methods can only mark `self` as `mut`; see [Methods](./abstraction.md#methods).
 
 ## Control flow
 

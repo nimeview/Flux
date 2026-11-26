@@ -133,6 +133,16 @@ pub(super) fn lower_impl_fns(
                 source_id: method.name.span.source,
             });
         };
+        if method.params.iter().any(|p| p.mutable) {
+            fail(
+                format!(
+                    "method `{}` cannot have `mut` parameters; only `mut self` changes what it is called on",
+                    method.name.name
+                ),
+                diagnostics,
+            );
+            continue;
+        }
         if !method.type_params.is_empty() {
             fail(
                 format!(
@@ -523,6 +533,12 @@ pub(super) fn lower_struct(
         name: sym.id,
         type_params: decl.type_params.clone(),
         fields,
+        private_fields: decl
+            .fields
+            .iter()
+            .filter(|f| !f.pub_)
+            .map(|f| f.name.name.clone())
+            .collect(),
         span: decl.span,
     })
 }

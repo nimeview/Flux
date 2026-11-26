@@ -26,6 +26,17 @@ fn write_value(out: &mut String, value: &Value) {
             out.push('"');
         }
         Value::Unit => out.push_str("()"),
+        // `Bytes[1, 2, 255]`: each byte as a number.
+        Value::Bytes(bytes) => {
+            out.push_str("Bytes[");
+            for (i, b) in bytes.iter().enumerate() {
+                if i > 0 {
+                    out.push_str(", ");
+                }
+                out.push_str(&b.to_string());
+            }
+            out.push(']');
+        }
         Value::Array(items) => {
             out.push('[');
             for (i, item) in items.iter().enumerate() {

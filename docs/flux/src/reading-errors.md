@@ -74,3 +74,4 @@ flux::E002
 | E030 | warning: a collection function's result is dropped, as in `push(xs, 3)` or `xs.sorted()` alone; assign it |
 | E031 | a generic call's type lacks a trait its bound names, as `largest([p])` for a `Point` without `Ord` |
 | E032 | a module changes another module's source; emit that module's event or call its `pub act fn` |
+| E033 | naming another module's private struct field; use the functions or methods that module provides, or mark the field `pub` there |

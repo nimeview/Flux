@@ -409,3 +409,90 @@ pub fn cast(v: &Value, ty: &str) -> Result<Value, ArithError> {
         _ => Err(ArithError::InvalidCast),
     }
 }
+
+/// A bit operation on two integers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BitOp {
+    And,
+    Or,
+    Xor,
+    Shl,
+    Shr,
+}
+
+/// `a & b`, `a | b`, `a ^ b` in the wider of the two integer types, and
+/// `a << n`, `a >> n` in `a`'s type (bits shifted out are dropped; `>>` keeps
+/// a signed value's sign). A shift by a negative amount or by the type's
+/// width or more is an overflow.
+pub fn bitwise(op: BitOp, a: &Value, b: &Value) -> Result<Value, ArithError> {
+    let (
+        Value::Int {
+            width: wa,
+            bits: xa,
+        },
+        Value::Int {
+            width: wb,
+            bits: xb,
+        },
+    ) = (a, b)
+    else {
+        return Err(ArithError::InvalidOperands);
+    };
+    let (wa, wb) = (*wa, *wb);
+    let x = int_to_i128(wa, *xa);
+    let y = int_to_i128(wb, *xb);
+    let result = match op {
+        BitOp::And | BitOp::Or | BitOp::Xor => {
+            let width = promote_int(wa, wb);
+            let mask = (1i128 << width.bits()) - 1;
+            let (ux, uy) = (x & mask, y & mask);
+            let raw = match op {
+                BitOp::And => ux & uy,
+                BitOp::Or => ux | uy,
+                _ => ux ^ uy,
+            };
+            return Ok(from_raw_bits(width, raw as u128 as u64));
+        }
+        BitOp::Shl | BitOp::Shr => {
+            let bits = i128::from(wa.bits());
+            if y < 0 || y >= bits {
+                return Err(ArithError::Overflow);
+            }
+            let n = y as u32;
+            match op {
+                BitOp::Shl => {
+                    let mask = (1i128 << wa.bits()) - 1;
+                    return Ok(from_raw_bits(wa, (((x & mask) << n) & mask) as u64));
+                }
+                _ => x >> n,
+            }
+        }
+    };
+    int_from_i128(wa, result).ok_or(ArithError::Overflow)
+}
+
+/// `!x` on an integer: every bit flipped, in `x`'s type.
+pub fn bit_not(v: &Value) -> Result<Value, ArithError> {
+    let Value::Int { width, bits } = v else {
+        return Err(ArithError::InvalidOperands);
+    };
+    let mask = if width.bits() == 64 {
+        u64::MAX
+    } else {
+        (1u64 << width.bits()) - 1
+    };
+    Ok(from_raw_bits(*width, !bits & mask))
+}
+
+/// The integer of `width` whose low bits are `raw`.
+fn from_raw_bits(width: IntWidth, raw: u64) -> Value {
+    let mask = if width.bits() == 64 {
+        u64::MAX
+    } else {
+        (1u64 << width.bits()) - 1
+    };
+    Value::Int {
+        width,
+        bits: raw & mask,
+    }
+}

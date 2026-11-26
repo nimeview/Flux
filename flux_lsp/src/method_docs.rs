@@ -203,6 +203,16 @@ pub fn method_doc(receiver: Receiver, method: &str) -> Option<Doc> {
             "n.clamp(low: N, high: N) -> N",
             "`n` limited to the range from `low` to `high`.",
         ),
+        (Bytes, "len") => d("b.len() -> Int", "The number of bytes."),
+        (Bytes, "slice") => d(
+            "b.slice(start: Int, end: Int) -> Bytes",
+            "Bytes `start` up to, not including, `end`; out of range is a runtime error.",
+        ),
+        (Bytes, "to_text") => d(
+            "b.to_text() -> Result[String, String]",
+            "The bytes as UTF-8 text, or `Err` saying where they stop being UTF-8.",
+        ),
+        (String, "to_bytes") => d("s.to_bytes() -> Bytes", "The UTF-8 bytes of `s`."),
         (Number, "checked_add") => d(
             "n.checked_add(m: Int) -> Option[N]",
             "`n + m` in `n`'s integer type, or `None` if it overflows.",

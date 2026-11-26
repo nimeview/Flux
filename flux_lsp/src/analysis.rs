@@ -365,12 +365,17 @@ pub fn member_completions(
     let mut items = Vec::new();
     let mut seen = std::collections::HashSet::new();
 
-    if let Type::Struct { .. } = &inner {
+    if let Type::Struct { name, .. } = &inner {
         let fields = match ctx.instance_of(&inner) {
             Type::Struct { fields, .. } => fields,
             _ => Vec::new(),
         };
+        // Another module's private fields are not offered.
+        let here = buffer_source_id(analysis);
         for (field, ty) in fields {
+            if here.is_some_and(|at| ctx.field_hidden(name, &field, at)) {
+                continue;
+            }
             if seen.insert(field.clone()) {
                 items.push(MemberCompletion {
                     label: field.clone(),
@@ -426,6 +431,7 @@ fn library_receiver(ty: &Type) -> flux_std::methods::Receiver {
         Type::Map { .. } => Receiver::Map,
         Type::Option(_) => Receiver::Option,
         Type::Result { .. } => Receiver::Result,
+        Type::Bytes => Receiver::Bytes,
         t if t.is_integer() || t.is_float() => Receiver::Number,
         _ => Receiver::Other,
     }

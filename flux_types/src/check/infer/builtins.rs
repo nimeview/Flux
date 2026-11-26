@@ -833,6 +833,12 @@ pub(super) fn infer_with(
         let Some(fields) = &fields else {
             continue;
         };
+        if let Type::Struct {
+            name: type_name, ..
+        } = &expanded
+        {
+            ctx.check_field(type_name, name, *name_span, diagnostics);
+        }
         match fields.iter().find(|(field, _)| field == name) {
             None => diagnostics.push(FluxError::TypeMismatch {
                 expected: format!("field `{name}`"),
@@ -1004,6 +1010,31 @@ fn infer_method_builtin(
     };
     let array = |t: Type| Type::Array(Box::new(t));
     Some(match name {
+        "\0bytes_len" => {
+            want_args(0, diagnostics);
+            Type::Int64
+        }
+        "\0bytes_slice" => {
+            want_args(2, diagnostics);
+            for arg in rest {
+                let got = infer(arg, diagnostics);
+                if !got.is_error() && !got.is_integer() {
+                    mismatch("an integer".into(), &got, arg.span(), diagnostics);
+                }
+            }
+            Type::Bytes
+        }
+        "\0to_text" => {
+            want_args(0, diagnostics);
+            Type::Result {
+                ok: Box::new(Type::String),
+                err: Box::new(Type::String),
+            }
+        }
+        "\0to_bytes" => {
+            want_args(0, diagnostics);
+            Type::Bytes
+        }
         // `x.checked_add(y)`: `x`'s integer type, `None` instead of a stop.
         "\0checked_neg" | "\0checked_add" | "\0checked_sub" | "\0checked_mul" | "\0checked_div"
         | "\0checked_rem" | "\0checked_pow" => {

@@ -1,8 +1,8 @@
 // How the tool prints what it read.
 pub struct Server {
-    name: String,
-    port: Int,
-    workers: Int
+    pub name: String,
+    pub port: Int,
+    pub workers: Int
 }
 
 fn plural(n: Int, word: String) -> String {

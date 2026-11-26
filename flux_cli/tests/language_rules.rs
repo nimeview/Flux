@@ -451,3 +451,70 @@ fn checked_integer_operations_return_none_instead_of_stopping() {
         "expected `an integer`, found `Float64`",
     );
 }
+
+/// 0.4: bit operations on integers, with Rust's precedence: `|` < `^` <
+/// `&` < shifts < `+`, all below comparisons. `!` on an integer flips its
+/// bits; `||`, `&&`, and closures `|x|` keep their meaning.
+#[test]
+fn bit_operations_work_on_integers() {
+    prints(
+        "import io { println }\nconst READ = 1\nconst WRITE = 2\nfn main() {\n    let flags = READ | WRITE\n    let word = 0x1234\n    let b = 0xf0u8\n    let neg = -8\n    println(\"{flags} {flags & WRITE} {flags ^ READ} {word >> 8} {word & 0xff} {1 << 10}\")\n    println(\"{!0u8} {!b} {!0} {b << 4} {neg >> 1} {200u8 >> 3}\")\n    println(\"{1 + 2 << 3} {6 & 3 == 2} {true || false && !false}\")\n    println(\"{[1, 2, 3].map(|x| x | 8)}\")\n}\n",
+        "3 2 2 18 52 1024\n255 15 -1 0 -4 25\n24 true true\n[9, 10, 11]\n",
+    );
+    rejects(
+        "fn main() {\n    let a = 1.5 & 2\n}\n",
+        "integer types for a bit operation",
+    );
+    rejects(
+        "fn main() {\n    let b = true | false\n}\n",
+        "integer types for a bit operation",
+    );
+    let (status, _, stderr) =
+        both("import io { println }\nfn main() {\n    let n = 70\n    println(\"{1 << n}\")\n}\n");
+    assert_eq!(status, Some(1));
+    assert!(stderr.contains("integer overflow"), "{stderr}");
+}
+
+/// 0.4: `mut` parameters: the function's changes go back to the caller's
+/// variable, field, or element; a function that declares a result returns
+/// it as well.
+#[test]
+fn mut_parameters_write_back_to_the_callers_place() {
+    prints(
+        "import io { println }\nimport collections { range }\nstruct Cart {\n    items: [Int],\n    total: Int\n}\nfn add_tax(mut prices: [Int], pct: Int) {\n    for i in range(prices.len()) {\n        prices[i] += prices[i] * pct / 100\n    }\n}\nfn take_first(mut xs: [Int]) -> Option[Int] {\n    match xs.first() {\n        Some(v) => {\n            xs = xs.slice(1, xs.len())\n            return Some(v)\n        },\n        None => None\n    }\n}\nfn swap(mut a: Int, mut b: Int) {\n    let t = a\n    a = b\n    b = t\n}\nfn bump(mut n: Int) -> Int {\n    n += 1\n    if n > 5 {\n        n * 10\n    } else {\n        n\n    }\n}\nfn main() {\n    let mut list = [100, 200]\n    add_tax(mut list, 10)\n    let mut x = 1\n    let mut y = 2\n    swap(mut x, mut y)\n    let first = take_first(mut list)\n    let mut cart = Cart { items: [5, 6], total: 0 }\n    add_tax(mut cart.items, 50)\n    let mut grid = [[1, 2], [3, 4]]\n    let mut k = 0\n    add_tax(mut grid[k + 1], 100)\n    let mut c = 5\n    let r = bump(mut c)\n    println(\"{list} {x} {y} {first} {cart.items} {grid} {c} {r}\")\n}\n",
+        "[220] 2 1 Some(110) [7, 9] [[1, 2], [6, 8]] 6 60\n",
+    );
+    let grow = "fn grow(mut xs: [Int], n: Int) {\n    xs = xs + [n]\n}\nfn plain(xs: [Int]) -> Int {\n    xs.len()\n}\n";
+    for (body, needle) in [
+        (
+            "    let mut a = [1]\n    grow(a, 2)\n",
+            "this function has `mut` parameters",
+        ),
+        (
+            "    let g = grow\n",
+            "`grow` has `mut` parameters and cannot be used as a value",
+        ),
+        (
+            "    let mut a = [1]\n    let n = plain(mut a)\n",
+            "`mut` arguments go to a declared function with `mut` parameters",
+        ),
+        (
+            "    let mut a = [1]\n    let n = 1 + plain([0]) + grow(mut a, 2).len()\n",
+            "a call with `mut` arguments must be a statement, or the value of a `let`",
+        ),
+        (
+            "    let mut a = [1]\n    let r = grow(mut a, 2)\n",
+            "declares no result, so it has no value to bind",
+        ),
+        (
+            "    grow(mut [1, 2], 3)\n",
+            "a `mut` argument is a variable, or a field or element of one",
+        ),
+        (
+            "    let a = [1]\n    grow(mut a, 2)\n",
+            "cannot assign to immutable local `a`",
+        ),
+    ] {
+        rejects(&format!("{grow}fn main() {{\n{body}}}\n"), needle);
+    }
+}

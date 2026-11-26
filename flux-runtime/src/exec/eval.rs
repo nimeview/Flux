@@ -108,6 +108,14 @@ impl Executor {
                         (RuntimeValue::Array(items), Some(i)) => {
                             usize::try_from(i).ok().and_then(|i| items.get(i).cloned())
                         }
+                        // `b[i]` on bytes is a `UInt8`.
+                        (RuntimeValue::Bytes(bytes), Some(i)) => usize::try_from(i)
+                            .ok()
+                            .and_then(|i| bytes.get(i))
+                            .map(|b| RuntimeValue::Int {
+                                width: flux_value::IntWidth::U8,
+                                bits: u64::from(*b),
+                            }),
                         _ => None,
                     };
                     match element {
@@ -153,6 +161,34 @@ impl Executor {
                 Inst::Neg => {
                     let v = stack_pop(stack, "Neg");
                     match flux_value::negate(&v) {
+                        Ok(n) => stack.push(n),
+                        Err(e) => {
+                            self.raise(e);
+                            return RuntimeValue::Unit;
+                        }
+                    }
+                }
+                Inst::BitAnd | Inst::BitOr | Inst::BitXor | Inst::Shl | Inst::Shr => {
+                    let op = match inst {
+                        Inst::BitAnd => flux_value::BitOp::And,
+                        Inst::BitOr => flux_value::BitOp::Or,
+                        Inst::BitXor => flux_value::BitOp::Xor,
+                        Inst::Shl => flux_value::BitOp::Shl,
+                        _ => flux_value::BitOp::Shr,
+                    };
+                    let b = stack_pop(stack, "bit rhs");
+                    let a = stack_pop(stack, "bit lhs");
+                    match flux_value::bitwise(op, &a, &b) {
+                        Ok(v) => stack.push(v),
+                        Err(e) => {
+                            self.raise(e);
+                            return RuntimeValue::Unit;
+                        }
+                    }
+                }
+                Inst::BitNot => {
+                    let v = stack_pop(stack, "BitNot");
+                    match flux_value::bit_not(&v) {
                         Ok(n) => stack.push(n),
                         Err(e) => {
                             self.raise(e);

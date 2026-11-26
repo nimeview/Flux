@@ -6,10 +6,15 @@ Notable changes to Flux. The versioning policy is in [`RELEASE.md`](RELEASE.md).
 
 ### Added
 
+- Integer bit operations: `&`, `|`, `^`, `<<`, `>>`, and bitwise `!`; `!` on `Bool` stays logical NOT. Shifts keep the left operand's type, drop shifted-out bits, and preserve the sign for signed right shifts; a negative shift or one at least the type's width is `integer overflow`. The JIT runs code with bit operations on the VM.
+- `Bytes` for raw bytes: `io`'s `read_bytes` and `write_bytes`, `collections`' `bytes([Int])`, indexing as `UInt8`, `len`, `slice`, UTF-8 decoding with `to_text`, and `String.to_bytes()`.
+- `mut` function parameters, written at both declaration and call (`fn grow(mut xs: [Int], n: Int)`, `grow(mut xs, 3)`): a mutable local starts as the argument and its final value is written back to the caller's variable, field, or element. Several are allowed, including in generic functions and across modules; a call is a statement or a `let` value, with a result only when declared with `-> T`.
+- Private struct fields: a field is private to its module unless marked `pub` before its name. Naming another module's private field is the new error E033; completion after `.` leaves those fields out. Enum variants' named fields stay visible wherever the enum is.
 - Checked integer methods on every integer type: `checked_add(m)`, `checked_sub(m)`, `checked_mul(m)`, `checked_div(m)`, `checked_rem(m)`, `checked_neg()`, and `checked_pow(exponent)`. They return `Option` of the receiver's type: `Some(result)` on success, or `None` for overflow, division by zero, an integer argument that does not fit that type, or a negative exponent. They need no import and are pure, including in derived values and `const` initializers.
 
 ### Changes that can alter programs
 
+- Before 0.4, every struct field was visible everywhere; fields without `pub` are now private to their module. This applies to field reads, writes, `with`, destructuring `let` patterns, and struct literals. A literal must list every field, so outside its module a type with a private field must be built through the functions or methods its module provides. Migration: `flux migrate --write` adds `pub` to every field of every `pub struct` so programs compile as before; other structs and enum variants are left as they are. Then remove `pub` where a field should be private.
 - A derived value, a `const` initializer, or a `track fn` may no longer run an `act fn` (E008), directly, through another function, or through a function value. An action's reads are not tracked, so a derived value computed through one could go stale even when the action only read sources. Migration: write `track fn` instead of `act fn` for a function that a derived value, `const` initializer, or `track fn` uses to compute from sources.
 
 ## [0.3.1] - 2026-11-26

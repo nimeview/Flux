@@ -79,6 +79,8 @@ fn main() {
 
 A closure's value is its body's value, so `return` is not allowed inside one.
 
+A function with [`mut` parameters](./basics.md#mutable-parameters) cannot be used as a value; call it directly with `mut` before each of those arguments.
+
 Functions have no equality and no text form. The same holds for any array, `Option`, `Result`, tuple, map, struct, or enum containing a function, at any depth. `==`, `!=`, array `contains`, `to_string()`, interpolation, and `println` reject them (E005). For example, `[id].contains(id)` is an error when `id` is a function. Compare or show the data the function works on instead.
 
 ## Generics
@@ -184,7 +186,7 @@ fn main() {
 count 10
 ```
 
-`mut self` makes a method that changes the value it is called on. Call it on its own line, on a `let mut` variable or a field or element of one (`board.counters[i].tick()`). The method works on a copy, and the copy replaces the value only when the method finishes, so a method that fails changes nothing. It cannot return a value.
+`mut self` makes a method that changes the value it is called on. Call it on its own line, on a `let mut` variable or a field or element of one (`board.counters[i].tick()`). The method works on a copy, and the copy replaces the value only when the method finishes, so a method that fails changes nothing. It cannot return a value. Methods cannot have other `mut` parameters.
 
 You can add methods to `String`, `Int`, and the other built-in types the same way (`impl String { fn shout(self) -> String { self + "!" } }`). Such a method is visible in its own file and in files that import that file.
 

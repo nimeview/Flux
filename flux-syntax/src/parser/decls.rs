@@ -115,10 +115,12 @@ pub(super) fn parse_struct(
         .into_inner()
         .map(|f| {
             let fspan = span_of(source_id, &f);
-            let mut fi = f.into_inner();
+            let mut fi = f.into_inner().peekable();
+            let pub_ = take_pub(&mut fi);
             let fname = parse_ident(source_id, fi.next().expect("field name"));
             let fty = parse_type_name(source_id, fi.next().expect("field type"));
             StructField {
+                pub_,
                 name: fname,
                 ty: fty,
                 span: fspan,
@@ -472,6 +474,7 @@ fn parse_fn_sig(
                 params.insert(
                     0,
                     Param {
+                        mutable: false,
                         name: Ident {
                             name: "self".to_string(),
                             span,
@@ -510,10 +513,19 @@ fn parse_params_from(source_id: SourceId, pair: pest::iterators::Pair<'_, Rule>)
 
 fn parse_param(source_id: SourceId, pair: pest::iterators::Pair<'_, Rule>) -> Param {
     let span = span_of(source_id, &pair);
-    let mut inner = pair.into_inner();
+    let mut inner = pair.into_inner().peekable();
+    let mutable = inner.peek().is_some_and(|p| p.as_rule() == Rule::kw_mut);
+    if mutable {
+        inner.next();
+    }
     let name = parse_ident(source_id, inner.next().expect("param name"));
     let ty = parse_type_name(source_id, inner.next().expect("param type"));
-    Param { name, ty, span }
+    Param {
+        mutable,
+        name,
+        ty,
+        span,
+    }
 }
 
 fn parse_param_list(source_id: SourceId, pair: pest::iterators::Pair<'_, Rule>) -> Vec<Param> {

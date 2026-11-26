@@ -224,3 +224,24 @@ fn exit_in_the_repl_ends_it_with_that_status() {
     );
     assert_eq!(status, Some(7));
 }
+
+/// 0.4: `Bytes`: built from numbers or text, indexed as `UInt8`, sliced,
+/// read back as UTF-8, and written to and read from a file.
+#[test]
+fn bytes_are_built_indexed_and_round_trip_through_a_file() {
+    let (status, stdout, stderr) = both(
+        "import io { println, read_bytes, write_bytes }\nimport collections { bytes }\n\nfn main() {\n    let missing = \"missing.bin\"\n    let b = bytes([72, 105, 0, 255])\n    println(\"{b} {b.len()} {b[1]} {b[3] >> 4} {b.slice(0, 2).to_text()}\")\n    let t = \"héllo\".to_bytes()\n    println(\"{t.len()} {t.to_text()} {b.to_text()}\")\n    match write_bytes(\"out.bin\", b) {\n        Ok(_) => println(\"written\"),\n        Err(e) => println(e)\n    }\n    match read_bytes(\"out.bin\") {\n        Ok(r) => println(\"{r == b} {r.len()}\"),\n        Err(e) => println(e)\n    }\n    let gone = read_bytes(missing).is_err()\n    println(\"{gone}\")\n}\n",
+        "",
+    );
+    assert_eq!(status, Some(0), "{stderr}");
+    assert_eq!(
+        stdout,
+        "Bytes[72, 105, 0, 255] 4 105 15 Ok(\"Hi\")\n6 Ok(\"héllo\") Err(\"not UTF-8 text at byte 3\")\nwritten\ntrue 4\ntrue\n"
+    );
+    let (status, _, stderr) = both(
+        "import collections { bytes }\nfn main() {\n    let b = bytes([300])\n}\n",
+        "",
+    );
+    assert_eq!(status, Some(1));
+    assert!(stderr.contains("numeric cast out of range"), "{stderr}");
+}

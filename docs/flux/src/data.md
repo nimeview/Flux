@@ -40,6 +40,32 @@ fn main() {
 [9, 2] [1, 2]
 ```
 
+## Bytes
+
+`Bytes` holds raw bytes, one byte each. Build it with `bytes(values: [Int])` from `collections`; every value must be in `0..255`, or the program stops with `numeric cast out of range`. A string's `to_bytes()` gives its UTF-8 bytes, so its byte length can differ from its character count:
+
+```flux
+import io { println }
+
+import collections { bytes }
+
+fn main() {
+    let b = bytes([72, 105, 0, 255])
+    let word = "héllo"
+    println("{b} {b.len()} {b[1]} {b.slice(0, 2).to_text()}")
+    println("{word.to_bytes().len()}")
+}
+```
+
+```output
+Bytes[72, 105, 0, 255] 4 105 Ok("Hi")
+6
+```
+
+`b.len()` returns an `Int`; `b[i]` returns a `UInt8`, with an out-of-range index giving a runtime error. `b.slice(start, end)` returns `Bytes`. `b.to_text()` returns `Result[String, String]`: `Ok(text)` for valid UTF-8, or `Err` with "not UTF-8 text at byte N". `==` compares the bytes, and their display form is `Bytes[72, 105]`.
+
+For files, `read_bytes(path) -> Result[Bytes, String]` and `write_bytes(path, b) -> Result[Unit, String]` in `io` read and write raw bytes. Like `read_file`, these are side effects; see [io](./stdlib.md#io).
+
 ## Maps
 
 `Map[K, V]` maps keys to values. Keys are integers, strings, `Bool`, or `Char`. Entries stay in key order, so printing and iterating are predictable.
@@ -69,6 +95,8 @@ fn main() {
 Reading a missing key with `ages["zed"]` is the runtime error `key not found`.
 
 ## Structs
+
+Struct fields are private to their module unless marked `pub` before the field name (`pub x: Int`); see [Private fields](modules.md#private-fields) for using structs across modules.
 
 ```flux
 import io { println }

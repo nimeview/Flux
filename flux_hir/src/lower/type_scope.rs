@@ -538,6 +538,7 @@ impl Rewrite<'_> {
 
     fn expr(&mut self, expr: &mut Expr) {
         match expr {
+            Expr::MutArg { expr, .. } => self.expr(expr),
             Expr::Int { .. } | Expr::Float { .. } | Expr::Bool { .. } | Expr::String { .. } => {}
             Expr::InterpolatedString { parts, .. } => {
                 for part in parts {

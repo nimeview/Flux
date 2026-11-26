@@ -198,7 +198,7 @@ fn main() {
         ),
         (
             "geo.fl",
-            "pub struct Pair[T] { a: T, b: T }
+            "pub struct Pair[T] { pub a: T, pub b: T }
 pub enum Tree[T] { Leaf, Node(T) }
 
 pub fn swap[T](p: Pair[T]) -> Pair[T] {

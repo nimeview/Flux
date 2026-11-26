@@ -649,7 +649,11 @@ pub(crate) fn infer_expr(
                 }
             }
         }
-        HirExpr::Unary { op, expr, .. } => {
+        HirExpr::Unary {
+            op,
+            expr,
+            span: unary_span,
+        } => {
             let inner = infer_expr(ctx, expr, types, names, source, diagnostics)?;
             match op {
                 UnaryOp::Neg => {
@@ -681,8 +685,13 @@ pub(crate) fn infer_expr(
                         })
                     }
                 }
-                UnaryOp::Not => {
+                UnaryOp::Not | UnaryOp::BitNot => {
                     let found = unwrap_value_type(&inner);
+                    // `!` on an integer flips its bits.
+                    if found.is_integer() {
+                        ctx.bit_not_sites.borrow_mut().insert(*unary_span);
+                        return Some(found);
+                    }
                     if found != Type::Bool && !found.is_error() {
                         diagnostics.push(FluxError::TypeMismatch {
                             expected: "Bool".into(),
@@ -1096,6 +1105,11 @@ pub(crate) fn infer_expr(
             Some(crate::generic::instantiate(&enum_ty, &args))
         }
         HirExpr::StructLit { name, fields, span } => {
+            // Outside its module, a struct with a private field is built by
+            // its module's functions.
+            for (field, _) in fields {
+                ctx.check_field(name, field, *span, diagnostics);
+            }
             let Some(struct_ty @ Type::Struct { .. }) = ctx.user_type(name).cloned() else {
                 diagnostics.push(FluxError::UnknownType {
                     name: name.clone(),
@@ -1131,8 +1145,14 @@ pub(crate) fn infer_expr(
             if inner.is_error() {
                 return Some(Type::Error);
             }
-            if let Type::Struct { ref fields, .. } = inner {
+            if let Type::Struct {
+                ref name,
+                ref fields,
+                ..
+            } = inner
+            {
                 if let Some((_, ft)) = fields.iter().find(|(n, _)| n == field) {
+                    ctx.check_field(name, field, *span, diagnostics);
                     return Some(ft.clone());
                 }
             }
@@ -1209,6 +1229,7 @@ pub(crate) fn infer_expr(
             }
             match unwrap_value_type(&base_ty) {
                 Type::Array(inner) => Some(*inner),
+                Type::Bytes => Some(Type::UInt8),
                 Type::Error => Some(Type::Error),
                 other => {
                     diagnostics.push(FluxError::TypeMismatch {
@@ -1470,6 +1491,7 @@ fn library_receiver(ty: &Type) -> flux_std::methods::Receiver {
         Type::Map { .. } => Receiver::Map,
         Type::Option(_) => Receiver::Option,
         Type::Result { .. } => Receiver::Result,
+        Type::Bytes => Receiver::Bytes,
         t if t.is_integer() || t.is_float() => Receiver::Number,
         _ => Receiver::Other,
     }

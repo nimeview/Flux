@@ -4,4 +4,4 @@ version = 1
 [[package]]
 name = "geometry"
 path = "../geometry"
-checksum = "sha256:2452a1023788a3a5d42d97e754788423bb66be28936b28455ad2cfc859136a85"
+checksum = "sha256:7edbf00fb369de917484c16de5f9eb3331793f2c6eba04ed55d7494235da2feb"

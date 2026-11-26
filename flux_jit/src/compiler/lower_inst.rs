@@ -429,6 +429,9 @@ pub(crate) fn lower_insts(
             }
 
             Inst::MakeUserStruct { .. } | Inst::FieldGet(_) => return None,
+            Inst::BitAnd | Inst::BitOr | Inst::BitXor | Inst::Shl | Inst::Shr | Inst::BitNot => {
+                return None
+            }
         }
     }
 

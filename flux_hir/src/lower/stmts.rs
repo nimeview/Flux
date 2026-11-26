@@ -858,6 +858,15 @@ fn lower_stmt(
     symbols: &mut SymbolTable,
     diagnostics: &mut DiagnosticBag,
 ) -> Option<Vec<HirStmt>> {
+    // `f(mut xs)` as a statement or a `let` value: the call and the
+    // write-backs it means.
+    if let Some(stmts) = mut_call_stmts(stmt, symbols, diagnostics) {
+        let mut out = Vec::new();
+        for stmt in &stmts? {
+            out.extend(lower_stmt(stmt, symbols, diagnostics)?);
+        }
+        return Some(out);
+    }
     let ctx = symbols.current_context();
     match stmt {
         Stmt::Let(LetStmt {
@@ -1336,4 +1345,241 @@ fn check_writer_at(
         }
         None => diagnostics.push(error),
     }
+}
+
+/// The statements a call with `mut` arguments means, when `stmt` is one
+/// (`Some(None)` after an error). A function with `mut` parameters returns
+/// `(result, p1, p2, …)` when it declares a result, else `(p1, p2, …)`, or
+/// `p1` alone (see `funcs::with_mut_params`); each `mut` argument's place
+/// gets its value back:
+///
+/// `f(mut a, b)` → `let t = f(a, b)`, `a = t.0` (or `a = f(a, b)`);
+/// `let x = f(mut a)` → `let t = f(a)`, `a = t.1`, `let x = t.0`.
+///
+/// An index in a place is evaluated once, before the call.
+fn mut_call_stmts(
+    stmt: &Stmt,
+    symbols: &mut SymbolTable,
+    diagnostics: &mut DiagnosticBag,
+) -> Option<Option<Vec<Stmt>>> {
+    let (call, binding) = match stmt {
+        Stmt::Expr(call @ Expr::Call { .. }) => (call, None),
+        Stmt::Let(l) => match &l.value {
+            call @ Expr::Call { .. } => (call, Some(l)),
+            _ => return None,
+        },
+        _ => return None,
+    };
+    let Expr::Call { callee, args, span } = call else {
+        return None;
+    };
+    if !args.iter().any(|a| matches!(a, Expr::MutArg { .. })) {
+        return None;
+    }
+    let span = *span;
+    let fail = |message: String, at: Span, diagnostics: &mut DiagnosticBag| {
+        diagnostics.push(FluxError::Parse {
+            message,
+            span: span_to_miette(at),
+            source_id: at.source,
+        });
+        Some(None)
+    };
+    let Some(info) = mut_callee(callee, symbols) else {
+        return fail(
+            "`mut` arguments go to a declared function with `mut` parameters".into(),
+            span,
+            diagnostics,
+        );
+    };
+    for (i, arg) in args.iter().enumerate() {
+        let given = matches!(arg, Expr::MutArg { .. });
+        let wanted = info.positions.contains(&i);
+        if given != wanted {
+            return fail(
+                if wanted {
+                    format!(
+                        "argument {} is a `mut` parameter: write `mut` before it",
+                        i + 1
+                    )
+                } else {
+                    format!("argument {} is not a `mut` parameter: remove `mut`", i + 1)
+                },
+                arg.span(),
+                diagnostics,
+            );
+        }
+    }
+    if binding.is_some() && !info.has_result {
+        return fail(
+            "this function has `mut` parameters and declares no result, so it has no value to bind"
+                .into(),
+            span,
+            diagnostics,
+        );
+    }
+    let id = |name: String| Ident { name, span };
+    let mut out = Vec::new();
+    let mut places = Vec::new();
+    let mut plain_args = Vec::new();
+    for arg in args {
+        let Expr::MutArg {
+            expr: place,
+            span: at,
+        } = arg
+        else {
+            plain_args.push(arg.clone());
+            continue;
+        };
+        let Some((root, mut path)) = place_parts(place) else {
+            return fail(
+                "a `mut` argument is a variable, or a field or element of one".into(),
+                *at,
+                diagnostics,
+            );
+        };
+        // Indices are evaluated once: before the call.
+        for (k, step) in path.iter_mut().enumerate() {
+            if let PlaceStep::Index(index) = step {
+                if !matches!(index, Expr::Int { .. } | Expr::Ident { .. }) {
+                    let temp = format!("\0mut_index_{}_{}_{k}", at.start, places.len());
+                    out.push(Stmt::Let(LetStmt {
+                        pub_: false,
+                        mutable: false,
+                        pattern: LetPattern::Ident(id(temp.clone())),
+                        ty: None,
+                        value: index.clone(),
+                        span: *at,
+                    }));
+                    *index = Expr::Ident {
+                        name: temp,
+                        span: *at,
+                    };
+                }
+            }
+        }
+        plain_args.push(rebuild_place(&root, &path));
+        places.push((root, path));
+    }
+    symbols.mut_calls_ok.insert(span);
+    let call = Expr::Call {
+        callee: callee.clone(),
+        args: plain_args,
+        span,
+    };
+    let assign = |root: &Ident, path: &[PlaceStep], value: Expr| {
+        Stmt::Assign(AssignStmt {
+            name: root.clone(),
+            path: path.to_vec(),
+            op: None,
+            value,
+            span,
+        })
+    };
+    if !info.has_result && places.len() == 1 {
+        let (root, path) = &places[0];
+        out.push(assign(root, path, call));
+        return Some(Some(out));
+    }
+    let temp = format!("\0mut_call_{}", span.start);
+    out.push(Stmt::Let(LetStmt {
+        pub_: false,
+        mutable: false,
+        pattern: LetPattern::Ident(id(temp.clone())),
+        ty: None,
+        value: call,
+        span,
+    }));
+    let first = usize::from(info.has_result);
+    let part = |k: usize| Expr::Field {
+        base: Box::new(Expr::Ident {
+            name: temp.clone(),
+            span,
+        }),
+        field: k.to_string(),
+        span,
+    };
+    for (k, (root, path)) in places.iter().enumerate() {
+        out.push(assign(root, path, part(first + k)));
+    }
+    if let Some(binding) = binding {
+        let mut binding = binding.clone();
+        binding.value = part(0);
+        out.push(Stmt::Let(binding));
+    }
+    Some(Some(out))
+}
+
+/// `a.b[i].c` as its root and the steps after it, if it is a place.
+fn place_parts(expr: &Expr) -> Option<(Ident, Vec<PlaceStep>)> {
+    match expr {
+        Expr::Ident { name, span } if !name.contains("::") => Some((
+            Ident {
+                name: name.clone(),
+                span: *span,
+            },
+            Vec::new(),
+        )),
+        Expr::Field { base, field, span } => {
+            let (root, mut path) = place_parts(base)?;
+            path.push(PlaceStep::Field(Ident {
+                name: field.clone(),
+                span: *span,
+            }));
+            Some((root, path))
+        }
+        Expr::Index { base, index, .. } => {
+            let (root, mut path) = place_parts(base)?;
+            path.push(PlaceStep::Index((**index).clone()));
+            Some((root, path))
+        }
+        _ => None,
+    }
+}
+
+/// The expression that reads the place `root` + `path`.
+fn rebuild_place(root: &Ident, path: &[PlaceStep]) -> Expr {
+    let mut expr = Expr::Ident {
+        name: root.name.clone(),
+        span: root.span,
+    };
+    for step in path {
+        let span = expr.span();
+        expr = match step {
+            PlaceStep::Field(field) => Expr::Field {
+                base: Box::new(expr),
+                field: field.name.clone(),
+                span,
+            },
+            PlaceStep::Index(index) => Expr::Index {
+                base: Box::new(expr),
+                index: Box::new(index.clone()),
+                span,
+            },
+        };
+    }
+    expr
+}
+
+/// The `mut` parameters of the function `callee` names, if it has any.
+pub(super) fn mut_callee(callee: &Expr, symbols: &SymbolTable) -> Option<crate::symbol::MutParams> {
+    let Expr::Ident { name, .. } = callee else {
+        return None;
+    };
+    let symbol = match name.split_once("::") {
+        Some((alias, item)) if symbols.module_aliases.contains_key(alias) => {
+            let id = symbols
+                .qualified_symbols
+                .get(&(alias.to_string(), item.to_string()))?;
+            symbols.get(*id)?
+        }
+        _ => symbols.lookup(name)?,
+    };
+    // An imported name is an alias of the module's declaration.
+    let declared = symbols.get(symbol.id).map_or(&symbol.name, |s| &s.name);
+    symbols
+        .mut_params
+        .get(declared)
+        .or_else(|| symbols.mut_params.get(&symbol.name))
+        .cloned()
 }

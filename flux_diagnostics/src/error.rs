@@ -345,6 +345,18 @@ pub enum FluxError {
         source_id: SourceId,
     },
 
+    /// Another module's code names a struct field that is not `pub`.
+    #[error("field `{field}` of `{ty}` is private to its module")]
+    #[diagnostic(code(flux::E033), help("{help}"))]
+    PrivateField {
+        field: String,
+        ty: String,
+        help: String,
+        #[label("not visible here")]
+        span: miette::SourceSpan,
+        source_id: SourceId,
+    },
+
     /// A module's code changes a source another module declares.
     #[error("`{name}` belongs to another module; only that module changes it")]
     #[diagnostic(
@@ -406,11 +418,12 @@ impl FluxError {
             | Self::WriteOutsideAct { source_id, .. }
             | Self::UnsatisfiedBound { source_id, .. }
             | Self::ForeignSourceWrite { source_id, .. }
-            | Self::ActInPureContext { source_id, .. } => *source_id,
+            | Self::ActInPureContext { source_id, .. }
+            | Self::PrivateField { source_id, .. } => *source_id,
         }
     }
 
-    /// Stable diagnostic code (`E000`–`E027`, `E031`, and `E032`; warnings use E015,
+    /// Stable diagnostic code (`E000`–`E027` and `E031`–`E033`; warnings use E015,
     /// E026, and E028–E030).
     pub fn code(&self) -> &'static str {
         match self {
@@ -444,6 +457,7 @@ impl FluxError {
             Self::UnsatisfiedBound { .. } => "E031",
             Self::ForeignSourceWrite { .. } => "E032",
             Self::ActInPureContext { .. } => "E008",
+            Self::PrivateField { .. } => "E033",
         }
     }
 
@@ -481,6 +495,7 @@ impl FluxError {
             | Self::UnsatisfiedBound { span, .. }
             | Self::ForeignSourceWrite { span, .. }
             | Self::ActInPureContext { span, .. }
+            | Self::PrivateField { span, .. }
             | Self::DuplicateDefinition { span, .. } => *span,
         };
         crate::warning::span_from_miette(source_id, miette_span)

@@ -4,4 +4,4 @@ version = 1
 [[package]]
 name = "settings"
 path = "deps/settings"
-checksum = "sha256:8f43e99c0621b90e5d0a30d9bb082d148b6e14b014837ea774bf7f3d1159932d"
+checksum = "sha256:56388b55012e0ed353ca2bccadaedefe453c89cf525b46154ad6ec69ca0193ca"

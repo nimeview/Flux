@@ -57,11 +57,34 @@ pub fn apply_compiler_fixes(path: &Path, contents: &str) -> String {
     text
 }
 
+/// Since 0.4 a struct field is private to its module unless it is `pub`.
+/// Fields of a `pub struct` were visible to importers before, so each one
+/// without `pub` gets it: the program keeps compiling as it did.
+pub fn public_fields(contents: &str) -> String {
+    let mut diagnostics = flux_diagnostics::DiagnosticBag::new();
+    let Some(program) =
+        flux_syntax::parse_program(flux_diagnostics::SourceId(0), contents, &mut diagnostics)
+    else {
+        return contents.to_string();
+    };
+    let inserts: Vec<(usize, usize, String)> = program
+        .items
+        .iter()
+        .filter_map(|item| match item {
+            flux_syntax::Item::Struct(s) if s.pub_ => Some(s),
+            _ => None,
+        })
+        .flat_map(|s| s.fields.iter().filter(|f| !f.pub_))
+        .map(|f| (f.name.span.start, f.name.span.start, "pub ".to_string()))
+        .collect();
+    flux_diagnostics::apply_fixes(contents, &inserts).0
+}
+
 /// Migrate a single file; returns `(output, changed)`.
 pub fn migrate_file(path: &Path, write: bool) -> miette::Result<(String, bool)> {
     let input = fs::read_to_string(path)
         .map_err(|e| miette::miette!("failed to read {}: {e}", path.display()))?;
-    let output = apply_compiler_fixes(path, &migrate_source(&input));
+    let output = apply_compiler_fixes(path, &public_fields(&migrate_source(&input)));
     let changed = output != input;
     if write && changed {
         fs::write(path, &output)

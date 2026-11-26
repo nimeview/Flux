@@ -33,6 +33,7 @@ fn eval_const_hir_expr(expr: &HirExpr) -> Option<Value> {
                 Value::Bool(b) => Some(Value::Bool(!b)),
                 _ => None,
             },
+            flux_syntax::UnaryOp::BitNot => None,
         },
         HirExpr::Binary {
             op, left, right, ..
@@ -81,6 +82,8 @@ fn eval_const_binary(op: BinaryOp, left: Value, right: Value) -> Option<Value> {
         Op::Mul => NumOp::Mul,
         Op::Div => NumOp::Div,
         Op::Rem => NumOp::Rem,
+        // Bit operations run at run time.
+        Op::BitAnd | Op::BitOr | Op::BitXor | Op::Shl | Op::Shr => return None,
         Op::Eq | Op::Ne => {
             if std::mem::discriminant(&left) != std::mem::discriminant(&right)
                 && !(left.is_numeric() && right.is_numeric())

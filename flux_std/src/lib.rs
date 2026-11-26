@@ -65,6 +65,9 @@ pub const BUILTIN_FNS: &[&str] = &[
     "append_file",
     "file_exists",
     "read_stdin",
+    "read_bytes",
+    "write_bytes",
+    "bytes",
     "env_var",
     "current_dir",
     "list_dir",
@@ -117,6 +120,8 @@ pub const SIDE_EFFECT_BUILTINS: &[&str] = &[
     "write_file",
     "append_file",
     "read_stdin",
+    "read_bytes",
+    "write_bytes",
     "env_var",
     "current_dir",
     "list_dir",
@@ -156,6 +161,21 @@ pub fn call_builtin_checked(
         }
         "assert_eq" => return Some(math::assert_eq(args.first()?, args.get(1)?)),
         "exit" => return Some(os::exit(int_arg(args.first()))),
+        // `bytes([1, 2])`: each element must fit a byte.
+        "bytes" => {
+            let Value::Array(items) = args.first()? else {
+                return None;
+            };
+            let bytes: Option<Vec<u8>> = items
+                .iter()
+                .map(|v| v.as_int().and_then(|n| u8::try_from(n).ok()))
+                .collect();
+            return Some(
+                bytes
+                    .map(|b| Value::Bytes(std::sync::Arc::new(b)))
+                    .ok_or(flux_value::ArithError::CastOutOfRange),
+            );
+        }
         // Integer operands promote like arithmetic does; a value that does not
         // fit the promoted width (`min(-1, 0u64)`) is the same overflow error
         // as `-1 + 0u64`, not a missing result.
@@ -439,6 +459,11 @@ pub fn call_builtin(name: &str, args: &[Value]) -> Option<Value> {
         "assert_eq" => math::assert_eq(args.first()?, args.get(1)?).ok(),
         "read_line" => Some(io::read_line()),
         "read_stdin" => Some(os::read_stdin()),
+        "read_bytes" => Some(os::read_bytes(str_arg(args.first())?)),
+        "write_bytes" => match args.get(1)? {
+            Value::Bytes(b) => Some(os::write_bytes(str_arg(args.first())?, b)),
+            _ => None,
+        },
         "env_var" => Some(os::env_var(str_arg(args.first())?)),
         "current_dir" => Some(os::current_dir()),
         "list_dir" => Some(os::list_dir(str_arg(args.first())?)),

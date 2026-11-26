@@ -25,7 +25,13 @@ pub(crate) fn has_text_form(ty: &Type) -> bool {
 fn equatable(ty: &Type) -> bool {
     match unwrap_value_type(ty) {
         t if t.is_error() || t.is_integer() || t.is_float() => true,
-        Type::Bool | Type::Char | Type::String | Type::Unit | Type::Empty | Type::Var(_) => true,
+        Type::Bool
+        | Type::Char
+        | Type::String
+        | Type::Bytes
+        | Type::Unit
+        | Type::Empty
+        | Type::Var(_) => true,
         Type::Array(inner) | Type::Option(inner) => equatable(&inner),
         Type::Result { ok, err }
         | Type::Map {
@@ -78,6 +84,11 @@ pub(crate) fn infer_binary(
                 | BinaryOp::Gt
                 | BinaryOp::Ge => (numeric, "numeric type"),
                 BinaryOp::And | BinaryOp::Or => (*known == Type::Bool, "Bool"),
+                BinaryOp::BitAnd
+                | BinaryOp::BitOr
+                | BinaryOp::BitXor
+                | BinaryOp::Shl
+                | BinaryOp::Shr => (known.is_integer(), "integer type"),
                 BinaryOp::Eq | BinaryOp::Ne => (equality_supported(known), "equatable type"),
             };
             if !allowed {
@@ -106,6 +117,24 @@ pub(crate) fn infer_binary(
         return Some(Type::Error);
     }
     match op {
+        // Integers only: `&`, `|`, `^` in the wider type, shifts in the left's.
+        BinaryOp::BitAnd | BinaryOp::BitOr | BinaryOp::BitXor | BinaryOp::Shl | BinaryOp::Shr => {
+            if l.is_integer() && r.is_integer() {
+                Some(if matches!(op, BinaryOp::Shl | BinaryOp::Shr) {
+                    l.clone()
+                } else {
+                    widen_numeric(&l, &r)
+                })
+            } else {
+                diagnostics.push(FluxError::TypeMismatch {
+                    expected: "integer types for a bit operation".into(),
+                    found: format!("{} and {}", l.display(), r.display()),
+                    span: span_to_miette(span),
+                    source_id: span.source,
+                });
+                Some(Type::Error)
+            }
+        }
         BinaryOp::Add => {
             if matches!(l, Type::String) && matches!(r, Type::String) {
                 Some(Type::String)

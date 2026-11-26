@@ -202,7 +202,7 @@ fn main() {
         ),
         (
             "shapes.fl",
-            "pub struct Pair[T] { a: T, b: T }
+            "pub struct Pair[T] { pub a: T, pub b: T }
 
 pub trait Area {
     fn area(self) -> Int;

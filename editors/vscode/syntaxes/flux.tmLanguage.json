@@ -337,6 +337,10 @@
     "keyword": {
       "patterns": [
         {
+          "name": "storage.modifier.mut.flux",
+          "match": "\\bmut\\b"
+        },
+        {
           "name": "keyword.control.flux",
           "match": "\\b(if|else|while|for|in|match|return|break|continue)\\b"
         },
@@ -417,12 +421,20 @@
           "match": "[+\\-*/%]="
         },
         {
+          "name": "keyword.operator.bitwise.flux",
+          "match": "<<|>>"
+        },
+        {
           "name": "keyword.operator.comparison.flux",
           "match": "==|!=|<=|>=|<|>"
         },
         {
           "name": "keyword.operator.logical.flux",
           "match": "&&|\\|\\||!"
+        },
+        {
+          "name": "keyword.operator.bitwise.flux",
+          "match": "&|\\||\\^"
         },
         {
           "name": "keyword.operator.arithmetic.flux",

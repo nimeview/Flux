@@ -6,8 +6,8 @@ Each `.fl` file is a module with its own names. Mark what others may use with `p
 
 ```flux,file=geometry.fl
 pub struct Point {
-    x: Int,
-    y: Int
+    pub x: Int,
+    pub y: Int
 }
 
 pub fn origin() -> Point {
@@ -86,6 +86,50 @@ act fn main() {
 This prints `counter: 0` while the modules initialize, then `main heard 2`, `main heard 3`, `now 5`, and, when `main`'s batch ends, `counter: 5`. Writing `count = 0` in `main.fl` is an error (E032): to change a module's state, emit its event or call one of its `pub act fn`s. Modules initialize in dependency order, each running its watches at the end of its own initialization, so `counter: 0` comes before anything `main.fl` does.
 
 Types belong to their module too: two files may each declare a `Point`, and they are different types. Use another module's type through an import, as `Point` above, or as `geometry::Point`. Importing an enum makes its variants usable on their own, as in `Circle(1.0)`.
+
+### Private fields
+
+A struct field is private to its module unless you put `pub` before its name. Making the struct `pub` lets other modules use the type; mark each field they may name separately:
+
+```text
+// bank.fl
+pub struct Account {
+    pub owner: String,
+    balance: Int
+}
+
+impl Account {
+    fn open(owner: String) -> Self {
+        Self { owner: owner, balance: 0 }
+    }
+
+    fn deposit(mut self, amount: Int) {
+        self.balance += amount
+    }
+
+    fn balance(self) -> Int {
+        self.balance
+    }
+}
+```
+
+```text
+// main.fl
+import bank { Account }
+import io { println }
+
+fn main() {
+    let mut a = Account::open("ann")
+    a.deposit(5)
+    println("{a.owner} {a.balance()}")
+}
+```
+
+This prints `ann 5`. Inside `bank.fl`, every field is visible, including in its functions, methods, and `impl` blocks. A method can share a field's name: `balance()` reads the private `balance` field.
+
+In another file, only `pub` fields can be named in reads (`a.owner`), writes (`a.owner = "jo"`), `with { … }`, `let Account { … } = a` patterns, and struct literals. A literal must list every field, so an `Account` cannot be built by a literal outside `bank.fl`; use `Account::open` or the methods the module provides. Writing `a.balance` or `Account { owner: "x", balance: 1 }` in `main.fl` is E033: "field `balance` of `Account` is private to its module". Completion after `.` leaves out another module's private fields.
+
+Enum variants' named fields, such as `Rect { w: Float }`, have no `pub` and stay visible wherever the enum is.
 
 ## Packages
 

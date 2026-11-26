@@ -21,6 +21,8 @@ pub enum Type {
     Char,
     Bool,
     String,
+    /// Raw bytes; `b[i]` is a `UInt8`.
+    Bytes,
     Unit,
     /// The types of the values an event carries, in order.
     Event(Vec<Type>),
@@ -123,6 +125,7 @@ impl Type {
             Type::Char => "Char".into(),
             Type::Bool => "Bool".into(),
             Type::String => "String".into(),
+            Type::Bytes => "Bytes".into(),
             Type::Unit => "Unit".into(),
             Type::Event(values) => {
                 let values: Vec<String> = values.iter().map(|v| v.render(internal)).collect();
@@ -221,6 +224,7 @@ pub fn resolve_type_name(name: &str, span: Span) -> Result<Type, (String, Span)>
         "Char" => Type::Char,
         "Bool" => Type::Bool,
         "String" => Type::String,
+        "Bytes" => Type::Bytes,
         "Unit" => Type::Unit,
         other => return Err((other.to_string(), span)),
     };

@@ -8,7 +8,7 @@ import option { Some, None }
 import result { Ok, Err }
 
 pub struct Settings {
-    values: Map[String, String]
+    pub values: Map[String, String]
 }
 
 fn split_entry(line: String, number: Int) -> Result[[String], String] {

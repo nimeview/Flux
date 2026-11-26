@@ -80,7 +80,11 @@ flux migrate app.fl --write  # rewrite it
 flux migrate src --write     # every file in a directory
 ```
 
-Rewrites older forms to the current syntax. It applies the replacement that each warning E026 names (`rfn` becomes `track fn`, `on Tick { n -> }` becomes `on Tick(n) { }`, `m.name` becomes `m::name`), and turns a `fn` that writes a source (E027) into an `act fn`. It keeps comments and changes nothing else. Like the quick fixes in the editor, it is experimental.
+Rewrites older forms to the current syntax. It applies the replacement that each warning E026 names (`rfn` becomes `track fn`, `on Tick { n -> }` becomes `on Tick(n) { }`, `m.name` becomes `m::name`), and turns a `fn` that writes a source (E027) into an `act fn`.
+
+It also adds `pub` to every field of every `pub struct`, preserving the visibility that all fields had before 0.4. Other structs and enum variants are left as they are. Run `flux migrate --write` to keep programs compiling as before, then remove `pub` where a field should be private.
+
+It keeps comments and changes nothing else. Like the quick fixes in the editor, it is experimental.
 
 ## flux repl
 

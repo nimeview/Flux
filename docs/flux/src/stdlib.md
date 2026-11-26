@@ -69,9 +69,13 @@ Every integer type has `checked_add(m)`, `checked_sub(m)`, `checked_mul(m)`, `ch
 | `read_line()` | `Result[String, String]` | one line, without the newline; `Err("end of input")` at the end |
 | `read_file(path)` | `Result[String, String]` | a UTF-8 file |
 | `write_file(path, s)` | `Result[Unit, String]` | create or replace |
+| `read_bytes(path)` | `Result[Bytes, String]` | raw file bytes |
+| `write_bytes(path, b)` | `Result[Unit, String]` | write raw bytes |
 | `append_file(path, s)` | `Result[Unit, String]` | add to the end |
 | `file_exists(path)` | `Bool` | |
 | `read_stdin()` | `Result[String, String]` | all of standard input |
+
+`read_bytes` and `write_bytes` are side effects, like `read_file`; they cannot run in a derived value or `const` initializer (E017). For byte methods and UTF-8 conversion, see [Bytes](./data.md#bytes).
 
 ## env, fs, path, process
 
@@ -124,6 +128,7 @@ expected a .txt file
 |---|---|---|
 | `len(x)` | `Int` | array, string, or map |
 | `range(n)`, `range(a, b)`, `range(a, b, step)` | `[Int]` | the end is excluded |
+| `bytes(values: [Int])` | `Bytes` | each value must be `0..255`, else the runtime error `numeric cast out of range` |
 | `push(xs, v)` | `[T]` | |
 | `pop(xs)` | `[T]` | without the last element |
 | `set(xs, i, v)` | `[T]` | also `xs[i] = v` |

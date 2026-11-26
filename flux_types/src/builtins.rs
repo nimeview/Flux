@@ -16,6 +16,9 @@ pub fn os_signature(name: &str) -> Option<(Vec<Type>, Type)> {
     let option = |t: Type| Type::Option(Box::new(t));
     Some(match name {
         "read_stdin" | "current_dir" => (vec![], result(s())),
+        "read_bytes" => (vec![s()], result(Type::Bytes)),
+        "write_bytes" => (vec![s(), Type::Bytes], result(Type::Unit)),
+        "bytes" => (vec![Type::Array(Box::new(Type::Int))], Type::Bytes),
         "env_var" => (vec![s()], option(s())),
         "list_dir" => (vec![s()], result(Type::Array(Box::new(s())))),
         "is_dir" => (vec![s()], Type::Bool),

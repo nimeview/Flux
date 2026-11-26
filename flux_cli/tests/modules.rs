@@ -250,7 +250,7 @@ fn imported_struct_type_is_usable_and_type_names_are_per_module() {
                 "main.fl",
                 "import io { println }\nimport a { mk, Pt }\nfn main() -> Int {\n  let p = mk()\n  println(p.x)\n  0\n}\n",
             ),
-            ("a.fl", "pub struct Pt { x: Int }\npub fn mk() -> Pt { Pt { x: 7 } }\n"),
+            ("a.fl", "pub struct Pt { pub x: Int }\npub fn mk() -> Pt { Pt { x: 7 } }\n"),
         ],
         ".",
     );
@@ -264,11 +264,11 @@ fn imported_struct_type_is_usable_and_type_names_are_per_module() {
             ),
             (
                 "a.fl",
-                "pub struct Pt { x: Int }\npub fn mk() -> Pt { Pt { x: 1 } }\n",
+                "pub struct Pt { pub x: Int }\npub fn mk() -> Pt { Pt { x: 1 } }\n",
             ),
             (
                 "b.fl",
-                "pub struct Pt { y: Int }\npub fn mk2() -> Pt { Pt { y: 2 } }\n",
+                "pub struct Pt { pub y: Int }\npub fn mk2() -> Pt { Pt { y: 2 } }\n",
             ),
         ],
         ".",
@@ -280,7 +280,7 @@ fn imported_struct_type_is_usable_and_type_names_are_per_module() {
             ("main.fl", "import a { mk }\nlet p: Pt = mk()\n"),
             (
                 "a.fl",
-                "pub struct Pt { x: Int }\npub fn mk() -> Pt { Pt { x: 1 } }\n",
+                "pub struct Pt { pub x: Int }\npub fn mk() -> Pt { Pt { x: 1 } }\n",
             ),
         ],
         ".",
@@ -303,7 +303,7 @@ fn enums_traits_and_type_functions_of_modules_keep_their_own_names() {
     // imported, and every one is reachable qualified.
     let out = run_ok(
         &[
-            ("shapes.fl", "pub enum Shape {\n    Circle(Float),\n    Rect { w: Float, h: Float },\n    Dot\n}\n\npub trait Area {\n    fn area(self) -> Float;\n}\n\nimpl Area for Shape {\n    fn area(self) -> Float {\n        match self {\n            Circle(r) => 3.0 * r * r,\n            Rect { w, h } => w * h,\n            Dot => 0.0\n        }\n    }\n}\n\npub struct Point {\n    x: Int\n}\n\nimpl Point {\n    fn new(x: Int) -> Self {\n        Point { x: x }\n    }\n\n    fn twice(self) -> Int {\n        self.x * 2\n    }\n}\n\npub fn unit() -> Shape {\n    Circle(1.0)\n}\n\nstruct Hidden {\n    n: Int\n}\n"),
+            ("shapes.fl", "pub enum Shape {\n    Circle(Float),\n    Rect { w: Float, h: Float },\n    Dot\n}\n\npub trait Area {\n    fn area(self) -> Float;\n}\n\nimpl Area for Shape {\n    fn area(self) -> Float {\n        match self {\n            Circle(r) => 3.0 * r * r,\n            Rect { w, h } => w * h,\n            Dot => 0.0\n        }\n    }\n}\n\npub struct Point {\n    pub x: Int\n}\n\nimpl Point {\n    fn new(x: Int) -> Self {\n        Point { x: x }\n    }\n\n    fn twice(self) -> Int {\n        self.x * 2\n    }\n}\n\npub fn unit() -> Shape {\n    Circle(1.0)\n}\n\nstruct Hidden {\n    n: Int\n}\n"),
             ("other.fl", "pub enum Light {\n    Circle,\n    Off\n}\n"),
             ("main.fl", "import io { println }\nimport shapes { Shape, Point, Area, unit }\nimport other\n\nenum Local {\n    Circle,\n    Square\n}\n\nfn describe(s: Shape) -> String {\n    match s {\n        Circle(r) => \"circle {r}\",\n        Shape::Rect { w, h } => \"rect {w}x{h}\",\n        shapes::Shape::Dot => \"dot\"\n    }\n}\n\nfn main() {\n    let a = Circle\n    let b = Shape::Circle(2.0)\n    let c = Rect { w: 2.0, h: 3.0 }\n    let l = other::Light::Circle\n    println(\"{a} {b} {c} {l}\")\n    println(\"{describe(b)} {describe(c)} {describe(Dot)} {describe(unit())}\")\n    println(\"{c.area()} {Point::new(4).twice()} {shapes::Point::new(1)}\")\n    println(\"{b == Shape::Circle(2.0)} {a == Local::Circle}\")\n}\n"),
         ],
@@ -319,7 +319,7 @@ fn enums_traits_and_type_functions_of_modules_keep_their_own_names() {
     // Messages name types as declared.
     check_fails(
         &[
-            ("shapes.fl", "pub enum Shape {\n    Circle(Float),\n    Rect { w: Float, h: Float },\n    Dot\n}\n\npub trait Area {\n    fn area(self) -> Float;\n}\n\nimpl Area for Shape {\n    fn area(self) -> Float {\n        match self {\n            Circle(r) => 3.0 * r * r,\n            Rect { w, h } => w * h,\n            Dot => 0.0\n        }\n    }\n}\n\npub struct Point {\n    x: Int\n}\n\nimpl Point {\n    fn new(x: Int) -> Self {\n        Point { x: x }\n    }\n\n    fn twice(self) -> Int {\n        self.x * 2\n    }\n}\n\npub fn unit() -> Shape {\n    Circle(1.0)\n}\n\nstruct Hidden {\n    n: Int\n}\n"),
+            ("shapes.fl", "pub enum Shape {\n    Circle(Float),\n    Rect { w: Float, h: Float },\n    Dot\n}\n\npub trait Area {\n    fn area(self) -> Float;\n}\n\nimpl Area for Shape {\n    fn area(self) -> Float {\n        match self {\n            Circle(r) => 3.0 * r * r,\n            Rect { w, h } => w * h,\n            Dot => 0.0\n        }\n    }\n}\n\npub struct Point {\n    pub x: Int\n}\n\nimpl Point {\n    fn new(x: Int) -> Self {\n        Point { x: x }\n    }\n\n    fn twice(self) -> Int {\n        self.x * 2\n    }\n}\n\npub fn unit() -> Shape {\n    Circle(1.0)\n}\n\nstruct Hidden {\n    n: Int\n}\n"),
             ("main.fl", "import shapes { Shape }\nfn main() {\n    let s = Shape::Nope\n}\n"),
         ],
         ".",
@@ -329,8 +329,8 @@ fn enums_traits_and_type_functions_of_modules_keep_their_own_names() {
 
 #[test]
 fn review_findings_for_module_types_stay_fixed() {
-    let geo = "pub struct Point {\n    x: Int\n}\npub enum Color {\n    Red,\n    Green\n}\npub trait Area {\n    fn area(self) -> Int;\n}\nstruct Hidden {\n    x: Int\n}\n";
-    let other = "pub struct Point {\n    y: Int\n}\npub fn n() -> Int {\n    1\n}\n";
+    let geo = "pub struct Point {\n    pub x: Int\n}\npub enum Color {\n    Red,\n    Green\n}\npub trait Area {\n    fn area(self) -> Int;\n}\nstruct Hidden {\n    x: Int\n}\n";
+    let other = "pub struct Point {\n    pub y: Int\n}\npub fn n() -> Int {\n    1\n}\n";
     // An imported unit variant in a pattern is the variant, not a binding.
     check_fails(
         &[
@@ -421,4 +421,60 @@ fn each_module_sees_only_the_variants_of_enums_it_declares_or_imports() {
         ".",
     );
     assert_eq!(out, "2 2\n");
+}
+
+const BANK: &str = "pub struct Account {
+    pub owner: String,
+    balance: Int
+}
+
+impl Account {
+    fn open(owner: String) -> Self {
+        Self { owner: owner, balance: 0 }
+    }
+    fn deposit(mut self, amount: Int) {
+        self.balance += amount
+    }
+    fn balance(self) -> Int {
+        self.balance
+    }
+}
+";
+
+/// 0.4: a field without `pub` is private to its module: another module
+/// reads `pub` fields and uses the type's functions, and cannot name the
+/// private ones (E033) in field reads, writes, literals, `with`, or `let`
+/// patterns.
+#[test]
+fn private_fields_are_visible_only_in_their_module() {
+    let out = run_ok(
+        &[
+            (
+                "main.fl",
+                "import io { println }\nimport bank { Account }\nfn main() -> Int {\n  let mut a = Account::open(\"ann\")\n  a.deposit(5)\n  let b = a with { owner: \"bo\" }\n  println(\"{a.owner} {a.balance()} {b.owner}\")\n  0\n}\n",
+            ),
+            ("bank.fl", BANK),
+        ],
+        ".",
+    );
+    assert_eq!(out, "ann 5 bo\n");
+    for body in [
+        "  let n = a.balance\n",
+        "  a.balance = 3\n",
+        "  let b = Account { owner: \"x\", balance: 1 }\n",
+        "  let c = a with { balance: 9 }\n",
+        "  let Account { owner, balance } = a\n",
+    ] {
+        check_fails(
+            &[
+                (
+                    "main.fl",
+                    &format!("import bank {{ Account }}\nfn main() {{\n  let mut a = Account::open(\"ann\")\n{body}}}\n"),
+                ),
+                ("bank.fl", BANK),
+            ],
+            ".",
+            "field `balance` of `Account` is private to its module",
+        );
+    }
 }

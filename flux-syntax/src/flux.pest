@@ -42,7 +42,9 @@ ident_list = { ident ~ ("," ~ ident)* ~ ","? }
 pub_modifier = { "pub" }
 
 struct_decl = { pub_modifier? ~ "struct" ~ ident ~ type_params? ~ struct_fields }
-struct_fields = { "{" ~ struct_field ~ ("," ~ struct_field)* ~ ","? ~ "}" }
+struct_fields = { "{" ~ struct_member ~ ("," ~ struct_member)* ~ ","? ~ "}" }
+// A struct's field is private to its module unless it is `pub`.
+struct_member = { pub_modifier? ~ ident ~ ":" ~ type_name }
 struct_field = { ident ~ ":" ~ type_name }
 
 enum_decl = { pub_modifier? ~ "enum" ~ ident ~ type_params? ~ enum_variants }
@@ -170,8 +172,18 @@ or_expr = { and_expr ~ ("||" ~ and_expr)* }
 and_expr = { eq_expr ~ ("&&" ~ eq_expr)* }
 eq_expr = { rel_expr ~ (eq_op ~ rel_expr)* }
 eq_op = { "==" | "!=" }
-rel_expr = { add_expr ~ (rel_op ~ add_expr)* }
+rel_expr = { bitor_expr ~ (rel_op ~ bitor_expr)* }
 rel_op = { "<=" | ">=" | "<" | ">" }
+// Bit operations on integers, below comparisons as in Rust: `|` < `^` < `&`
+// < shifts < `+`. `||`, `&&`, and closures `|x|` keep their meaning.
+bitor_expr = { bitxor_expr ~ (bitor_op ~ bitxor_expr)* }
+bitor_op = @{ "|" ~ !("|" | "=") }
+bitxor_expr = { bitand_expr ~ (bitxor_op ~ bitand_expr)* }
+bitxor_op = @{ "^" ~ !"=" }
+bitand_expr = { shift_expr ~ (bitand_op ~ shift_expr)* }
+bitand_op = @{ "&" ~ !("&" | "=") }
+shift_expr = { add_expr ~ (shift_op ~ add_expr)* }
+shift_op = { "<<" | ">>" }
 add_expr = { mul_expr ~ (add_op ~ mul_expr)* }
 add_op = { "+" | "-" }
 mul_expr = { cast_expr ~ (mul_op ~ cast_expr)* }
@@ -194,7 +206,11 @@ call_suffix = { call_args }
 field_suffix = { "." ~ (ident | tuple_index) }
 // `t.0`: a value of a tuple, counting from 0.
 tuple_index = @{ ASCII_DIGIT+ }
-call_args = { "(" ~ expr_list? ~ ")" }
+call_args = { "(" ~ arg_list? ~ ")" }
+arg_list = { call_arg ~ ("," ~ call_arg)* ~ ","? }
+call_arg = { mut_arg | expr }
+// `f(mut list)`: the call may change `list` (a `mut` parameter).
+mut_arg = { kw_mut ~ expr }
 
 // `if`/`match` are operands too: `1 + if c { 1 } else { 2 }`.
 primary_expr = {
@@ -228,7 +244,9 @@ struct_lit = { (path_ident | ident) ~ "{" ~ field_init ~ ("," ~ field_init)* ~ "
 field_init = { ident ~ ":" ~ expr }
 
 param_list = { param ~ ("," ~ param)* ~ ","? }
-param = { ident ~ ":" ~ type_name }
+// `mut xs: [Int]`: the function's changes to `xs` go back to the caller.
+param = { (kw_mut ~ !(":"))? ~ ident ~ ":" ~ type_name }
+kw_mut = @{ "mut" ~ kw_end }
 expr_list = { expr ~ ("," ~ expr)* ~ ","? }
 
 type_ann = { ":" ~ type_name }

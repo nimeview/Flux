@@ -44,6 +44,10 @@ pub const METHOD_FNS: &[&str] = &[
     "\0checked_rem",
     "\0checked_neg",
     "\0checked_pow",
+    "\0bytes_len",
+    "\0bytes_slice",
+    "\0to_text",
+    "\0to_bytes",
 ];
 
 /// The ones that call a function argument; the VM runs them.
@@ -121,6 +125,40 @@ pub fn call(name: &str, args: &[Value]) -> Option<Result<Value, ArithError>> {
         return ok(Value::Option(checked(name, args).map(Box::new)));
     }
     match name {
+        "\0bytes_len" => match args.first()? {
+            Value::Bytes(b) => ok(Value::int_i64(b.len() as i64)),
+            _ => None,
+        },
+        // `b.slice(a, b)`: bytes `a` up to, not including, `b`.
+        "\0bytes_slice" => {
+            let Value::Bytes(bytes) = args.first()? else {
+                return None;
+            };
+            let (Some(a), Some(b)) = (int(args.get(1)), int(args.get(2))) else {
+                return Some(Err(ArithError::IndexOutOfBounds));
+            };
+            if !(0 <= a && a <= b && (b as u64) <= bytes.len() as u64) {
+                return Some(Err(ArithError::IndexOutOfBounds));
+            }
+            ok(Value::Bytes(std::sync::Arc::new(
+                bytes[a as usize..b as usize].to_vec(),
+            )))
+        }
+        // UTF-8 text, or `Err` naming where it stops being UTF-8.
+        "\0to_text" => match args.first()? {
+            Value::Bytes(b) => ok(Value::Result(match std::str::from_utf8(b) {
+                Ok(s) => Ok(Box::new(Value::String(s.to_string()))),
+                Err(e) => Err(Box::new(Value::String(format!(
+                    "not UTF-8 text at byte {}",
+                    e.valid_up_to()
+                )))),
+            })),
+            _ => None,
+        },
+        "\0to_bytes" => match args.first()? {
+            Value::String(s) => ok(Value::Bytes(std::sync::Arc::new(s.as_bytes().to_vec()))),
+            _ => None,
+        },
         "\0contains" => {
             let xs = items(args.first())?;
             let needle = args.get(1)?;
@@ -260,6 +298,7 @@ pub enum Receiver {
     Option,
     Result,
     Number,
+    Bytes,
     Other,
 }
 
@@ -337,6 +376,10 @@ pub fn library_method(receiver: Receiver, method: &str) -> Option<(&'static str,
         (Number, "min") => plain("min"),
         (Number, "max") => plain("max"),
         (Number, "clamp") => plain("clamp"),
+        (Bytes, "len") => plain("\0bytes_len"),
+        (Bytes, "slice") => plain("\0bytes_slice"),
+        (Bytes, "to_text") => plain("\0to_text"),
+        (String, "to_bytes") => plain("\0to_bytes"),
         (Number, "checked_add") => plain("\0checked_add"),
         (Number, "checked_sub") => plain("\0checked_sub"),
         (Number, "checked_mul") => plain("\0checked_mul"),
@@ -417,13 +460,15 @@ pub const LIBRARY_METHOD_NAMES: &[&str] = &[
     "checked_rem",
     "checked_neg",
     "checked_pow",
+    "to_text",
+    "to_bytes",
 ];
 
 /// The library functions a method of this name can call, on any receiver,
 /// for the compiler to give each a symbol before type checking.
 pub fn method_targets(method: &str) -> impl Iterator<Item = &'static str> + '_ {
     use Receiver::*;
-    [String, Array, Map, Option, Result, Number, Other]
+    [String, Array, Map, Option, Result, Number, Bytes, Other]
         .into_iter()
         .filter_map(move |receiver| library_method(receiver, method).map(|(f, _)| f))
 }

@@ -244,7 +244,8 @@ fn format_item(item: &Item, out: &mut String, level: usize) {
                 indent(out, level + 1);
                 let comma = if i + 1 < s.fields.len() { "," } else { "" };
                 out.push_str(&format!(
-                    "{}: {}{comma}\n",
+                    "{}{}: {}{comma}\n",
+                    pub_prefix(f.pub_),
                     f.name.name,
                     type_name_fmt(&f.ty)
                 ));
@@ -769,7 +770,7 @@ fn expr_fmt(expr: &flux_syntax::Expr) -> String {
         flux_syntax::Expr::Unary { op, expr, .. } => {
             let op = match op {
                 flux_syntax::UnaryOp::Neg => "-",
-                flux_syntax::UnaryOp::Not => "!",
+                flux_syntax::UnaryOp::Not | flux_syntax::UnaryOp::BitNot => "!",
             };
             format!("{op}{}", operand_fmt(expr, PREC_UNARY))
         }
@@ -790,6 +791,11 @@ fn expr_fmt(expr: &flux_syntax::Expr) -> String {
                 flux_syntax::BinaryOp::Mul => "*",
                 flux_syntax::BinaryOp::Div => "/",
                 flux_syntax::BinaryOp::Rem => "%",
+                flux_syntax::BinaryOp::BitAnd => "&",
+                flux_syntax::BinaryOp::BitOr => "|",
+                flux_syntax::BinaryOp::BitXor => "^",
+                flux_syntax::BinaryOp::Shl => "<<",
+                flux_syntax::BinaryOp::Shr => ">>",
             };
             // The grammar's chains are left-associative: `a - (b - c)` keeps
             // its parentheses and `(a - b) - c` does not need them.
@@ -808,6 +814,7 @@ fn expr_fmt(expr: &flux_syntax::Expr) -> String {
             format!("{}.{}", postfix_base_fmt(base), field)
         }
         flux_syntax::Expr::Paren { inner, .. } => format!("({})", expr_fmt(inner)),
+        flux_syntax::Expr::MutArg { expr, .. } => format!("mut {}", expr_fmt(expr)),
         flux_syntax::Expr::Tuple { elems, .. } => {
             let items = elems.iter().map(expr_fmt).collect::<Vec<_>>().join(", ");
             // `(x,)` stays as written, so that the error about it stays too.
@@ -906,10 +913,10 @@ fn expr_fmt(expr: &flux_syntax::Expr) -> String {
 
 // Binding strength, from the grammar's expression rules (weakest first).
 const PREC_CLOSURE: u8 = 0;
-const PREC_CAST: u8 = 7;
-const PREC_UNARY: u8 = 8;
-const PREC_POSTFIX: u8 = 9;
-const PREC_PRIMARY: u8 = 10;
+const PREC_CAST: u8 = 11;
+const PREC_UNARY: u8 = 12;
+const PREC_POSTFIX: u8 = 13;
+const PREC_PRIMARY: u8 = 14;
 
 fn binary_prec(expr: &flux_syntax::Expr) -> u8 {
     use flux_syntax::BinaryOp::*;
@@ -919,8 +926,12 @@ fn binary_prec(expr: &flux_syntax::Expr) -> u8 {
             And => 2,
             Eq | Ne => 3,
             Lt | Le | Gt | Ge => 4,
-            Add | Sub => 5,
-            Mul | Div | Rem => 6,
+            BitOr => 5,
+            BitXor => 6,
+            BitAnd => 7,
+            Shl | Shr => 8,
+            Add | Sub => 9,
+            Mul | Div | Rem => 10,
         },
         _ => PREC_PRIMARY,
     }
@@ -1093,7 +1104,12 @@ fn params_fmt(params: &[flux_syntax::Param], mut_self: bool) -> String {
             match (receiver, mut_self) {
                 (true, true) => "mut self".to_string(),
                 (true, false) => "self".to_string(),
-                _ => format!("{}: {}", p.name.name, type_name_fmt(&p.ty)),
+                _ => format!(
+                    "{}{}: {}",
+                    if p.mutable { "mut " } else { "" },
+                    p.name.name,
+                    type_name_fmt(&p.ty)
+                ),
             }
         })
         .collect::<Vec<_>>()

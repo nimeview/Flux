@@ -7,8 +7,8 @@ mod tagged;
 mod width;
 
 pub use arith::{
-    binary, binary_i64, cast, compare, int_from_i128, int_to_i128, negate, promote_int,
-    values_equal, ArithError, NumOp,
+    binary, binary_i64, bit_not, bitwise, cast, compare, int_from_i128, int_to_i128, negate,
+    promote_int, values_equal, ArithError, BitOp, NumOp,
 };
 pub use convert::{is_tag_representable, tagged_to_value, value_to_tagged};
 pub use display::{render, type_display_name};
@@ -56,6 +56,9 @@ pub enum Value {
     /// `Map[K, V]`, ordered by key; each entry keeps the key's own value
     /// (with its integer width). Shared and copied on write, like arrays.
     Map(std::sync::Arc<std::collections::BTreeMap<MapKey, (Value, Value)>>),
+    /// Raw bytes (`read_bytes`, `bytes([…])`): one byte each, shared and
+    /// copied on write like arrays.
+    Bytes(std::sync::Arc<Vec<u8>>),
     Unit,
 }
 
@@ -248,6 +251,7 @@ impl Value {
             Self::Option(_) => "Option",
             Self::Result(_) => "Result",
             Self::Map(_) => "Map",
+            Self::Bytes(_) => "Bytes",
             Self::Unit => "Unit",
         }
     }

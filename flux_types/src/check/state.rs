@@ -69,6 +69,14 @@ pub struct TypeCheckContext {
     /// Generic functions, including generic impls' methods: templates that
     /// only their specializations run.
     pub(crate) generic_templates: std::collections::HashSet<SymbolId>,
+    /// Each struct's file and its fields that are not `pub`, by type name.
+    pub(crate) private_fields: HashMap<
+        String,
+        (
+            flux_diagnostics::SourceId,
+            std::collections::HashSet<String>,
+        ),
+    >,
     /// `mut self` methods, and the call sites written as statements on a
     /// place (see `flux_hir::HirProgram::mut_call_sites`).
     pub(crate) mut_methods: std::collections::HashSet<SymbolId>,
@@ -103,6 +111,9 @@ pub struct TypeCheckContext {
         std::cell::RefCell<HashMap<(Option<SymbolId>, flux_diagnostics::Span), SymbolId>>,
     /// `place.m(…)` statements whose `m` is a library method that changes
     /// its receiver (`xs.push(1)`, `xs.sort()`): they store the result back.
+    /// `!x` on an integer, by span: a bit flip, which the rewrite after
+    /// type checking marks (`UnaryOp::BitNot`).
+    pub(crate) bit_not_sites: std::cell::RefCell<std::collections::HashSet<flux_diagnostics::Span>>,
     pub(crate) changing_sites:
         std::cell::RefCell<std::collections::HashSet<flux_diagnostics::Span>>,
     /// `op.f(x)` calls of the function in field `f`, by enclosing function and span.
@@ -204,6 +215,20 @@ impl TypeCheckContext {
         }
 
         ctx.trait_impls = program.trait_impls.clone();
+        ctx.private_fields = program
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                HirItem::Struct(s) if !s.private_fields.is_empty() => {
+                    let name = program.names.get(&s.name)?.clone();
+                    Some((
+                        name,
+                        (s.span.source, s.private_fields.iter().cloned().collect()),
+                    ))
+                }
+                _ => None,
+            })
+            .collect();
         ctx.generic_templates = program
             .items
             .iter()
@@ -268,6 +293,36 @@ impl TypeCheckContext {
                     .unwrap_or_else(|| ty.clone())
             }
             _ => ty.clone(),
+        }
+    }
+
+    /// Whether `field` of the struct `ty` cannot be named in the file `at`:
+    /// it is not `pub` and the struct is declared in another file.
+    pub fn field_hidden(&self, ty: &str, field: &str, at: flux_diagnostics::SourceId) -> bool {
+        self.private_fields
+            .get(ty)
+            .is_some_and(|(file, private)| *file != at && private.contains(field))
+    }
+
+    /// E033 for `field` of `ty` named at `span`, if it is hidden there.
+    pub(crate) fn check_field(
+        &self,
+        ty: &str,
+        field: &str,
+        span: flux_diagnostics::Span,
+        diagnostics: &mut flux_diagnostics::DiagnosticBag,
+    ) {
+        if self.field_hidden(ty, field, span.source) {
+            let shown = flux_hir::display_path(ty);
+            diagnostics.push(flux_diagnostics::FluxError::PrivateField {
+                field: field.to_string(),
+                ty: shown.clone(),
+                help: format!(
+                    "only `{shown}`'s module can name it; use the functions or methods that module provides, or mark the field `pub` there"
+                ),
+                span: flux_diagnostics::span_to_miette(span),
+                source_id: span.source,
+            });
         }
     }
 

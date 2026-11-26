@@ -915,6 +915,9 @@ fn infer_mono_type(
             match op {
                 flux_syntax::UnaryOp::Neg if inner.is_integer() || inner.is_float() => Some(inner),
                 flux_syntax::UnaryOp::Not if inner == Type::Bool => Some(Type::Bool),
+                flux_syntax::UnaryOp::Not | flux_syntax::UnaryOp::BitNot if inner.is_integer() => {
+                    Some(inner)
+                }
                 _ => None,
             }
         }

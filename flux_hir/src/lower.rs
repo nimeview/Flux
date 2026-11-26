@@ -331,6 +331,19 @@ impl AssignmentCollector {
     fn expr(&mut self, expr: &flux_syntax::Expr, locals: &AssignmentLocals<'_>) {
         use flux_syntax::{Expr, StringPart};
         match expr {
+            // `f(mut x)` changes `x`, like an assignment.
+            Expr::MutArg { expr, .. } => {
+                let mut root = expr.as_ref();
+                while let Expr::Field { base, .. } | Expr::Index { base, .. } = root {
+                    root = base;
+                }
+                if let Expr::Ident { name, .. } = root {
+                    if !locals.contains(name) {
+                        self.names.insert(name.clone());
+                    }
+                }
+                self.expr(expr, locals);
+            }
             Expr::Int { .. }
             | Expr::Float { .. }
             | Expr::Bool { .. }
@@ -769,6 +782,9 @@ fn check_alias_cycles(
 }
 
 pub(super) fn declare_item(item: &Item, symbols: &mut SymbolTable) -> Option<Symbol> {
+    if let Item::Fn(f) = item {
+        funcs::note_mut_params(symbols, &f.name.name, f);
+    }
     match item {
         Item::Event(EventDecl { name, .. }) => symbols
             .declare(&name.name, SymbolKind::Event, name.span)

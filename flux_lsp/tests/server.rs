@@ -1290,11 +1290,11 @@ fn definition_of_a_shadowing_local_is_the_local() {
 #[test]
 fn an_imported_type_is_found_in_its_own_module_not_a_same_named_one() {
     // `util` and `other` both declare `Point`; the root imports `util`'s.
-    let (dir, main, util) = import_project("pub struct Point {\n    x: Int\n}\n");
+    let (dir, main, util) = import_project("pub struct Point {\n    pub x: Int\n}\n");
     let root = dir.path().canonicalize().unwrap();
     std::fs::write(
         root.join("other.fl"),
-        "\n\npub struct Point {\n    y: Int\n}\npub fn n() -> Int {\n    1\n}\n",
+        "\n\npub struct Point {\n    pub y: Int\n}\npub fn n() -> Int {\n    1\n}\n",
     )
     .unwrap();
     let text = "import util { Point }\nimport other { n }\nstruct Holder {\n    p: Point\n}\nfn main() {}\n";
@@ -1330,11 +1330,11 @@ fn an_imported_type_is_found_in_its_own_module_not_a_same_named_one() {
 
 #[test]
 fn a_local_named_like_an_imported_type_and_a_qualified_type_resolve_right() {
-    let (dir, main, util) = import_project("pub struct Point {\n    x: Int\n}\n");
+    let (dir, main, util) = import_project("pub struct Point {\n    pub x: Int\n}\n");
     let root = dir.path().canonicalize().unwrap();
     std::fs::write(
         root.join("other.fl"),
-        "\n\npub struct Point {\n    y: Int\n}\npub fn n() -> Int {\n    1\n}\n",
+        "\n\npub struct Point {\n    pub y: Int\n}\npub fn n() -> Int {\n    1\n}\n",
     )
     .unwrap();
     let other = Url::from_file_path(root.join("other.fl")).unwrap();
@@ -1544,4 +1544,27 @@ fn rename_of_an_event_leaves_an_alias_of_the_same_spelling() {
         .collect();
     ranges.sort();
     assert_eq!(ranges, [(1, 6), (4, 12)], "{result}");
+}
+
+/// Another module's private fields are not offered after `.`.
+#[test]
+fn completion_leaves_out_another_modules_private_fields() {
+    let (dir, main, _util) = import_project(
+        "pub struct Account {\n    pub owner: String,\n    balance: Int\n}\npub fn open() -> Account {\n    Account { owner: \"a\", balance: 0 }\n}\n",
+    );
+    let root = dir.path().canonicalize().unwrap();
+    let text =
+        "import util { Account, open }\nfn main() {\n    let a = open()\n    let o = a.owner\n}\n";
+    std::fs::write(root.join("main.fl"), text).unwrap();
+    let (client, handle) = start_server();
+    did_open_uri(&client, main.clone(), text);
+    let _ = recv_diagnostics(&client);
+    let at = serde_json::json!({
+        "textDocument": { "uri": main },
+        "position": { "line": 3, "character": 14 },
+    });
+    let items = ask(&client, 2, "textDocument/completion", at).to_string();
+    assert!(items.contains("\"label\":\"owner\""), "{items}");
+    assert!(!items.contains("\"label\":\"balance\""), "{items}");
+    shutdown(&client, handle);
 }

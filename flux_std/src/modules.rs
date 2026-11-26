@@ -16,6 +16,8 @@ pub const STD_MODULES: &[(&str, &[&str])] = &[
             "append_file",
             "file_exists",
             "read_stdin",
+            "read_bytes",
+            "write_bytes",
         ],
     ),
     ("env", &["env_var", "current_dir"]),
@@ -48,6 +50,7 @@ pub const STD_MODULES: &[(&str, &[&str])] = &[
             "map_remove",
             "map_keys",
             "map_values",
+            "bytes",
         ],
     ),
     (

@@ -55,6 +55,8 @@ pub struct StructDecl {
 
 #[derive(Debug, Clone)]
 pub struct StructField {
+    /// `pub`: visible outside the struct's module.
+    pub pub_: bool,
     pub name: Ident,
     pub ty: TypeName,
     pub span: Span,
@@ -222,6 +224,8 @@ impl OnStmt {
 
 #[derive(Debug, Clone)]
 pub struct Param {
+    /// `mut x: T`: changes to `x` go back to the caller's argument.
+    pub mutable: bool,
     pub name: Ident,
     pub ty: TypeName,
     pub span: Span,
@@ -409,6 +413,12 @@ pub enum Expr {
         inner: Box<Expr>,
         span: Span,
     },
+    /// `mut place` as a call argument: the callee's `mut` parameter, whose
+    /// changes are written back to `place`. Valid only as a call argument.
+    MutArg {
+        expr: Box<Expr>,
+        span: Span,
+    },
     /// `(a, b)`: a tuple of two or more values (one is reported later).
     Tuple {
         elems: Vec<Expr>,
@@ -503,6 +513,9 @@ pub struct MatchArm {
 pub enum UnaryOp {
     Neg,
     Not,
+    /// `!x` on an integer: every bit flipped. The parser writes `Not`; the
+    /// type checker marks the integer ones, which become this.
+    BitNot,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -520,6 +533,12 @@ pub enum BinaryOp {
     Mul,
     Div,
     Rem,
+    /// Bit operations on integers.
+    BitAnd,
+    BitOr,
+    BitXor,
+    Shl,
+    Shr,
 }
 
 #[derive(Debug, Clone)]
@@ -628,6 +647,7 @@ impl Expr {
             | Self::Array { span, .. }
             | Self::StructLit { span, .. }
             | Self::With { span, .. }
+            | Self::MutArg { span, .. }
             | Self::Tuple { span, .. }
             | Self::Paren { span, .. }
             | Self::Match { span, .. }

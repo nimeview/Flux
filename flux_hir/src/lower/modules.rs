@@ -274,6 +274,9 @@ fn declare_item_renamed(
     symbols: &mut SymbolTable,
 ) -> Option<crate::symbol::Symbol> {
     use flux_syntax::{ConstBinding, EnumDecl, EventDecl, FnDecl, RFnDecl, StructDecl, TraitDecl};
+    if let Item::Fn(f) = item {
+        super::funcs::note_mut_params(symbols, mangled, f);
+    }
     match item {
         Item::Event(EventDecl { name, .. }) => {
             symbols.declare(mangled, SymbolKind::Event, name.span).err()

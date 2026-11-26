@@ -36,6 +36,19 @@ pub fn read_stdin() -> Value {
     }
 }
 
+/// A whole file as bytes.
+pub fn read_bytes(path: &str) -> Value {
+    match std::fs::read(path) {
+        Ok(bytes) => ok(Value::Bytes(std::sync::Arc::new(bytes))),
+        Err(e) => err(format!("{path}: {e}")),
+    }
+}
+
+/// Creates or replaces a file with `bytes`.
+pub fn write_bytes(path: &str, bytes: &[u8]) -> Value {
+    ok_unit_or(path, std::fs::write(path, bytes))
+}
+
 /// The value of an environment variable, if it is set (and is text).
 pub fn env_var(name: &str) -> Value {
     some_string(std::env::var(name).ok().as_deref())

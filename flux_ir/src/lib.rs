@@ -177,6 +177,13 @@ pub enum Inst {
     Rem,
     Neg,
     Not,
+    /// Bit operations on integers (`flux_value::bitwise`, `bit_not`).
+    BitAnd,
+    BitOr,
+    BitXor,
+    Shl,
+    Shr,
+    BitNot,
     CmpEq,
     CmpNe,
     CmpLt,

@@ -81,6 +81,9 @@ pub(super) fn parse_expr(source_id: SourceId, pair: pest::iterators::Pair<'_, Ru
         Rule::rel_expr => parse_chained_rel(source_id, pair),
         Rule::add_expr => parse_chained_add(source_id, pair),
         Rule::mul_expr => parse_chained_mul(source_id, pair),
+        Rule::bitor_expr | Rule::bitxor_expr | Rule::bitand_expr | Rule::shift_expr => {
+            parse_chained_bits(source_id, pair)
+        }
         Rule::cast_expr => parse_cast_expr(source_id, pair),
         Rule::unary_expr => parse_unary_expr(source_id, pair),
         Rule::postfix_expr => parse_postfix_expr(source_id, pair),
@@ -481,6 +484,31 @@ fn parse_chained_mul(source_id: SourceId, pair: pest::iterators::Pair<'_, Rule>)
     expr
 }
 
+/// `a | b`, `a ^ b`, `a & b`, `a << n`, `a >> n`: left to right in each level.
+fn parse_chained_bits(source_id: SourceId, pair: pest::iterators::Pair<'_, Rule>) -> Expr {
+    let mut inner = pair.into_inner();
+    let mut expr = parse_expr(source_id, inner.next().expect("bit lhs"));
+    while let Some(op_pair) = inner.next() {
+        let op = match op_pair.as_str() {
+            "|" => BinaryOp::BitOr,
+            "^" => BinaryOp::BitXor,
+            "&" => BinaryOp::BitAnd,
+            "<<" => BinaryOp::Shl,
+            ">>" => BinaryOp::Shr,
+            _ => continue,
+        };
+        let rhs = parse_expr(source_id, inner.next().expect("bit rhs"));
+        let span = merge_span(expr.span(), rhs.span());
+        expr = Expr::Binary {
+            op,
+            left: Box::new(expr),
+            right: Box::new(rhs),
+            span,
+        };
+    }
+    expr
+}
+
 fn parse_unary_expr(source_id: SourceId, pair: pest::iterators::Pair<'_, Rule>) -> Expr {
     let unary_span = span_of(source_id, &pair);
     let mut inner = pair.into_inner();
@@ -559,8 +587,28 @@ fn parse_postfix_expr(source_id: SourceId, pair: pest::iterators::Pair<'_, Rule>
                 .map(|call_args| {
                     call_args
                         .into_inner()
-                        .find(|p| p.as_rule() == Rule::expr_list)
-                        .map(|p| parse_expr_list(source_id, p))
+                        .find(|p| p.as_rule() == Rule::arg_list)
+                        .map(|list| {
+                            list.into_inner()
+                                .map(|arg| {
+                                    let arg = arg.into_inner().next().expect("call argument");
+                                    match arg.as_rule() {
+                                        Rule::mut_arg => {
+                                            let span = span_of(source_id, &arg);
+                                            let value = arg
+                                                .into_inner()
+                                                .find(|p| p.as_rule() != Rule::kw_mut)
+                                                .expect("mut argument");
+                                            Expr::MutArg {
+                                                expr: Box::new(parse_expr(source_id, value)),
+                                                span,
+                                            }
+                                        }
+                                        _ => parse_expr(source_id, arg),
+                                    }
+                                })
+                                .collect()
+                        })
                         .unwrap_or_default()
                 })
                 .unwrap_or_default();

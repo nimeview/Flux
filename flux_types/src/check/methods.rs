@@ -16,12 +16,16 @@ pub fn resolve_method_calls(program: &mut HirProgram, typed: &TypedProgram) {
     program
         .changing_calls
         .extend(typed.changing_sites.iter().copied());
-    if typed.method_calls.is_empty() && typed.field_calls.is_empty() {
+    if typed.method_calls.is_empty()
+        && typed.field_calls.is_empty()
+        && typed.bit_not_sites.is_empty()
+    {
         return;
     }
     let calls = &Calls {
         methods: &typed.method_calls,
         fields: &typed.field_calls,
+        bit_nots: &typed.bit_not_sites,
         grouped: program.builtin_ids.get(flux_hir::GROUPED).copied(),
     };
     for item in &mut program.items {
@@ -45,6 +49,7 @@ pub fn resolve_method_calls(program: &mut HirProgram, typed: &TypedProgram) {
 struct Calls<'a> {
     methods: &'a HashMap<(Option<SymbolId>, Span), SymbolId>,
     fields: &'a std::collections::HashSet<(Option<SymbolId>, Span)>,
+    bit_nots: &'a std::collections::HashSet<Span>,
     grouped: Option<SymbolId>,
 }
 
@@ -138,8 +143,17 @@ fn expr(e: &mut HirExpr, calls: &Calls<'_>, owner: Option<SymbolId>) {
                 args.insert(0, *base);
             }
         }
+        HirExpr::Unary {
+            op,
+            expr: inner,
+            span,
+        } => {
+            if *op == flux_syntax::UnaryOp::Not && calls.bit_nots.contains(span) {
+                *op = flux_syntax::UnaryOp::BitNot;
+            }
+            expr(inner, calls, owner)
+        }
         HirExpr::Snap { expr: inner, .. }
-        | HirExpr::Unary { expr: inner, .. }
         | HirExpr::Cast { expr: inner, .. }
         | HirExpr::ToText { expr: inner, .. }
         | HirExpr::Try { expr: inner, .. } => expr(inner, calls, owner),

@@ -101,6 +101,8 @@ pub struct HirStruct {
     pub name: SymbolId,
     pub type_params: Vec<String>,
     pub fields: Vec<(String, HirType)>,
+    /// The fields not marked `pub`: visible only in the struct's file.
+    pub private_fields: Vec<String>,
     pub span: Span,
 }
 

@@ -48,6 +48,8 @@ pub struct TypedProgram {
     /// `place.m(…)` statements calling a library method that changes its
     /// receiver; [`resolve_method_calls`] copies them to the program.
     pub changing_sites: std::collections::HashSet<flux_diagnostics::Span>,
+    /// `!x` on integers, by span (see [`resolve_method_calls`]).
+    pub bit_not_sites: std::collections::HashSet<flux_diagnostics::Span>,
     /// `op.f(x)` calls of the function in field `f`; [`resolve_method_calls`]
     /// writes them `(op.f)(x)`.
     pub field_calls: std::collections::HashSet<(Option<SymbolId>, flux_diagnostics::Span)>,
@@ -596,6 +598,7 @@ fn typecheck_with_context(
             types,
             method_calls: ctx.method_calls.borrow().clone(),
             changing_sites: ctx.changing_sites.borrow().clone(),
+            bit_not_sites: ctx.bit_not_sites.borrow().clone(),
             field_calls: ctx.field_calls.borrow().clone(),
             local_types,
         })

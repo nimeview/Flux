@@ -20,11 +20,12 @@ Flux is a statically typed language with **built-in reactivity**: module-level b
 | `Int8`, `Int16`, `Int32`, `Int64`, `UInt8`, `UInt16`, `UInt32`, `UInt64` | Fixed-width integers |
 | `Float`, `Float32`, `Float64` | Floating point (`Float` is an alias for `Float64`) |
 | `Bool`, `String`, `Unit` | Primitives |
+| `Bytes` | Raw bytes, one byte per element |
 | `[T]` | Homogeneous array |
 | `Option[T]` | Optional value (`Some`, `None`) |
 | `Result[T, E]` | Success or error (`Ok`, `Err`) |
 | `(A, B, ...)` | Tuple of two or more values |
-| `struct Name { f: T, ... }` | Product type; `struct Name[T, ...] { ... }` is generic |
+| `struct Name { f: T, pub g: U, ... }` | Product type; fields are private unless marked `pub` before the field name; `struct Name[T, ...] { ... }` is generic |
 | `enum Name { A, B(T), C { f: T }, ... }` | Sum type; a variant has no payload, one value, or named fields; `enum Name[T, ...] { ... }` is generic |
 | `fn(T, ...) -> U` | Function |
 | `Cell<T>` / `Read<T>` | Reactive wrapper (internal; sources/derived) |
@@ -51,11 +52,15 @@ The VM is the reference; the JIT must produce the same value or error, or fall b
 | `/` | Truncates toward zero; divisor `0` → `integer division by zero`; `MIN / -1` → `integer overflow` | IEEE 754 (`1.0 / 0.0` is `inf`, `0.0 / 0.0` is `NaN`) |
 | `%` | Sign follows the dividend; divisor `0` → `integer division by zero`; `MIN % -1` is `0` | IEEE 754 remainder |
 | unary `-` | `-MIN` → `integer overflow` | IEEE 754 |
+| `& \| ^` | Bitwise AND, OR, XOR; result takes the wider of the two integer types | **E005** |
+| unary `!` | Bitwise NOT | **E005** |
+| `<< >>` | Keep the left operand's type; shifted-out bits are dropped; signed `>>` preserves the sign | **E005** |
 | `== < …` | Exact (no conversion through `Float`) | IEEE 754 (`NaN != NaN`) |
 
 - An integer and a float compare (`==`, `<`, …) by their exact values: `9007199254740993 == 9007199254740992.0` is `false`, though the integer rounds to that float. `NaN` is unordered with every number, so only `!=` is `true`.
 - Mixed integer and float arithmetic converts the integer to the float operand's type: `Float32` with a `Float32` operand (which may round a large integer: `16777217 + 0.0f32` is `16777216.0`), and `Float64` otherwise. Operators on two integers keep the integer type, so `Int / Int` is `Int`: division by zero is a runtime error rather than a value of another type.
 - To handle integer overflow or division by zero as a value, use the [checked integer methods](#library-methods): `checked_add`, `checked_sub`, `checked_mul`, `checked_div`, `checked_rem`, `checked_neg`, and `checked_pow` return `None` instead of stopping with a runtime error.
+- A shift by a negative amount or by the left operand's type width or more is the runtime error `integer overflow`. Bits shifted out are dropped rather than causing overflow; signed right shift keeps the sign (`-8 >> 1` is `-4`). The JIT runs code with bit operations on the VM.
 - `<`, `<=`, `>`, `>=` also order two strings, by Unicode code point: `"a" < "b"`, and `"Z" < "a"`. A string and a number cannot be compared.
 - Casts are checked: an integer out of the target range, a negative value cast to an unsigned type, or a `NaN`/infinite/out-of-range float cast to an integer is the runtime error `numeric cast out of range`. Float → integer casts truncate toward zero.
 - A runtime error stops the current evaluation and is reported as `runtime error: <message> in <context>`, where the context names the binding, `watch`, or `on` handler, followed by what was running, innermost first: `  at <name> (<path>:<line>:<column>)`. The location is the failing statement in that frame, or the declaration of a derived binding; a statement directly in a `match` arm reports the `match`, and a module-level `if` has no location. A trace longer than 12 frames shows its 10 innermost and 2 outermost. Both engines report the same text: an error in compiled code replays on the VM, and the rest of the run stays there. Statements after the failing one do not run, and when settling a batch fails, no watch runs. If the error happens during module initialization, `flux run` exits non-zero. Out-of-range integer *literals* are rejected at parse time.
@@ -75,6 +80,7 @@ import path
 import path { sym1, sym2 }
 
 struct Point { x: Int, y: Int }
+pub struct Account { pub owner: String, balance: Int }
 enum Color { Red, Green }
 
 trait Display { fn to_string(x: Int) -> String; }
@@ -122,6 +128,7 @@ Each `.fl` file is a module with its own namespace. Inside a module, all of its 
 - **Reactivity.** A module can own state: its own `let mut` sources, `derived` values, events, `on` handlers, `watch`es, and top-level `if`s, like the root. Importing a `pub let mut` binding gives the importer the same reactive source, read-only: its derived values, watches, and functions read it and follow its changes, but only the module that declares it changes it, through its own handlers, `act fn`s, and initialization. Assigning another module's source anywhere else (an `on` handler, an `act fn`, a top-level `if`) is **E032**; change it by emitting one of the module's events or calling one of its `pub act fn`s. A `pub event` is used like a function: `emit counter::Inc(1)`, or `emit Inc(1)` after `import counter { Inc }`, and an importer may handle it too, `on counter::Inc(by) { … }`; every handler of an event runs when it is emitted, whichever module declares the handler.
 - **Initialization.** Modules initialize one after another: each after the modules it imports (in import order, each once), the root last. A module's initialization assigns its sources and runs its top-level `if`s, then its derived values recompute and its watches run for the first time; a watch of an earlier module runs again only if what it follows changed. `main` runs after the root's watches.
 - **Types.** Type names (`struct`, `enum`, `trait`) belong to their module, like functions: two modules may each declare `Point`, and they are different types. Another module's type is used through an import, `import geo { Point }` or `import geo`, or as `geo::Point` (also in annotations such as `Option[geo::Point]`, in `impl geo::Area for Local`, and as `geo::Point::new(…)`), and only if it is `pub`; a type that is not imported is unknown (**E007**), and `geo::Hidden` for a private one is **E022**. Importing an enum makes its variants usable bare as well (`Circle(1.0)` beside `Shape::Circle(1.0)`), unless the importing file declares a variant of that name; `geo::Shape::Circle` always works. A value prints with its type's declared name (`Point { x: 1 }`), whichever module it comes from. Names starting with `__mod_` are reserved for the compiler's internal names (**E000**).
+- **Fields.** A struct field is private to its module unless marked `pub`: `pub struct Account { pub owner: String, balance: Int }`. Outside that module (another file), only `pub` fields may be named in field reads (`a.owner`), field writes (`a.owner = …`), `with { … }`, destructuring `let Account { … } = a` patterns, and struct literals. A struct literal must list every field, so a type with a private field cannot be built by a literal outside its module; use a function such as `Account::open("ann")` or a method that its module provides. Naming a private field there is **E033**: "field `balance` of `Account` is private to its module", with help: "only `Account`'s module can name it; use the functions or methods that module provides, or mark the field `pub` there". Inside the module, including its functions, methods, and `impl` blocks in that file, every field is visible. A method may share a field's name (`fn balance(self) -> Int { self.balance }`). The editor's completion after `.` leaves out another module's private fields. Enum variants' named fields (`Rect { w: Float }`) have no `pub` and remain visible wherever the enum is.
 
 ## 4. Statements
 
@@ -147,7 +154,9 @@ Each `.fl` file is a module with its own namespace. Inside a module, all of its 
 
 ## 5. Expressions
 
-Arithmetic (`+ - * / %`), comparisons, boolean ops (`&&`, `||`, `!`), `if e { a } else { b }`, `match e { Var => expr, ... }`, calls, field access (`x.f`), closures `|x| x + 1`, `snap(expr)` in reactive contexts.
+Arithmetic (`+ - * / %`), integer bit operations (`&`, `|`, `^`, `<<`, `>>`, unary `!`), comparisons, boolean ops (`&&`, `||`, `!`), `if e { a } else { b }`, `match e { Var => expr, ... }`, calls, field access (`x.f`), closures `|x| x + 1`, `snap(expr)` in reactive contexts.
+
+**Operator precedence.** From lowest to highest: `||`, `&&`, equality (`==`, `!=`), ordering (`<`, `<=`, `>`, `>=`), `|`, `^`, `&`, shifts (`<<`, `>>`), `+` / `-`, `*` / `/` / `%`. Thus `1 + 2 << 3` is `24`, and `6 & 3 == 2` is `true`. Unary `!x` is bitwise NOT for an integer and logical NOT for a `Bool`. Non-integer operands to a bit operation are **E005** ("integer types for a bit operation"). `||`, `&&`, and closures `|x|` keep their meaning. There are no compound bit assignments (`&=`, `|=`, `^=`, `<<=`, `>>=`).
 
 ### Closures
 
@@ -155,11 +164,26 @@ Arithmetic (`+ - * / %`), comparisons, boolean ops (`&&`, `||`, `!`), `if e { a 
 
 A closure may also use the locals and parameters of the code around it (`map(xs, |x| x + k)`). They are captured **by value when the closure is created**: a later assignment to the local does not change what the closure sees, and assigning to a captured local inside the closure is **E009**. Module bindings are not copied: they are read when the closure runs, as above.
 
-**Function values.** A function type is written `fn(A, B) -> C`; without `->` the function returns `Unit`. A declared function's name and a closure are values of such a type: they can be passed, returned, and stored in bindings, arrays, and struct fields, and called (`let add2 = adder(2)` then `add2(5)`; `adder(3)(5)`; `(op.f)(3)` for the function in field `f`). `op.f(3)` is a method call; when `op`'s type has no method `f` but a field `f` holding a function, it calls that function with warning E026, and `flux migrate` writes the parentheses. Two function types match when their parameters and results do. Functions have no `==` and no text form. The same holds for any value containing a function, at any depth: an array, `Option`, `Result`, tuple, map, struct, or enum. `==`, `!=`, array `contains`, `to_string`, string interpolation, and `print` / `println` reject such values (**E005**). Calling anything else is **E023**. A closure passed directly to a function takes its unannotated parameter types from that function's declared `fn(...)` parameter. A closure's value is its body's value, so `return` inside a closure is a compile error. A callee is evaluated before its arguments. A derived value depends on what a function value it uses reads, and a function with side effects cannot reach a derived value as a value either (**E017**).
+**Function values.** A function type is written `fn(A, B) -> C`; without `->` the function returns `Unit`. A declared function without `mut` parameters and a closure are values of such a type: they can be passed, returned, and stored in bindings, arrays, and struct fields, and called (`let add2 = adder(2)` then `add2(5)`; `adder(3)(5)`; `(op.f)(3)` for the function in field `f`). `op.f(3)` is a method call; when `op`'s type has no method `f` but a field `f` holding a function, it calls that function with warning E026, and `flux migrate` writes the parentheses. Two function types match when their parameters and results do. Functions have no `==` and no text form. The same holds for any value containing a function, at any depth: an array, `Option`, `Result`, tuple, map, struct, or enum. `==`, `!=`, array `contains`, `to_string`, string interpolation, and `print` / `println` reject such values (**E005**). Calling anything else is **E023**. A closure passed directly to a function takes its unannotated parameter types from that function's declared `fn(...)` parameter. A closure's value is its body's value, so `return` inside a closure is a compile error. A callee is evaluated before its arguments. A derived value depends on what a function value it uses reads, and a function with side effects cannot reach a derived value as a value either (**E017**).
 
 ### Paths
 
 `a::b` names something known at compile time: an item of a module imported as `a` (`math::sqrt`, `io::println`), a type function (`Point::new`), or a variant (`Shape::Circle(2)`, also in patterns; `Circle(2)` stays valid). A path has two parts and no spaces around `::`. `.` is for values: fields and methods.
+
+### `mut` parameters
+
+`fn add_tax(mut prices: [Int], pct: Int) { … }` makes `prices` a mutable local starting as the argument; its final value is written back to the caller. The call writes `mut` before that argument: `add_tax(mut list, 10)`. The argument must be a place rooted in a mutable variable (`let mut`): the variable itself, a field (`mut cart.items`), or an element (`mut grid[i]`), including paths of them. Each index in a place is evaluated once, before the call. Several parameters may be `mut`, as in `swap(mut x, mut y)`. They work across modules (`lib::grow(mut a, 3)`) and in generic functions.
+
+A call with `mut` arguments must be a statement or the value of a `let`. A function with `mut` parameters returns a value only if it declares `-> T`; then `let first = take_first(mut list)` binds that value. Without a declared result it returns nothing, even if its last statement is an expression. Such a function cannot be used as a value. Methods cannot have `mut` parameters other than `mut self`.
+
+These are compile errors (**E000**, except an immutable argument's existing **E009**):
+
+- Calling without `mut` before each `mut` parameter's argument: "this function has `mut` parameters: call it on its own line or as a `let` value, with `mut` before each of those arguments".
+- Writing `mut` before an argument whose parameter is not `mut`.
+- Using the call inside a larger expression: "a call with `mut` arguments must be a statement, or the value of a `let`".
+- Binding the value of a function that declares no result.
+- Passing a `mut` argument that is not a place, or an immutable variable ("cannot assign to immutable local").
+- Using the function as a value: "`grow` has `mut` parameters and cannot be used as a value".
 
 ### Methods
 
@@ -230,7 +254,7 @@ Maps are equal when they have the same keys with equal values. The JIT has no fo
 
 ### Equality
 
-`==` and `!=` (and `assert_eq`) compare two values of the same type when that type is equatable: numbers (any widths, and integers with floats, by exact value; Float by IEEE 754), `Bool`, `Char`, `String`, `()`, and arrays, `Option`, `Result`, tuples, maps, structs, and enums whose parts are equatable. Compound values are equal when their parts are, by the same rules: `[0.0 / 0.0] == [0.0 / 0.0]` is `false`, and `Some([1]) == Some([1])` is `true`. Comparing functions, values containing a function at any depth, or values of different types is a type error (**E005**). Array `contains` uses the same rule: `[id].contains(id)` is **E005** when `id` is a function.
+`==` and `!=` (and `assert_eq`) compare two values of the same type when that type is equatable: numbers (any widths, and integers with floats, by exact value; Float by IEEE 754), `Bool`, `Char`, `String`, `Bytes`, `()`, and arrays, `Option`, `Result`, tuples, maps, structs, and enums whose parts are equatable. Compound values are equal when their parts are, by the same rules: `[0.0 / 0.0] == [0.0 / 0.0]` is `false`, and `Some([1]) == Some([1])` is `true`. Comparing functions, values containing a function at any depth, or values of different types is a type error (**E005**). Array `contains` uses the same rule: `[id].contains(id)` is **E005** when `id` is a function.
 
 ### `if` and `match` as operands
 
@@ -328,12 +352,12 @@ Selective imports: `import io { println, read_line }`. Stdlib modules are built 
 
 | Module | Symbols |
 |--------|---------|
-| `io` | `print`, `println`, `eprint`, `eprintln`, `args`, `read_line`, `read_file`, `write_file`, `append_file`, `file_exists`, `read_stdin` |
+| `io` | `print`, `println`, `eprint`, `eprintln`, `args`, `read_line`, `read_file`, `write_file`, `read_bytes`, `write_bytes`, `append_file`, `file_exists`, `read_stdin` |
 | `env` | `env_var`, `current_dir` |
 | `fs` | `list_dir`, `is_dir`, `create_dir`, `remove_file`, `remove_dir` |
 | `path` | `path_join`, `file_name`, `extension`, `parent` |
 | `process` | `exit`, `run` |
-| `collections` | `len`, `range`, `push`, `set`, `pop`, `get`, `map`, `filter`, `reduce`, `map_new`, `map_has`, `map_remove`, `map_keys`, `map_values` |
+| `collections` | `len`, `range`, `bytes`, `push`, `set`, `pop`, `get`, `map`, `filter`, `reduce`, `map_new`, `map_has`, `map_remove`, `map_keys`, `map_values` |
 | `math` | `abs`, `min`, `max`, `clamp`, `sqrt`, `floor`, `ceil`, `pow`, `assert`, `assert_eq` |
 | `testing` | `assert`, `assert_eq` (the same functions as in `math`) |
 | `str` | `str_len`, `str_split`, `str_chars`, `str_join`, `str_contains`, `str_trim`, `str_starts_with`, `str_ends_with`, `str_replace`, `str_to_lower`, `str_to_upper`, `to_string`, `parse_int`, `parse_float` |
@@ -346,12 +370,15 @@ Values of library types have methods, which need no import: `text.split(",")` is
 
 | Receiver | Methods |
 |---|---|
-| `String` | `len`, `split`, `chars`, `contains`, `trim`, `starts_with`, `ends_with`, `replace`, `to_lower`, `to_upper`, `parse_int`, `parse_float`, `to_string`, `split_once(sep) -> Option[(String, String)]`, `lines() -> [String]`, `words() -> [String]` |
+| `String` | `len`, `split`, `chars`, `contains`, `trim`, `starts_with`, `ends_with`, `replace`, `to_lower`, `to_upper`, `parse_int`, `parse_float`, `to_string`, `to_bytes() -> Bytes`, `split_once(sep) -> Option[(String, String)]`, `lines() -> [String]`, `words() -> [String]` |
+| `Bytes` | `len() -> Int`, `slice(start, end) -> Bytes`, `to_text() -> Result[String, String]`; indexing `b[i]` gives `UInt8` |
 | `[T]` | `len`, `get`, `map`, `filter`, `reduce`, `join` (for `[String]`), `contains(v) -> Bool`, `find(f) -> Option[T]`, `any(f)`, `all(f)`, `enumerate() -> [(Int, T)]`, `zip(ys) -> [(T, U)]`, `slice(a, b)` (elements `a` up to `b`; out of range is a runtime error), `sorted()`, `sorted_by(key)`, `reversed()`, `first()`, `last()` (`Option[T]`) |
 | `Map[K, V]` | `len`, `get`, `has`, `keys`, `values`, `entries() -> [(K, V)]`, `get_or(k, default)` |
 | `Option[T]` | `unwrap_or(default)`, `map(f)`, `and_then(f)` (`f` returns an `Option`), `ok_or(err)`, `is_some()`, `is_none()` |
 | `Result[T, E]` | `unwrap_or(default)`, `map(f)`, `and_then(f)` (`f` returns a `Result` with error type `E`), `map_err(f)`, `is_ok()`, `is_err()` |
 | numbers | `abs`, `sqrt`, `floor`, `ceil`, `pow`, `min`, `max`, `clamp`, `to_string`; integers only: `checked_add(m)`, `checked_sub(m)`, `checked_mul(m)`, `checked_div(m)`, `checked_rem(m)`, `checked_neg()`, `checked_pow(exponent)` |
+
+**Bytes.** `Bytes` holds raw bytes, one byte each; `==` compares their contents, and a value displays as `Bytes[72, 105]`. `b.len()` counts bytes and `b[i]` reads a `UInt8`; an out-of-range index is a runtime error. `b.slice(start, end)` returns `Bytes`. `b.to_text()` decodes UTF-8 into `Result[String, String]`, with the error "not UTF-8 text at byte N". `s.to_bytes()` encodes a `String` as UTF-8 bytes. Construct bytes with `collections`' `bytes(values: [Int]) -> Bytes`; each value must be `0..255`, otherwise the runtime error `numeric cast out of range`. File I/O uses `io`'s `read_bytes(path) -> Result[Bytes, String]` and `write_bytes(path, b) -> Result[Unit, String]`, side effects like `read_file`.
 
 **Checked integer methods.** Every integer type (`Int`, `Int8`…`Int64`, `UInt8`…`UInt64`) has the `checked_` methods above. Each returns `Option[N]`, where `N` is the receiver's integer type: `Some(result)` in that type on success, or `None` when the plain operation would stop with integer overflow or division by zero. An argument may be any integer type, but a value that does not fit the receiver's type gives `None` (`120i8.checked_add(300)`), as does a negative exponent for `checked_pow`. For a signed minimum, `checked_rem(-1)` gives `Some(0)`, like `%`.
 
@@ -371,6 +398,7 @@ A float receiver is **E005** ("`checked_` operations are for integer types"); a 
 | `range` | `fn(Int) -> [Int]` | `0..n-1` as array |
 | `range` | `fn(Int, Int) -> [Int]` | `start..end-1` (step 1) |
 | `range` | `fn(Int, Int, Int) -> [Int]` | `start..end-1` with explicit step |
+| `bytes` | `fn([Int]) -> Bytes` | Raw bytes; each value must be `0..255`, otherwise the runtime error `numeric cast out of range` |
 | `push` | `fn([T], T) -> [T]` | Append element (returns new array) |
 | `set` | `fn([T], Int, T) -> [T]` | Replace element `i` (returns new array); `i` outside `0..len` is the runtime error `index out of bounds` |
 | `pop` | `fn([T]) -> [T]` | Remove last element |
@@ -395,6 +423,8 @@ A float receiver is **E005** ("`checked_` operations are for integer types"); a 
 | `read_line` | `fn() -> Result[String, String]` | One line from stdin (no trailing newline); `Err("end of input")` when there are no more lines |
 | `read_file` | `fn(String) -> Result[String, String]` | Read UTF-8 file contents |
 | `write_file` | `fn(String, String) -> Result[Unit, String]` | Write UTF-8 (create/truncate) |
+| `read_bytes` | `fn(String) -> Result[Bytes, String]` | Read raw file bytes; a side effect like `read_file` |
+| `write_bytes` | `fn(String, Bytes) -> Result[Unit, String]` | Write raw file bytes; a side effect like `write_file` |
 | `append_file` | `fn(String, String) -> Result[Unit, String]` | Append UTF-8 to file |
 | `file_exists` | `fn(String) -> Bool` | Whether path exists |
 | `read_stdin` | `fn() -> Result[String, String]` | All of stdin, until its end |
@@ -458,6 +488,7 @@ These limits keep extreme programs a language error rather than a native stack o
 | E030 | Warning: a collection function's result is not used (`push(xs, 3)` alone) |
 | E031 | A generic call's type argument lacks a trait that its parameter's bound names (§ Methods) |
 | E032 | A module changes a source that another module declares (§ Modules and visibility) |
+| E033 | Naming a struct field private to another module (§ Modules and visibility) |
 | E016 | `let` without `mut` cannot be reassigned (use `let mut`) |
 | E017 | Side effect (`print`, I/O) in a derived expression or a `const` initializer |
 | E018 | Runtime error (overflow, division by zero, failed assertion, …) |
@@ -482,7 +513,7 @@ A UTF-8 byte-order mark at the start of a file is ignored, like whitespace.
 | `flux lock [--check]` | Create or update `flux.lock` for path dependencies; `--check` only reports whether it is up to date (exit 1 if not) |
 | `--locked` (on `run`, `check`, `test`) | Require `flux.lock` to match the dependency tree; never write it (§9) |
 | `flux fmt file.fl [--write] [--check]` | Format source (`--check` fails if reformat needed) |
-| `flux migrate [--write] path` | Experimental: rewrite older forms. It applies every fix the compiler offers, repeatedly, as fixes can uncover others: the replacement of each E026 warning and `act fn` for each E027 warning and the old `let` / `let mut` binding rewrite |
+| `flux migrate [--write] path` | Experimental: rewrite older forms. It applies every fix the compiler offers, repeatedly, as fixes can uncover others: the replacement of each E026 warning and `act fn` for each E027 warning and the old `let` / `let mut` binding rewrite. It also adds `pub` to every field of every `pub struct` to preserve visibility from before 0.4; other structs and enum variants are left as they are. Use `--write` to apply the changes, then remove `pub` where a field should be private |
 | `flux init [path] [--lib]` | Create a project: an app (`main.fl`) or, with `--lib`, a library (`lib.fl` + `lib_test.fl`). Refuses a directory that already has `flux.toml` and never overwrites a source file |
 | `flux lsp file.fl` | JSON diagnostics (one-shot; prefer `lsp-server`) |
 | `flux lsp-server` | Stdio LSP: diagnostics, hover, completion, go-to-def, format, document symbols, rename |

@@ -4,8 +4,8 @@ import math { sqrt }
 import collections { len, get, range }
 
 pub struct Point {
-    x: Float,
-    y: Float
+    pub x: Float,
+    pub y: Float
 }
 
 fn square(v: Float) -> Float {
