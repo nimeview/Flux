@@ -227,3 +227,36 @@ fn calling_a_function_in_a_field_never_runs_a_method_of_another_type() {
         "the old form still warns: {stderr}"
     );
 }
+
+/// 0.4: a derived value, a `const`, or a `track fn` may not run an `act fn`,
+/// however reached: a derived value did not follow what the `act fn` read
+/// and went stale (`2 1`).
+#[test]
+fn pure_contexts_do_not_run_act_fns() {
+    let read = "let mut x = 1\nact fn read() -> Int {\n    x\n}\n";
+    for (body, needle) in [
+        (
+            "derived y = read()\n",
+            "a derived value cannot call the `act fn` `read`",
+        ),
+        (
+            "const C = read()\n",
+            "a `const` initializer cannot call the `act fn` `read`",
+        ),
+        (
+            "fn apply(f: fn() -> Int) -> Int {\n    f()\n}\nderived y = apply(read)\n",
+            "a derived value cannot call the `act fn` `read`",
+        ),
+        (
+            "track fn t() -> Int {\n    read()\n}\n",
+            "the `track fn` `t` cannot call the `act fn` `read`",
+        ),
+    ] {
+        rejects(&format!("{read}{body}fn main() {{\n}}\n"), needle);
+    }
+    // What the error suggests: a `track fn` is followed.
+    prints(
+        "import io { println }\nlet mut x = 1\ntrack fn read() -> Int {\n    x\n}\nderived y = read()\nact fn main() {\n    x = 2\n    println(\"{x} {y}\")\n}\n",
+        "2 2\n",
+    );
+}

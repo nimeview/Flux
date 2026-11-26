@@ -142,7 +142,7 @@ Each `.fl` file is a module with its own namespace. Inside a module, all of its 
 
 **Statement boundaries.** A newline does not end an expression that can continue: a binary operator at the end of a line, or a line starting with `+`, continues it. A line that starts with a binary `-` is a compile error rather than a silent subtraction from the line above (`f()` followed by a line `-1` used to mean `f() - 1`). To subtract, end the previous line with `-`; for a negative value on its own line, write `0 - 1` or bind it with `let`. Unary minus elsewhere (`let d = -a`, `2 * -3`) is unaffected.
 
-**Derived expressions** (right-hand side of derived bindings) must be pure: no `snap()`, loops, control flow (**E008**), or side-effect builtins such as `print` / I/O (**E017**), including those reached through a function or method it calls, a function it passes to a call, or a function it calls through something holding it: a binding (which holds what its initializer and every assignment give it), a field, a tuple, a local, a closure's captured local, an event's value received by a handler, or a call's result (which holds what the function returns). A struct or tuple counts all its parts. Only holding a function is not running it, so `const out = println` is allowed. A function that reads a value with `snap()`, directly or through a call, cannot run there either (**E008**): the derived value would not follow that value. `snap()` is available in ordinary `fn` bodies for explicit snapshot reads.
+**Derived expressions** (right-hand side of derived bindings) must be pure: no `snap()`, loops, control flow, or calls to an `act fn` (**E008**), or side-effect builtins such as `print` / I/O (**E017**), including those reached through a function or method it calls, a function it passes to a call, or a function it calls through something holding it: a binding (which holds what its initializer and every assignment give it), a field, a tuple, a local, a closure's captured local, an event's value received by a handler, or a call's result (which holds what the function returns). A struct or tuple counts all its parts. Only holding a function is not running it, so `const out = println` is allowed. A function that reads a value with `snap()`, directly or through a call, cannot run there either (**E008**): the derived value would not follow that value. `snap()` is available in ordinary `fn` bodies for explicit snapshot reads.
 
 ## 5. Expressions
 
@@ -183,6 +183,8 @@ A **`mut self` method** changes the value it is called on and returns nothing: `
 | Module derived | `let y = f(x)` or `derived y = f(x)` | Tracked |
 | Closure (captures a source or derived) | Any | Tracked |
 
+**Calling actions.** A derived value, a `const` initializer, or a `track fn` may not run an `act fn` (**E008**). This includes direct calls (`derived y = read()`), calls through a `track fn` or plain `fn`, and calls through a function value (`apply(read)`). An action's reads are not tracked, so a derived value computed through one could go stale even if the action only reads. Write `track fn` instead of `act fn` for a function that computes from sources. An action that writes was already rejected in a derived value as a side effect (**E017**). `act fn main` and `on` handlers may call any `act fn`; an `act fn` may call another.
+
 `watch` and `on` are only valid at module level; using them inside a function body is a compile error (**E011**).
 
 **Who changes sources.** A source changes in an `on` handler, in an `act fn`, or while the module initializes. A `fn`, `track fn`, or `impl` method that assigns a source is an error, **E027** (the fix turns a `fn` into an `act fn`; a method can change state by calling an `act fn`). `main` is no exception: `act fn main` changes state as one batch. A `watch` that assigns a source still runs but warns, **E028** (compute the value with `let`, or `emit` an event whose `on` handler changes it). Each function, handler, or watch reports a source once. A closure counts as the code it is written in.
@@ -201,7 +203,7 @@ A **`mut self` method** changes the value it is called on and returns nothing: `
 
 ### Const bindings
 
-`const N = 42` at module level declares an immutable binding, computed once when the program starts and never changed. Its initializer may call functions, but nothing with a side effect: printing, reading input or files, or a function that does (**E017**). Reading a `const` is not a reactive read, so plain functions may use it.
+`const N = 42` at module level declares an immutable binding, computed once when the program starts and never changed. Its initializer may call functions, but nothing with a side effect: printing, reading input or files, or a function that does (**E017**). It may not run an `act fn`, directly, through another function, or through a function value (**E008**). Reading a `const` is not a reactive read, so plain functions may use it.
 
 ### Indexing
 
@@ -436,7 +438,7 @@ These limits keep extreme programs a language error rather than a native stack o
 | E005 | Type mismatch |
 | E006 | Unknown event |
 | E007 | Unknown type |
-| E008 | Control flow in derived |
+| E008 | Control flow or `snap` in a derived value; an `act fn` called by a derived value, `const` initializer, or `track fn`, directly or through other calls or function values |
 | E009 | Assign to immutable local or const |
 | E010 | Cyclic dependency in reactive graph |
 | E011 | `watch`/`on` outside module level |

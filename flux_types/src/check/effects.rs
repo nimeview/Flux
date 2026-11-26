@@ -35,6 +35,9 @@ pub(super) type Held = HashSet<Node>;
 pub(super) struct Purity {
     pub effectful: HashSet<Node>,
     pub snapshotting: HashSet<Node>,
+    /// The nodes that run an `act fn`, with one such `act fn`: its reads
+    /// are not followed, so a derived value may not reach it.
+    pub acting: HashMap<Node, SymbolId>,
 }
 
 /// What flows between items: the functions each closure captures (by
@@ -71,9 +74,19 @@ pub(super) fn analyze(
     let mut snapshotting = result.snapshotting;
     spread(&result.graph, &mut effectful);
     spread(&result.graph, &mut snapshotting);
+    let mut acting: HashMap<Node, SymbolId> = program
+        .items
+        .iter()
+        .filter_map(|item| match item {
+            HirItem::Fn(f) if f.act => Some((Node::Sym(f.name), f.name)),
+            _ => None,
+        })
+        .collect();
+    spread_from(&result.graph, &mut acting);
     Purity {
         effectful,
         snapshotting,
+        acting,
     }
 }
 
@@ -200,6 +213,25 @@ fn spread(graph: &HashMap<Node, Held>, marked: &mut HashSet<Node>) {
                 !marked.contains(node) && next.iter().any(|n| marked.contains(n))
             })
             .map(|(node, _)| *node)
+            .collect();
+        if newly.is_empty() {
+            return;
+        }
+        marked.extend(newly);
+    }
+}
+
+/// [`spread`], keeping for each node the mark it reached first.
+fn spread_from(graph: &HashMap<Node, Held>, marked: &mut HashMap<Node, SymbolId>) {
+    loop {
+        let newly: Vec<_> = graph
+            .iter()
+            .filter(|(node, _)| !marked.contains_key(node))
+            .filter_map(|(node, next)| {
+                next.iter()
+                    .find_map(|n| marked.get(n).copied())
+                    .map(|act| (*node, act))
+            })
             .collect();
         if newly.is_empty() {
             return;

@@ -328,6 +328,23 @@ pub enum FluxError {
         fix_span: Option<miette::SourceSpan>,
     },
 
+    /// A derived value, `const`, or `track fn` reaches an `act fn`, whose
+    /// reads are not followed.
+    #[error("{place} cannot call the `act fn` `{act}`")]
+    #[diagnostic(
+        code(flux::E008),
+        help(
+            "an `act fn` is an action, and a derived value does not follow what it reads; write `track fn {act}` for a function that computes from sources"
+        )
+    )]
+    ActInPureContext {
+        place: String,
+        act: String,
+        #[label("runs `{act}`")]
+        span: miette::SourceSpan,
+        source_id: SourceId,
+    },
+
     /// A module's code changes a source another module declares.
     #[error("`{name}` belongs to another module; only that module changes it")]
     #[diagnostic(
@@ -388,7 +405,8 @@ impl FluxError {
             | Self::ImportedNameTaken { source_id, .. }
             | Self::WriteOutsideAct { source_id, .. }
             | Self::UnsatisfiedBound { source_id, .. }
-            | Self::ForeignSourceWrite { source_id, .. } => *source_id,
+            | Self::ForeignSourceWrite { source_id, .. }
+            | Self::ActInPureContext { source_id, .. } => *source_id,
         }
     }
 
@@ -425,6 +443,7 @@ impl FluxError {
             Self::WriteOutsideAct { .. } => "E027",
             Self::UnsatisfiedBound { .. } => "E031",
             Self::ForeignSourceWrite { .. } => "E032",
+            Self::ActInPureContext { .. } => "E008",
         }
     }
 
@@ -461,6 +480,7 @@ impl FluxError {
             | Self::WriteOutsideAct { span, .. }
             | Self::UnsatisfiedBound { span, .. }
             | Self::ForeignSourceWrite { span, .. }
+            | Self::ActInPureContext { span, .. }
             | Self::DuplicateDefinition { span, .. } => *span,
         };
         crate::warning::span_from_miette(source_id, miette_span)

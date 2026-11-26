@@ -108,6 +108,27 @@ pub(super) fn check_purity(
         };
         check.expr(&binding.value, false);
     }
+    // A `track fn` is followed through what it reads; an `act fn` it runs
+    // would hide those reads.
+    for item in &program.items {
+        let flux_hir::HirItem::Fn(f) = item else {
+            continue;
+        };
+        if !f.reactive || f.act || f.is_closure {
+            continue;
+        }
+        let node = super::effects::Node::Sym(f.name);
+        let Some(act) = purity.acting.get(&node) else {
+            continue;
+        };
+        let name = program.names.get(&f.name).map_or("?", String::as_str);
+        diagnostics.push(FluxError::ActInPureContext {
+            place: format!("the `track fn` `{}`", flux_hir::display_path(name)),
+            act: flux_hir::display_path(program.names.get(act).map_or("?", String::as_str)),
+            span: span_to_miette(f.span),
+            source_id: f.span.source,
+        });
+    }
 }
 
 struct PureCheck<'a> {
@@ -296,6 +317,17 @@ impl PureCheck<'_> {
                 } else {
                     "a `const` initializer".into()
                 },
+                span: span_to_miette(span),
+                source_id: span.source,
+            });
+        } else if let Some(act) = nodes.iter().find_map(|n| self.purity.acting.get(n)) {
+            self.diagnostics.push(FluxError::ActInPureContext {
+                place: if self.derived {
+                    "a derived value".into()
+                } else {
+                    "a `const` initializer".into()
+                },
+                act: flux_hir::display_path(self.names.get(act).map_or("?", String::as_str)),
                 span: span_to_miette(span),
                 source_id: span.source,
             });

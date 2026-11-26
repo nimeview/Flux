@@ -49,7 +49,7 @@ flux::E002
 | E005 | type mismatch |
 | E006 | unknown event |
 | E007 | unknown type |
-| E008 | control flow in a derived value |
+| E008 | control flow or `snap` in a derived value; an `act fn` called by a derived value, `const` initializer, or `track fn`, directly or through other calls or function values |
 | E009 | assignment to an immutable local or `const` |
 | E010 | cycle among reactive values |
 | E011 | `watch` or `on` outside the top level |

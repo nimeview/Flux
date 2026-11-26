@@ -4,6 +4,10 @@ Notable changes to Flux. The versioning policy is in [`RELEASE.md`](RELEASE.md).
 
 ## [Unreleased]
 
+### Changes that can alter programs
+
+- A derived value, a `const` initializer, or a `track fn` may no longer run an `act fn` (E008), directly, through another function, or through a function value. An action's reads are not tracked, so a derived value computed through one could go stale even when the action only read sources. Migration: write `track fn` instead of `act fn` for a function that a derived value, `const` initializer, or `track fn` uses to compute from sources.
+
 ## [0.3.1] - 2026-11-26
 
 ### Changes that can alter programs

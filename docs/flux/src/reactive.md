@@ -274,6 +274,35 @@ x=1
 
 The call to `set_it` is one batch, so the watch runs once it returns. A `fn`, `track fn`, or method that writes a source is an error, E027; the editor's quick fix and `flux migrate` turn such a `fn` into an `act fn`, and a method can call an `act fn`. A `watch` that writes one still runs but warns, E028: compute the value with `let` instead, or `emit` an event whose `on` handler changes it.
 
+A derived value, a `const` initializer, or a `track fn` cannot run an `act fn` (E008). This includes a direct call such as `derived y = read()`, a call through a `track fn` or plain `fn`, and a call through a function value such as `apply(read)`.
+
+An action's reads are not tracked. Before 0.4, a derived value computed through an action that only read a source could go stale. An action that wrote a source was already rejected as a side effect (E017).
+
+Write `track fn` instead of `act fn` for a function that computes from sources. Here, `y` follows what `read` reads:
+
+```flux
+import io { println }
+
+let mut x = 1
+
+track fn read() -> Int {
+    x
+}
+
+derived y = read()
+
+act fn main() {
+    x = 2
+    println("{x} {y}")
+}
+```
+
+```output
+2 2
+```
+
+With `act fn read`, this program printed `2 1` before 0.4. It now reports E008: "a derived value cannot call the `act fn` `read`". `act fn main` and `on` handlers may still call any `act fn`, and an `act fn` may call another.
+
 ## Dependencies follow the branch taken
 
 A derived `if` or `match` depends only on what the branch it took read. Writes to the other branch's sources do not recompute it:
