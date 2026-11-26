@@ -4,6 +4,8 @@ Notable changes to Flux. The versioning policy is in [`RELEASE.md`](RELEASE.md).
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-26
+
 ### Added
 
 - Reactive components: an imported module can have `on` handlers, `watch`es, and top-level `if`s, and owns its sources. Events are used like functions: `emit counter::Inc(1)`, `emit Inc(1)` after importing it, and `on counter::Inc(by) { }` in an importer. Modules initialize dependencies first, each running its watches at the end of its own initialization.
@@ -26,6 +28,7 @@ Notable changes to Flux. The versioning policy is in [`RELEASE.md`](RELEASE.md).
 - A generic call as the argument of another, `id(id(3))`, was an error ("generic type arguments could not be unified").
 - An array literal took its element type from its first element only, so `[None, Some(1)]` was an error; later elements now fix what the first left unknown.
 - A type parameter named twice, `fn f[T, T]`, was accepted; it is an error (E004).
+- At startup, a watch could miss its first run when a derived value it follows began, during initialization, to depend on another one.
 - A block `match` arm ending in an `if … else` chain had the value `()` instead of the value of the branch that runs, so the program failed to type-check; it now behaves as at the end of a function body.
 - When a callback of `map`, `filter`, or `reduce` failed, the remaining elements were still passed to it, so its printing and other effects went on after the error.
 - A method named like a changing library method (`push`, `pop`, `set`, `sort`, `reverse`, `remove`) on a type that defines it without changing its receiver lost its value when written last in a block: `fn f(s: S) -> Int { s.push(1) }` was a type error.

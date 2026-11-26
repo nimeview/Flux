@@ -320,6 +320,6 @@ chosen=20
 
 ## Limits
 
-- `watch`, `on`, and top-level `if` must be in the root module of a program.
+- A module may have its own `on`, `watch`, and top-level `if`, but only the module that declares a source changes it (see [Modules](./modules.md)).
 - A failure while settling a batch stops it, and no watch runs. The event's handlers have all run by then, since a batch settles after them.
 - `emit` chains count toward the 10,000 call depth limit.

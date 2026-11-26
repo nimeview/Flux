@@ -41,7 +41,7 @@ You do not have to use any of this. A Flux program can be plain functions and da
 
 Flux takes familiar ideas from Rust and similar languages: `struct`, `enum`, `match`, `Result`, and `?`, with types checked before anything runs. It has no ownership or borrowing to learn: values behave as independent copies, and updating an array you alone hold happens in place.
 
-It is young. The version is 0.2 ([what changed](./whats-new.md)), and [Status and limits](./status.md) lists what is stable, what is experimental, and what does not exist yet.
+It is young. The version is 0.3 ([what changed](./whats-new.md)), and [Status and limits](./status.md) lists what is stable, what is experimental, and what does not exist yet.
 
 ## How this book relates to the specification
 

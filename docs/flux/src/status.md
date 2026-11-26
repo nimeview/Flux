@@ -1,17 +1,17 @@
 # Status and limits
 
-Flux is at version 0.2. This page says what you can rely on.
+Flux is at version 0.3. This page says what you can rely on.
 
 ## Stable
 
 These change only by a deliberate decision, recorded in the changelog:
 
 - The behavior of the VM, which is the reference for what programs mean.
-- Numbers, strings, arrays, `Map`, `Option`, `Result`, structs, enums, recursive types, generics, closures, and function types.
+- Numbers, strings, arrays, `Map`, `Option`, `Result`, structs, enums, recursive types, generic functions, structs, and enums, trait bounds and generic impls, closures, and function types.
 - Reactive values: `let mut`, `derived`, `event`, `on`, `watch`, `track fn`, `act fn`.
-- Modules, and local packages with `flux.lock`.
+- Modules, with their own types and reactive state, and local packages with `flux.lock`.
 - `flux init`, `check`, `run`, `test`, `fmt`, `lock`, `repl`, and `lsp-server`.
-- The standard library modules `io`, `collections`, `math`, `str`, `option`, `result`, and `testing`.
+- The standard library modules `io`, `collections`, `math`, `str`, `option`, `result`, `testing`, `env`, `fs`, `path`, and `process`.
 - Linux and macOS, which CI tests.
 
 ## Experimental

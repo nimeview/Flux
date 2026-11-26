@@ -72,3 +72,5 @@ flux::E002
 | E028 | warning: a `watch` changes a source; compute the value with `let`, or `emit` an event |
 | E029 | warning: watches wake each other, or one wakes itself, in a cycle; the last change in the cycle is lost |
 | E030 | warning: a collection function's result is dropped, as in `push(xs, 3)` or `xs.sorted()` alone; assign it |
+| E031 | a generic call's type lacks a trait its bound names, as `largest([p])` for a `Point` without `Ord` |
+| E032 | a module changes another module's source; emit that module's event or call its `pub act fn` |

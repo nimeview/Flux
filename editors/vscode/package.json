@@ -2,7 +2,7 @@
   "name": "flux-lang",
   "displayName": "Flux",
   "description": "Flux language support: highlighting, completion, hover, go to definition, rename, formatting, diagnostics, snippets, and run and test commands.",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "publisher": "nimeview",
   "license": "Apache-2.0",
   "repository": {

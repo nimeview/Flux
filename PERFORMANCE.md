@@ -339,6 +339,25 @@ Compiling is 12–20% slower. Timing each stage of `examples/general/inventory_t
 - Parsing is 14% slower, spread over the grammar's new forms (paths, tuples, trailing commas) with no single hot spot; it is left as is.
 - In absolute terms a compile of this 46-line program takes about 1.3 ms.
 
+## 0.3 against 0.2 (2026-11-26)
+
+Intel Core i9-9880H, macOS, release build. `cargo bench -p flux_cli --bench workloads` on v0.2.1 (`c85004f`, built in a separate worktree) and on 0.3, run alternately in one session; the table gives the second round, with the first in parentheses where they differ by more than 3%. The workloads are the same.
+
+| Workload | 0.2 VM | 0.3 VM | 0.2 JIT | 0.3 JIT |
+|----------|--------|--------|---------|---------|
+| compute_loop | 36.1 ms | 35.6 ms | 1.28 ms | 1.32 ms (1.26) |
+| recursion | 7.94 ms | 8.22 ms | 138 µs | 145 µs (138) |
+| strings | 12.1 ms (11.6) | 11.5 ms | 12.1 ms (11.4) | 12.1 ms |
+| collections | 9.87 ms (9.47) | 10.6 ms (10.2) | 9.33 ms (8.74) | 9.86 ms (9.98) |
+| structs_match | 8.03 ms (8.41) | 8.08 ms | 8.70 ms (8.25) | 8.52 ms |
+| enum_match | 186 ms | 185 ms (190) | 79.5 ms | 79.9 ms |
+| reactive_events_1000 | 1.11 ms | 1.15 ms | 1.90 ms (2.05) | 1.93 ms |
+| compile_inventory_totals | 0.98 ms (0.95) | 1.01 ms (1.00) | 1.01 ms (0.97) | 1.08 ms (1.06) |
+
+Running programs is as fast as in 0.2, within the spread between rounds, with one exception: `collections` is 7% slower on the VM in both rounds (6–14% on the JIT). The most likely cause, not yet confirmed by a profile: since 0.3, `map`, `filter`, and `reduce` stop at the first failing callback instead of calling it on the remaining elements (see the 0.3.0 changelog), which adds a check after each call, and the workload calls a closure for each of its 20,000 elements three times. That behavior is a fix and is kept.
+
+Compiling is 3–8% slower: type names are resolved per module, and generic types, bounds, and generic impls add work to type checking and specialization even for a program that uses none of them. A compile of the 46-line `inventory_totals.fl` takes about 1 ms.
+
 ## Findings
 
 1. **Arrays were copied quadratically (fixed).** `Value::Array(Vec<Value>)` has full value semantics, so every read of a local array (`len(xs)`, `get(xs, i)`, passing it to a function) deep-clones it, nested structs included. `xs = push(xs, v)` copies it as well, because the old value is still held by `xs` during the call. Doubling the size roughly quadruples the time, for building (`push`: 500 → 0.3 s, 1,000 → 0.9 s, 2,000 → 3.6 s) and for indexed scanning (1,000 → 1.1 s, 2,000 → 4.2 s). Fix:

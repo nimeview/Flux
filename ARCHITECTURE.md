@@ -7,7 +7,7 @@
               │                │               │             │              │              │
            pest AST        import graph     scopes/HIR    mono+check     bytecode     graph + VM
               │                │               │             │              │              │
-              └──────────────── flux_diagnostics (Span, miette E000–E030) ─────────────────┘
+              └──────────────── flux_diagnostics (Span, miette E000–E032) ─────────────────┘
                                                                                        │
                                                                                flux_jit (--jit)
 ```
@@ -38,7 +38,7 @@ parse → HIR → monomorphize → typecheck → resolve method calls → IR →
 | `flux_fmt` | Source formatter (AST → source) | `lib.rs` |
 | `flux_lsp` | LSP server (diagnostics, hover, completion, format, symbols, rename) | `server.rs`, `analysis.rs` |
 | `flux_wasm` | WASM backend (stub) | `lib.rs` |
-| `flux_diagnostics` | Spans, miette error types E000–E030 | `error.rs`, `lib.rs` |
+| `flux_diagnostics` | Spans, miette error types E000–E032 | `error.rs`, `lib.rs` |
 | `flux_driver` | Unified compile pipeline + IR cache | `pipeline.rs`, `cache.rs`, `options.rs` |
 | `flux_cli` | CLI binary, REPL, project init | `main.rs`, `repl.rs`, `manifest.rs` |
 
