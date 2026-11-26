@@ -362,19 +362,21 @@ fn extract_imports(program: &Program) -> Vec<ImportDecl> {
 
 /// Walk upward from `start` to find the directory containing `flux.toml`.
 pub fn find_project_root(start: &Path) -> PathBuf {
-    let mut dir = start
-        .parent()
-        .map(Path::to_path_buf)
-        .unwrap_or_else(|| PathBuf::from("."));
+    // `main.fl` and `./main.fl` are the same file: an empty parent is the
+    // current directory, or paths relative to the root would differ.
+    let parent = || {
+        start
+            .parent()
+            .filter(|p| !p.as_os_str().is_empty())
+            .map_or_else(|| PathBuf::from("."), Path::to_path_buf)
+    };
+    let mut dir = parent();
     loop {
         if dir.join("flux.toml").exists() {
             return dir;
         }
         if !dir.pop() {
-            return start
-                .parent()
-                .map(Path::to_path_buf)
-                .unwrap_or_else(|| PathBuf::from("."));
+            return parent();
         }
     }
 }

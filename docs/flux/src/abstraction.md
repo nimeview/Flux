@@ -79,6 +79,8 @@ fn main() {
 
 A closure's value is its body's value, so `return` is not allowed inside one.
 
+Functions have no equality and no text form. The same holds for any array, `Option`, `Result`, tuple, map, struct, or enum containing a function, at any depth. `==`, `!=`, array `contains`, `to_string()`, interpolation, and `println` reject them (E005). For example, `[id].contains(id)` is an error when `id` is a function. Compare or show the data the function works on instead.
+
 ## Generics
 
 Square brackets declare type parameters. Flux generates a specialized copy of the function for each set of types it is used with, so generic code has no runtime cost:

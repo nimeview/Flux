@@ -1224,8 +1224,9 @@ pub(crate) fn infer_expr(
         HirExpr::ToText { expr, span } => {
             let inner = infer_expr(ctx, expr, types, names, source, diagnostics)?;
             let inner = unwrap_value_type(&inner);
-            // Shown as `to_string` shows it; a function has no text form.
-            let printable = !matches!(inner, Type::Func { .. });
+            // Shown as `to_string` shows it; a function has no text form,
+            // nor does a value holding one (`[f]`).
+            let printable = super::ops::has_text_form(&inner);
             if !printable {
                 diagnostics.push(FluxError::TypeMismatch {
                     expected: "a value with a text form inside `{…}` (not a function)".into(),

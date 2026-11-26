@@ -54,6 +54,24 @@ pub(super) fn infer_block_return(
         }
     }
 
+    // A trailing `match` whose every arm leaves (`return`) has no value of
+    // its own: the function's result is what the arms return, as for an
+    // `if … else` whose branches all return.
+    if let Some(HirStmt::Expr(flux_hir::HirExpr::Match { arms, .. })) = block.stmts.last() {
+        if !arms.is_empty() && arms.iter().all(|arm| arm.diverges) {
+            let returned = arms.iter().find_map(|arm| match arm.body.stmts.last() {
+                Some(HirStmt::Return(r)) => Some(
+                    r.value
+                        .as_ref()
+                        .and_then(|v| infer_expr(ctx, v, &scope, names, source, &mut sink))
+                        .unwrap_or(Type::Unit),
+                ),
+                _ => None,
+            });
+            return Some(returned.unwrap_or(Type::Error));
+        }
+    }
+
     // Only the last statement gives a value, as at run time.
     match block.stmts.last() {
         Some(HirStmt::Return(r)) => r

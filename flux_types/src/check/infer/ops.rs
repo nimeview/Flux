@@ -10,30 +10,33 @@ use super::super::util::{numeric_compatible, types_compatible, unwrap_value_type
 /// Whether `==` is defined on values of `ty`: primitives, and compound
 /// types (arrays, `Option`, `Result`, structs, enums) of equatable parts.
 pub(crate) fn equality_supported(ty: &Type) -> bool {
-    equatable(ty, 0)
+    equatable(ty)
 }
 
-fn equatable(ty: &Type, depth: u32) -> bool {
-    // Recursive user types (a list enum) are equatable if their known parts
-    // are; stop descending rather than loop.
-    if depth > 16 {
-        return true;
-    }
-    let d = depth + 1;
+/// Whether a value of `ty` has a text form: anything without a function in
+/// it, at any depth.
+pub(crate) fn has_text_form(ty: &Type) -> bool {
+    equatable(ty)
+}
+
+/// Types are finite trees: a recursive user type ends in a placeholder
+/// (`Enum { variants: [] }`), whose parts the enclosing type already shows,
+/// so this needs no depth limit (one let `[[…[f]…]]` 17 levels deep pass).
+fn equatable(ty: &Type) -> bool {
     match unwrap_value_type(ty) {
         t if t.is_error() || t.is_integer() || t.is_float() => true,
         Type::Bool | Type::Char | Type::String | Type::Unit | Type::Empty | Type::Var(_) => true,
-        Type::Array(inner) | Type::Option(inner) => equatable(&inner, d),
+        Type::Array(inner) | Type::Option(inner) => equatable(&inner),
         Type::Result { ok, err }
         | Type::Map {
             key: ok,
             value: err,
-        } => equatable(&ok, d) && equatable(&err, d),
-        Type::Struct { fields, .. } => fields.iter().all(|(_, t)| equatable(t, d)),
-        Type::Tuple(elems) => elems.iter().all(|t| equatable(t, d)),
+        } => equatable(&ok) && equatable(&err),
+        Type::Struct { fields, .. } => fields.iter().all(|(_, t)| equatable(t)),
+        Type::Tuple(elems) => elems.iter().all(equatable),
         Type::Enum { variants, .. } => variants
             .iter()
-            .all(|(_, payload)| payload.as_ref().is_none_or(|t| equatable(t, d))),
+            .all(|(_, payload)| payload.as_ref().is_none_or(equatable)),
         _ => false,
     }
 }

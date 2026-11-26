@@ -84,7 +84,22 @@ Rewrites older forms to the current syntax. It applies the replacement that each
 
 ## flux repl
 
-An interactive shell. `:emit Event [payload]` fires an event, and `:help` lists the rest.
+An interactive shell. `:help` lists its commands. End of input (Ctrl-D, or the end of a piped script) ends the session.
+
+`:emit Event v1 v2 …` fires an event with its values in declaration order, separated by spaces. A `"quoted string"` is one value:
+
+```text
+event Move(dx: Int, dy: Int)
+:emit Move 1 2
+event Label(text: String)
+:emit Label "two words"
+```
+
+The number of values must match the declaration. Otherwise the command does nothing and reports, for example, "`Move` carries 2 values, but 1 was given: `:emit Move v v`". An undeclared event reports "unknown event `Nope`: declare it first, as `event Nope`".
+
+A runtime error in a handler is printed, for example, "error: runtime error: integer division by zero in `on Go`". The session continues with the sources' values as they were when the error happened.
+
+Each new source line compiles the whole session again. Sources keep their current values, copied by name when the type is the same, so adding a declaration does not reset them. A watch may run once more if a copied value differs from its initial value.
 
 ## Editors
 

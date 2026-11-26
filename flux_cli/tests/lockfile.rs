@@ -169,3 +169,18 @@ fn lock_reports_a_dependency_whose_path_is_missing() {
         );
     }
 }
+
+/// `main.fl` and `./main.fl` name the same entry: `--locked` accepts the
+/// lock either way (it reported the dependency as added and removed).
+#[test]
+fn locked_checks_the_same_lock_whatever_the_entry_spelling() {
+    let dir = workspace();
+    let app = dir.path().join("app");
+    assert_eq!(flux(&["lock"], &app).status.code(), Some(0));
+    for entry in ["main.fl", "./main.fl"] {
+        let out = flux(&["check", "--locked", entry], &app);
+        assert_eq!(out.status.code(), Some(0), "{entry}: {}", text(&out.stderr));
+        let out = flux(&["run", "--locked", entry], &app);
+        assert_eq!(out.status.code(), Some(0), "{entry}: {}", text(&out.stderr));
+    }
+}

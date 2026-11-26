@@ -980,6 +980,21 @@ fn lower_stmt(
             };
             Some(vec![HirStmt::Return(HirReturn { value, span: *span })])
         }
+        Stmt::Break(span) | Stmt::Continue(span) if !symbols.in_loop() => {
+            let word = if matches!(stmt, Stmt::Break(_)) {
+                "break"
+            } else {
+                "continue"
+            };
+            diagnostics.push(FluxError::Parse {
+                message: format!(
+                    "`{word}` outside a loop: it must be inside a `while` or `for` body"
+                ),
+                span: span_to_miette(*span),
+                source_id: span.source,
+            });
+            None
+        }
         Stmt::Break(span) => Some(vec![HirStmt::Break(*span)]),
         Stmt::Continue(span) => Some(vec![HirStmt::Continue(*span)]),
         // `place.m(…)` with a `mut self` method `m`: `place = place.m(…)`.
@@ -1106,7 +1121,7 @@ fn lower_stmt(
             let mut reads_reactive = false;
             let scope = tracking_scope(ctx);
             let cond = lower_expr(cond, symbols, scope, diagnostics, &mut reads_reactive)?;
-            let body = lower_block(body, symbols, ScopeKind::Tracking, diagnostics)?;
+            let body = lower_block(body, symbols, ScopeKind::Loop, diagnostics)?;
             Some(vec![HirStmt::While(HirWhile {
                 cond,
                 body,
@@ -1163,7 +1178,7 @@ fn lower_stmt(
                 }
                 None => body,
             };
-            let body = lower_block(body, symbols, ScopeKind::Tracking, diagnostics)?;
+            let body = lower_block(body, symbols, ScopeKind::Loop, diagnostics)?;
             symbols.pop();
             Some(vec![HirStmt::For(HirFor {
                 name: id,

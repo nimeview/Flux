@@ -217,6 +217,18 @@ impl SymbolTable {
     }
 
     /// Whether lowering is inside a function body (pure or reactive).
+    /// Whether `break`/`continue` here acts on a loop of the same function.
+    pub fn in_loop(&self) -> bool {
+        for scope in self.scopes.iter().rev() {
+            match scope.kind {
+                ScopeKind::Loop => return true,
+                ScopeKind::Function { .. } | ScopeKind::Module => return false,
+                _ => {}
+            }
+        }
+        false
+    }
+
     pub fn in_function(&self) -> bool {
         self.scopes
             .iter()

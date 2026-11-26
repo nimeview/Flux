@@ -4,6 +4,20 @@ Notable changes to Flux. The versioning policy is in [`RELEASE.md`](RELEASE.md).
 
 ## [Unreleased]
 
+### Changes that can alter programs
+
+- `break` and `continue` outside a `while` or `for` body in the same function are now compile errors (E000). A loop outside a closure does not count inside it. Previously, a `-> Int` function with `break` could return `()`. Migration: move it into a loop or use `return` to leave the function.
+- Functions and values holding a function at any depth are rejected by `==`, `!=`, array `contains`, `to_string`, interpolation, and `println` (E005). Array `contains` used to compare functions, and nesting more than 16 levels deep bypassed the equality and text checks. Migration: compare or show the data the function works on.
+
+### Fixed
+
+- A function or block ending in a `match` whose arms all `return` now takes the returned values' type, like an `if … else` whose branches all return. Such a `-> Int` function was rejected with "expected Int64, found Unit". Without an annotation, the return type is inferred; a return of the wrong type is still E005.
+- In the REPL, `:emit Event v1 v2 …` passes all values in declaration order, separated by spaces; a quoted string is one value. It checks the count and rejects undeclared events with a message. `:emit Move 1 2` used to crash the REPL.
+- A runtime error in a REPL handler run by `:emit` is printed; it used to be silent. The session continues with the sources' values as they were when the error happened.
+- Recompiling a REPL session for a new line keeps sources' current values by name when their types match. Adding a declaration used to reset every source to its initial value. A watch may run once more if a copied value differs from its initial value.
+- End of input (Ctrl-D, or the end of a piped script) ends the REPL session; it used to loop forever.
+- `flux check --locked main.fl` and `flux run --locked main.fl` use the same project root as `./main.fl`. A bare file name used an empty root and could report a stale lock ("`geometry` added, `geometry` removed") when `./main.fl` worked.
+
 ## [0.3.0] - 2026-11-26
 
 ### Added

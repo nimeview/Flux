@@ -13,9 +13,13 @@ pub enum CompileContext {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ScopeKind {
     Module,
-    Function { reactive: bool },
+    Function {
+        reactive: bool,
+    },
     Tracking,
     Block,
+    /// A `while` or `for` body: `break` and `continue` act on it.
+    Loop,
 }
 
 impl ScopeKind {
@@ -24,7 +28,7 @@ impl ScopeKind {
             ScopeKind::Module => CompileContext::Module,
             ScopeKind::Function { reactive: true } => CompileContext::Tracking,
             ScopeKind::Function { reactive: false } => CompileContext::PureFn,
-            ScopeKind::Tracking => CompileContext::Tracking,
+            ScopeKind::Tracking | ScopeKind::Loop => CompileContext::Tracking,
             ScopeKind::Block => CompileContext::PureFn,
         }
     }

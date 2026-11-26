@@ -372,3 +372,59 @@ fn an_if_chain_ending_a_block_arm_is_the_arms_value() {
         "expected `Bool`, found `Int64`",
     );
 }
+
+/// 0.3.1: `break` and `continue` belong to a loop; a function cannot leave
+/// with one (a `-> Int` function returned `()`).
+#[test]
+fn break_and_continue_outside_a_loop_are_errors() {
+    rejects(
+        "fn answer() -> Int {\n    break\n    42\n}\nfn main() {\n    let a = answer()\n}\n",
+        "`break` outside a loop",
+    );
+    rejects(
+        "act fn main() {\n    continue\n}\n",
+        "`continue` outside a loop",
+    );
+    prints(
+        "import io { println }\nfn f(xs: [Int]) -> Int {\n    let mut n = 0\n    for x in xs {\n        match x {\n            0 => continue,\n            _ => {\n                if x > 5 {\n                    break\n                }\n            }\n        }\n        n += x\n    }\n    n\n}\nfn main() {\n    println(\"{f([1, 0, 2, 9, 3])}\")\n}\n",
+        "3\n",
+    );
+}
+
+/// 0.3.1: a value holding a function, at any depth, has no `==` and no text
+/// form (`[id].contains(id)` compared functions; 17 levels of arrays passed).
+#[test]
+fn functions_inside_values_are_neither_compared_nor_shown() {
+    let id = "fn id(x: Int) -> Int {\n    x\n}\n";
+    rejects(
+        &format!("import io {{ println }}\n{id}fn main() {{\n    println(\"{{[id].contains(id)}}\")\n}}\n"),
+        "elements that `==` can compare",
+    );
+    rejects(
+        &format!("{id}fn main() {{\n    let s = [id].to_string()\n}}\n"),
+        "a value with a text form",
+    );
+    let deep = format!("{}id{}", "[".repeat(18), "]".repeat(18));
+    rejects(
+        &format!("{id}fn main() {{\n    let a = {deep}\n    let same = a == a\n}}\n"),
+        "compatible equality types",
+    );
+    rejects(
+        &format!("import io {{ println }}\n{id}fn main() {{\n    let a = {deep}\n    println(\"{{a}}\")\n}}\n"),
+        "a value with a text form",
+    );
+}
+
+/// 0.3.1: a function ending in a `match` whose arms all `return` has the
+/// returned values' type, as one ending in `if … else` does.
+#[test]
+fn a_match_whose_arms_all_return_ends_a_function() {
+    prints(
+        "import io { println }\nfn f(x: Int) -> Int {\n    match x {\n        0 => return 1,\n        _ => return 2,\n    }\n}\nfn g(x: Int) {\n    match x {\n        0 => return 10,\n        _ => return 20,\n    }\n}\nfn main() {\n    println(\"{f(0)} {f(5)} {g(0)}\")\n}\n",
+        "1 2 10\n",
+    );
+    rejects(
+        "fn h(x: Int) -> Int {\n    match x {\n        0 => return \"s\",\n        _ => return 2,\n    }\n}\nfn main() {\n    let a = h(1)\n}\n",
+        "expected `Int64`, found `String`",
+    );
+}

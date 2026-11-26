@@ -146,6 +146,8 @@ ab
 true
 ```
 
+Functions have no text form. Interpolation, `to_string()`, and `println` reject a function or any value containing one, however deeply nested (E005).
+
 A raw string, `r"..."`, keeps its text exactly as written: no escapes and no braces. Add `#` around it when the text has quotes in it, which is handy for JSON:
 
 ```flux
@@ -191,7 +193,7 @@ fn main() {
 negative zero positive
 ```
 
-Only the very last statement gives a value, and only if it is an expression, a `return`, or an `if` with an `else`. Anything else there, such as a `let`, gives `Unit`:
+Only the very last statement gives a value, and only if it is an expression, a `return`, or an `if` with an `else`. A final `match` whose arms all `return` also takes the returned values' type, as does an `if … else` whose branches all return. Anything else there, such as a `let`, gives `Unit`:
 
 ```flux,error=E005
 fn five() -> Int {
@@ -205,7 +207,7 @@ fn main() {
 
 ## Control flow
 
-`if` is also an expression. `while` and `for` loop, and `break` and `continue` work as you would expect:
+`if` is also an expression. `while` and `for` loop. `break` leaves the loop, and `continue` starts its next iteration:
 
 ```flux
 import collections { range }
@@ -237,6 +239,8 @@ fn main() {
 16 big
 0
 ```
+
+`break` and `continue` must be inside a `while` or `for` body in the same function. They can be inside an `if`, a block, or a `match` arm within the loop, but cannot cross a closure boundary. Using either outside a loop, including in `act fn main`, is E000: "`break` outside a loop: it must be inside a `while` or `for` body" (or the same message for `continue`). Move it into a loop or use `return` to leave the function.
 
 Statements are separated by newlines. To put two on one line, separate them with `;`, which has no other meaning. A comma may follow the last element of any list, so `[1, 2, 3,]` is fine; `flux fmt` removes such commas and puts each statement on its own line.
 

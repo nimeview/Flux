@@ -507,7 +507,7 @@ pub(super) fn infer_builtin_call(
             if let Some(arg) = args.first() {
                 let got = infer_expr(ctx, arg, types, names, source, diagnostics)?;
                 let got = unwrap_value_type(&got);
-                if matches!(got, Type::Func { .. } | Type::Event(_)) {
+                if !super::ops::has_text_form(&got) {
                     diagnostics.push(FluxError::TypeMismatch {
                         expected: "a value with a text form".into(),
                         found: got.display(),
@@ -1009,6 +1009,15 @@ fn infer_method_builtin(
             if let Some(v) = rest.first() {
                 let got = infer(v, diagnostics);
                 expect(&elem, v, &got, diagnostics);
+                // `contains` compares with `==`, which functions do not have.
+                if !super::ops::equality_supported(&elem) {
+                    mismatch(
+                        "elements that `==` can compare (no function in them)".into(),
+                        &elem,
+                        v.span(),
+                        diagnostics,
+                    );
+                }
             }
             Type::Bool
         }

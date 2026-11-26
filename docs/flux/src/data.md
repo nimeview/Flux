@@ -94,7 +94,7 @@ fn main() {
 Point { x: 1, y: 2 } 11 2 false
 ```
 
-`let Point { x, y } = b` takes the fields apart. `==` compares structs field by field, and works the same way for arrays, `Option`, `Result`, and enums.
+`let Point { x, y } = b` takes the fields apart. `==` compares structs field by field, and works the same way for arrays, `Option`, `Result`, tuples, maps, and enums. A value containing a function at any depth cannot be compared (E005).
 
 ### Changing a struct
 
@@ -256,6 +256,20 @@ fn main() {
 got 4
 -1 9
 ```
+
+A final `match` whose arms all `return` gives the function or block the returned values' type. A return annotation is checked against every arm; without one, the return type is inferred. Both functions below return `Int`:
+
+```text
+fn f(x: Int) -> Int {
+    match x { 0 => return 1, _ => return 2 }
+}
+
+fn g(x: Int) {
+    match x { 0 => return 10, _ => return 20 }
+}
+```
+
+Returning `"s"` in an arm of `f` would be E005 because `f` declares `-> Int`.
 
 ## Tuples
 

@@ -116,6 +116,8 @@ flux run --locked
 flux lock --check
 ```
 
+`flux check --locked main.fl` and `flux run --locked main.fl` use the same project root as `./main.fl`. Either spelling checks the same lock.
+
 Note that the hash covers source text, so reformatting a dependency changes it.
 
 The repository has working examples in `examples/packages`.
