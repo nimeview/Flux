@@ -4,6 +4,8 @@ Notable changes to Flux. The versioning policy is in [`RELEASE.md`](RELEASE.md).
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-11-26
+
 ### Changes that can alter programs
 
 - `break` and `continue` outside a `while` or `for` body in the same function are now compile errors (E000). A loop outside a closure does not count inside it. Previously, a `-> Int` function with `break` could return `()`. Migration: move it into a loop or use `return` to leave the function.
