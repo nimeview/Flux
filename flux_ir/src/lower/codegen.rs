@@ -229,6 +229,28 @@ fn emit_expr(expr: &HirExpr, program: &HirProgram, code: &mut Vec<Inst>) {
                     }
                 }
             }
+            // `after(ms, Tick, v…)`: the event goes by name.
+            if let HirExpr::Ident { symbol, .. } = callee.as_ref() {
+                let timer = program.symbols.get(symbol).is_some_and(|s| {
+                    s.kind == SymbolKind::Builtin && matches!(s.name.as_str(), "after" | "every")
+                });
+                if let (true, Some(HirExpr::Ident { symbol: event, .. })) = (timer, args.get(1)) {
+                    if let (Some(fname), Some(ename)) =
+                        (program.names.get(symbol), program.names.get(event))
+                    {
+                        emit_expr(&args[0], program, code);
+                        code.push(Inst::Const(crate::IrValue::String(ename.clone())));
+                        for arg in &args[2..] {
+                            emit_expr(arg, program, code);
+                        }
+                        code.push(Inst::Call {
+                            name: fname.clone(),
+                            argc: args.len(),
+                        });
+                        return;
+                    }
+                }
+            }
             // A tuple is a struct with fields "0", "1", …
             if let HirExpr::Ident { symbol, .. } = callee.as_ref() {
                 // A destructuring check is only for the type checker.

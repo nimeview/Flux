@@ -15,6 +15,7 @@ pub use paths::{
     build_dir, cache_dir, ensure_project_dirs, project_dir, BUILD_DIR, CACHE_DIR, PROJECT_DIR,
 };
 pub use pipeline::{
-    analyze_document, analyze_document_with, check_file, compile, compile_file, compile_with_mode,
-    compile_with_options, source_from, Analyzed, Checked, CompileFailed, Compiled,
+    analyze_document, analyze_document_with, check_file, compile, compile_file,
+    compile_file_with_host, compile_with_mode, compile_with_options, source_from, Analyzed,
+    Checked, CompileFailed, Compiled,
 };

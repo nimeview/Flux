@@ -183,7 +183,7 @@
     "declaration": {
       "patterns": [
         {
-          "match": "\\b(pub)?\\s*\\b(?:(track|act|live)\\s+)?(fn|rfn)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "match": "\\b(pub)?\\s*\\b(?:(track|act|live|extern)\\s+)?(fn|rfn)\\s+([A-Za-z_][A-Za-z0-9_]*)",
           "captures": {
             "1": {
               "name": "storage.modifier.flux"

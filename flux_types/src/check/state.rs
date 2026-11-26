@@ -146,6 +146,8 @@ impl TypeCheckContext {
             ..Self::default()
         };
 
+        // An `extern fn` has no body to check: the host gives it.
+        ctx.live_ctors.extend(program.externs.iter().copied());
         for template in &program.templates {
             ctx.user_types
                 .insert(template.name.clone(), Type::Live(template.name.clone()));

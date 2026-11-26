@@ -14,6 +14,7 @@ item = {
   | impl_decl
   | event_decl
   | live_decl
+  | extern_decl
   | fn_decl
   | rfn_decl
   | watch_stmt
@@ -88,6 +89,9 @@ live_decl = { pub_modifier? ~ kw_live ~ kw_fn ~ ident ~ "(" ~ param_list? ~ ")" 
 kw_live = @{ "live" ~ kw_end }
 live_body = { "{" ~ (live_item | ";")* ~ "}" }
 live_item = { event_decl | fn_decl | watch_stmt | on_stmt | derived_binding | let_binding }
+// `extern fn alert(text: String)`: a function the host provides.
+extern_decl = { pub_modifier? ~ kw_extern ~ kw_fn ~ ident ~ "(" ~ param_list? ~ ")" ~ return_type? }
+kw_extern = @{ "extern" ~ kw_end }
 // The older spelling of `track fn`.
 rfn_decl = { pub_modifier? ~ kw_rfn ~ ident ~ type_params? ~ fn_sig ~ block }
 kw_rfn = @{ "rfn" ~ kw_end }

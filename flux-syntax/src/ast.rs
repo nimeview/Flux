@@ -34,6 +34,8 @@ pub enum Item {
     Fn(FnDecl),
     /// `live fn Name(params) { … }`: a component.
     Live(LiveDecl),
+    /// `extern fn name(params) -> T`: a function the host provides.
+    Extern(ExternDecl),
     RFn(RFnDecl),
     Derived(DerivedStmt),
     Const(ConstBinding),
@@ -164,6 +166,17 @@ pub struct FnDecl {
     pub params: Vec<Param>,
     pub ret: Option<TypeName>,
     pub body: Block,
+    pub span: Span,
+}
+
+/// `extern fn name(params) -> T`: declared in Flux, provided by the host
+/// that runs the program. A call is an action, like an `act fn`'s.
+#[derive(Debug, Clone)]
+pub struct ExternDecl {
+    pub pub_: bool,
+    pub name: Ident,
+    pub params: Vec<Param>,
+    pub ret: Option<TypeName>,
     pub span: Span,
 }
 

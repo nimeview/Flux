@@ -75,6 +75,8 @@ pub enum ExecutorError {
     Invalid(String),
     /// The program raised a runtime error while initializing.
     Runtime(RuntimeError),
+    /// The program declares `extern fn`s the host does not provide.
+    MissingHostFunctions(Vec<String>),
 }
 
 impl std::fmt::Display for ExecutorError {
@@ -82,6 +84,14 @@ impl std::fmt::Display for ExecutorError {
         match self {
             Self::Invalid(msg) => write!(f, "invalid program: {msg}"),
             Self::Runtime(err) => err.fmt(f),
+            Self::MissingHostFunctions(names) => {
+                let names: Vec<String> = names.iter().map(|n| format!("`{n}`")).collect();
+                write!(
+                    f,
+                    "this host does not provide {}, declared with `extern fn`",
+                    names.join(", ")
+                )
+            }
         }
     }
 }

@@ -11,6 +11,10 @@ pub use codegen::{Codegen, IrCodegen};
 pub use flux_hir::WITH_FIELDS;
 pub use graph_readers::graph_readers;
 pub use lower::lower_to_ir;
+
+/// A call of a host function is `Call { name: EXTERN_PREFIX + name }`, in
+/// the body of the `extern fn` that declares it.
+pub const EXTERN_PREFIX: &str = "\0extern:";
 pub use resolve::resolve_locals;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]

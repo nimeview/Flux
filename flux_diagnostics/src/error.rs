@@ -370,6 +370,20 @@ pub enum FluxError {
         source_id: SourceId,
     },
 
+    /// A library module or function the target does not have.
+    #[error("`{name}` is not available on target `{target}`")]
+    #[diagnostic(
+        code(flux::E034),
+        help("a `{target}` program cannot use it; check another target, or leave it out")
+    )]
+    NotOnTarget {
+        name: String,
+        target: String,
+        #[label("not on this target")]
+        span: miette::SourceSpan,
+        source_id: SourceId,
+    },
+
     /// Code outside a component assigns a member of one of its instances.
     #[error("`{name}` belongs to an instance of `{ty}`; only the instance's own code changes it")]
     #[diagnostic(
@@ -433,6 +447,7 @@ impl FluxError {
             | Self::UnsatisfiedBound { source_id, .. }
             | Self::ForeignSourceWrite { source_id, .. }
             | Self::InstanceMemberWrite { source_id, .. }
+            | Self::NotOnTarget { source_id, .. }
             | Self::ActInPureContext { source_id, .. }
             | Self::PrivateField { source_id, .. } => *source_id,
         }
@@ -472,6 +487,7 @@ impl FluxError {
             Self::UnsatisfiedBound { .. } => "E031",
             Self::ForeignSourceWrite { .. } => "E032",
             Self::InstanceMemberWrite { .. } => "E032",
+            Self::NotOnTarget { .. } => "E034",
             Self::ActInPureContext { .. } => "E008",
             Self::PrivateField { .. } => "E033",
         }
@@ -511,6 +527,7 @@ impl FluxError {
             | Self::UnsatisfiedBound { span, .. }
             | Self::ForeignSourceWrite { span, .. }
             | Self::InstanceMemberWrite { span, .. }
+            | Self::NotOnTarget { span, .. }
             | Self::ActInPureContext { span, .. }
             | Self::PrivateField { span, .. }
             | Self::DuplicateDefinition { span, .. } => *span,

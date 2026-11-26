@@ -275,6 +275,40 @@ pub(super) fn parse_fn(
     }
 }
 
+/// `extern fn name(params) -> T`.
+pub(super) fn parse_extern(
+    source_id: SourceId,
+    pair: pest::iterators::Pair<'_, Rule>,
+    span: Span,
+) -> ExternDecl {
+    let mut inner = pair.into_inner().peekable();
+    let pub_ = take_pub(&mut inner);
+    let _extern = inner.next().expect("extern keyword");
+    let _fn = inner.next().expect("fn keyword");
+    let name = parse_ident(source_id, inner.next().expect("extern fn name"));
+    let mut params = Vec::new();
+    let mut ret = None;
+    for child in inner {
+        match child.as_rule() {
+            Rule::param_list => params = parse_param_list(source_id, child),
+            Rule::return_type => {
+                ret = child
+                    .into_inner()
+                    .next()
+                    .map(|t| parse_type_name(source_id, t));
+            }
+            _ => {}
+        }
+    }
+    ExternDecl {
+        pub_,
+        name,
+        params,
+        ret,
+        span,
+    }
+}
+
 /// `live fn Name(params) { members }`.
 pub(super) fn parse_live(
     source_id: SourceId,

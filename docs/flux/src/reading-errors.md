@@ -49,7 +49,7 @@ flux::E002
 | E005 | type mismatch |
 | E006 | unknown event |
 | E007 | unknown type |
-| E008 | control flow or `snap` in a derived value; an `act fn` called by a derived value, `const` initializer, or `track fn`, directly or through other calls or function values |
+| E008 | control flow or `snap` in a derived value; an `act fn` or `extern fn` called by a derived value, `const` initializer, or `track fn`, directly or through other calls or function values |
 | E009 | assignment to an immutable local or `const` |
 | E010 | cycle among reactive values |
 | E011 | `watch` or `on` outside the top level |
@@ -75,3 +75,4 @@ flux::E002
 | E031 | a generic call's type lacks a trait its bound names, as `largest([p])` for a `Point` without `Ord` |
 | E032 | a module changes another module's source; emit that module's event or call its `pub act fn` |
 | E033 | naming another module's private struct field; use the functions or methods that module provides, or mark the field `pub` there |
+| E034 | a module or library function is not available on the target; for example, "`fs` is not available on target `web`" |

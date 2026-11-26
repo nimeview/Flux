@@ -80,6 +80,8 @@ pub enum ArithError {
     /// An instance's member would hold the instance itself, directly or
     /// through instances it holds: nothing could ever release it.
     InstanceHoldsItself = 16,
+    /// A host function (`extern fn`) reported a failure.
+    HostFailed = 17,
 }
 
 impl ArithError {
@@ -100,6 +102,7 @@ impl ArithError {
             14 => Self::ReactiveCycle,
             15 => Self::ReadBeforeInit,
             16 => Self::InstanceHoldsItself,
+            17 => Self::HostFailed,
             _ => Self::InvalidOperands,
         }
     }
@@ -121,6 +124,7 @@ impl ArithError {
             Self::BadExitStatus => "exit status must be 0..=255",
             Self::ReactiveCycle => "a derived value depends on itself",
             Self::ReadBeforeInit => "a binding was read before its initial value was set",
+            Self::HostFailed => "a host function failed",
             Self::InstanceHoldsItself => {
                 "an instance cannot hold itself, directly or through the instances it holds"
             }

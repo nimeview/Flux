@@ -151,6 +151,7 @@ pub(super) fn collect_reassigned_sources(program: &Program) -> HashSet<String> {
             Item::If(s) => collector.if_stmt(s, &locals),
             // A component's members are its own (`live::lower_live`).
             Item::Live(_)
+            | Item::Extern(_)
             | Item::Import(_)
             | Item::TypeAlias(_)
             | Item::Struct(_)
@@ -618,6 +619,7 @@ fn lower_program_inner(
             member_events: HashMap::new(),
             member_reads: HashMap::new(),
             member_calls: HashSet::new(),
+            externs: std::mem::take(&mut symbols.externs),
             names,
             enum_variants: symbols.enum_variants.clone(),
             trait_impls,
@@ -795,6 +797,65 @@ fn check_alias_cycles(
     }
 }
 
+/// An `extern fn` as the function it is to the compiler: an `act fn`
+/// named `name` with no body (the host gives it).
+pub(super) fn extern_as_fn(decl: &flux_syntax::ExternDecl, name: &str) -> FnDecl {
+    FnDecl {
+        mut_self: false,
+        pub_: decl.pub_,
+        kind: flux_syntax::FnKind::Act,
+        keyword: decl.name.span,
+        name: flux_syntax::Ident {
+            name: name.to_string(),
+            span: decl.name.span,
+        },
+        type_params: Vec::new(),
+        type_bounds: Vec::new(),
+        params: decl.params.clone(),
+        ret: decl.ret.clone(),
+        body: flux_syntax::Block {
+            stmts: Vec::new(),
+            span: decl.span,
+        },
+        span: decl.span,
+    }
+}
+
+/// An `extern fn`'s parameters are values the host receives: none is `mut`.
+pub(super) fn extern_params_ok(
+    decl: &flux_syntax::ExternDecl,
+    diagnostics: &mut DiagnosticBag,
+) -> bool {
+    let mut ok = true;
+    for p in decl.params.iter().filter(|p| p.mutable) {
+        diagnostics.push(FluxError::Parse {
+            message: format!(
+                "parameter `{}` of an `extern fn` cannot be `mut`: the host receives values",
+                p.name.name
+            ),
+            span: span_to_miette(p.span),
+            source_id: p.span.source,
+        });
+        ok = false;
+    }
+    ok
+}
+
+/// Declares the `extern fn` `name` and notes it as one.
+pub(super) fn declare_extern(
+    name: &str,
+    span: flux_diagnostics::Span,
+    symbols: &mut SymbolTable,
+) -> Option<Symbol> {
+    match symbols.declare(name, SymbolKind::Function { reactive: false }, span) {
+        Ok(id) => {
+            symbols.externs.insert(id);
+            None
+        }
+        Err(prev) => Some(prev),
+    }
+}
+
 pub(super) fn declare_item(item: &Item, symbols: &mut SymbolTable) -> Option<Symbol> {
     if let Item::Fn(f) = item {
         funcs::note_mut_params(symbols, &f.name.name, f);
@@ -870,6 +931,7 @@ pub(super) fn declare_item(item: &Item, symbols: &mut SymbolTable) -> Option<Sym
         Item::Watch(_) | Item::On(_) | Item::If(_) | Item::Import(_) | Item::TypeAlias(_) => None,
         // Declared with its diagnostics by `declare_root_item`.
         Item::Live(_) => None,
+        Item::Extern(e) => declare_extern(&e.name.name, e.name.span, symbols),
     }
 }
 
@@ -888,6 +950,7 @@ fn item_name_span(item: &Item) -> (String, flux_diagnostics::Span) {
         Item::Event(e) => (e.name.name.clone(), e.span),
         Item::Fn(f) => (f.name.name.clone(), f.span),
         Item::Live(l) => (l.name.name.clone(), l.span),
+        Item::Extern(e) => (e.name.name.clone(), e.span),
         Item::RFn(f) => (f.name.name.clone(), f.span),
         Item::Const(c) => (c.name.name.clone(), c.span),
         Item::Let(l) => (
@@ -928,6 +991,18 @@ pub(super) fn lower_item(
         Item::Let(let_stmt) => lower_module_let(let_stmt, symbols, diagnostics, reassigned_sources),
         Item::Fn(decl) => lower_fn(decl, symbols, diagnostics, false).map(HirItem::Fn),
         Item::Live(decl) => live::lower_live(decl, &decl.name.name, symbols, diagnostics),
+        Item::Extern(decl) => {
+            if !extern_params_ok(decl, diagnostics) {
+                return None;
+            }
+            lower_fn(
+                &extern_as_fn(decl, &decl.name.name),
+                symbols,
+                diagnostics,
+                false,
+            )
+            .map(HirItem::Fn)
+        }
         Item::RFn(decl) => lower_rfn(decl, symbols, diagnostics).map(HirItem::Fn),
         Item::Watch(stmt) => lower_watch(stmt, symbols, diagnostics).map(HirItem::Watch),
         Item::On(stmt) => lower_on(stmt, symbols, diagnostics).map(HirItem::On),

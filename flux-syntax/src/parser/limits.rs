@@ -135,6 +135,7 @@ pub(super) fn tree_depth_exceeds(program: &Program) -> Option<Span> {
             | Item::Enum(_)
             | Item::Trait(_)
             | Item::Live(_)
+            | Item::Extern(_)
             | Item::Event(_) => {}
         }
     }

@@ -18,9 +18,17 @@ A file without `main` initializes and then prints its reactive values, which is 
 
 ```bash
 flux check app.fl
+flux check --target cli app.fl
+flux check --target web app.fl
 ```
 
-Reports everything `run` would reject, without running anything.
+Checks imports and types without running the program. It accepts `extern fn` declarations; `flux run` provides no host functions and cannot start a program that declares one.
+
+`--target cli|web` selects the target. The default is `cli`. Each target has its part of the library. `web` has no `fs`, `process`, or `env` module. Its `io` module has no `args`, `read_line`, `read_stdin`, `read_file`, `write_file`, `append_file`, `file_exists`, `read_bytes`, or `write_bytes`.
+
+Importing a module the target lacks is E034: "`fs` is not available on target `web`". Naming an unavailable function in an import is also E034. With `import io`, using such a function is E034 where it is used.
+
+An unknown target is an error: "unknown target `mars`; the targets are `cli` and `web`". `web` can only be checked. Nothing builds or runs for it yet.
 
 ## flux test
 
@@ -60,7 +68,7 @@ test math_test.fl::test_positive ... ok
 test result: ok. 3 passed; 0 failed
 ```
 
-The exit status is 1 if anything failed.
+The exit status is 1 if anything failed. `flux test` does not run timers.
 
 ## flux fmt
 

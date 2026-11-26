@@ -33,6 +33,7 @@ pub const STD_MODULES: &[(&str, &[&str])] = &[
     ),
     ("path", &["path_join", "file_name", "extension", "parent"]),
     ("process", &["exit", "run"]),
+    ("time", &["now", "after", "every", "cancel", "stop"]),
     (
         "collections",
         &[
@@ -121,4 +122,75 @@ pub fn export_in_std_module(module: &str, name: &str) -> bool {
     std_module_exports(module)
         .map(|exports| exports.contains(&name))
         .unwrap_or(false)
+}
+
+/// Where a program runs: each target has its own part of the library.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Target {
+    /// A command-line program: the whole library.
+    #[default]
+    Cli,
+    /// A web page (not buildable yet): no files, processes, environment,
+    /// standard input, or command-line arguments.
+    Web,
+}
+
+impl Target {
+    pub fn name(self) -> &'static str {
+        match self {
+            Target::Cli => "cli",
+            Target::Web => "web",
+        }
+    }
+
+    pub fn parse(name: &str) -> Option<Self> {
+        match name {
+            "cli" => Some(Target::Cli),
+            "web" => Some(Target::Web),
+            _ => None,
+        }
+    }
+}
+
+thread_local! {
+    static TARGET: std::cell::Cell<Target> = const { std::cell::Cell::new(Target::Cli) };
+}
+
+/// Sets the target that checking compiles for (on this thread).
+pub fn set_target(target: Target) {
+    TARGET.with(|t| t.set(target));
+}
+
+/// The target that checking compiles for.
+pub fn target() -> Target {
+    TARGET.with(std::cell::Cell::get)
+}
+
+/// Whether `target` has the library function `name` of `module`.
+pub fn available_on(target: Target, module: &str, name: &str) -> bool {
+    match target {
+        Target::Cli => true,
+        Target::Web => {
+            !matches!(module, "fs" | "process" | "env")
+                && !(module == "io"
+                    && matches!(
+                        name,
+                        "args"
+                            | "read_line"
+                            | "read_stdin"
+                            | "read_file"
+                            | "write_file"
+                            | "append_file"
+                            | "file_exists"
+                            | "read_bytes"
+                            | "write_bytes"
+                    ))
+        }
+    }
+}
+
+/// Whether `target` has any of `module`.
+pub fn module_available_on(target: Target, module: &str) -> bool {
+    std_module_exports(module)
+        .is_some_and(|names| names.iter().any(|n| available_on(target, module, n)))
 }

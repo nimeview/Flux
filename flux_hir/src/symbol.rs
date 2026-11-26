@@ -81,6 +81,10 @@ pub struct SymbolTable {
     pub live_ctors: std::collections::HashSet<SymbolId>,
     /// Set when an expression being lowered calls a constructor.
     pub makes_instance: bool,
+    /// The `extern fn`s: functions the host provides.
+    pub externs: std::collections::HashSet<SymbolId>,
+    /// Library functions imported with their module that the target lacks.
+    pub not_on_target: std::collections::HashSet<SymbolId>,
     /// Every `impl` seen, checked against its trait once all traits are lowered.
     pub pending_impls: Vec<flux_syntax::ImplDecl>,
     /// Builtins the compiler uses without an import (e.g. `set` for
@@ -213,6 +217,8 @@ impl SymbolTable {
             template_handlers: HashMap::new(),
             live_ctors: std::collections::HashSet::new(),
             makes_instance: false,
+            externs: std::collections::HashSet::new(),
+            not_on_target: std::collections::HashSet::new(),
             pending_impls: Vec::new(),
             hidden_builtins: HashMap::new(),
             const_bindings: std::collections::HashSet::new(),

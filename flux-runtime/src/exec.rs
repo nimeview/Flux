@@ -12,7 +12,10 @@ mod eval;
 mod live;
 mod place;
 mod stmts;
+mod timers;
 mod values;
+
+pub use timers::{EventSender, Host, HostFn};
 
 use std::collections::{HashMap, HashSet};
 
@@ -173,6 +176,10 @@ pub struct Executor {
     /// The instance whose component code is running, if any: member names
     /// mean its members.
     receiver: Option<u64>,
+    /// What `after` and `every` set, and events sent from outside.
+    timers: timers::Timers,
+    /// The host's functions for the program's `extern fn`s.
+    host: timers::Host,
 }
 
 impl Executor {
@@ -182,10 +189,36 @@ impl Executor {
     }
 
     /// Create an executor with an explicit engine choice.
-    pub fn with_mode(
+    pub fn with_mode(program: CompiledProgram, mode: ExecutionMode) -> Result<Self, ExecutorError> {
+        Self::with_host(program, mode, Host::default())
+    }
+
+    /// Create an executor for a host that gives the program's `extern fn`s.
+    /// Every one the program declares must be provided.
+    pub fn with_host(
         mut program: CompiledProgram,
         mode: ExecutionMode,
+        host: Host,
     ) -> Result<Self, ExecutorError> {
+        let mut missing: Vec<String> = program
+            .functions
+            .iter()
+            .flat_map(|f| f.body.iter())
+            .filter_map(|stmt| match stmt {
+                flux_ir::IrStmt::Return { expr: Some(code) } => code.iter().find_map(|i| match i {
+                    flux_ir::Inst::Call { name, .. } => name.strip_prefix(flux_ir::EXTERN_PREFIX),
+                    _ => None,
+                }),
+                _ => None,
+            })
+            .filter(|name| !host.functions.contains_key(*name))
+            .map(str::to_string)
+            .collect();
+        if !missing.is_empty() {
+            missing.sort();
+            missing.dedup();
+            return Err(ExecutorError::MissingHostFunctions(missing));
+        }
         // Lowering already resolves slots; this covers IR built elsewhere.
         flux_ir::resolve_locals(&mut program);
         validate_program(&program).map_err(ExecutorError::Invalid)?;
@@ -396,6 +429,8 @@ impl Executor {
                 ..live_state
             }),
             receiver: None,
+            timers: timers::Timers::default(),
+            host,
             trap: None,
             vm_only: false,
             initial_watches: None,

@@ -8,7 +8,7 @@ mod vm;
 pub use backend::JitBackend;
 pub use backend::{EvalContext, ExecBackend, JitResult, VmBackend};
 pub use error::{ExecutorError, RuntimeError};
-pub use exec::Executor;
+pub use exec::{EventSender, Executor, Host, HostFn};
 pub use flux_ir::{EffectMeta, EffectTrigger, HandlerKind};
 #[cfg(feature = "jit")]
 pub use flux_jit::JitStats;

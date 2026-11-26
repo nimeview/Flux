@@ -268,6 +268,25 @@ pub fn lower_to_ir(
                         }
                     }
                     let mut compiled = lower_fn(f, &name, program);
+                    // An `extern fn` calls the host's function, by the name
+                    // the program declares.
+                    if program.externs.contains(&f.name) {
+                        let declared = program
+                            .names
+                            .get(&f.name)
+                            .map(|n| flux_value::type_display_name(n).to_string())
+                            .unwrap_or_default();
+                        let mut code: Vec<Inst> = compiled
+                            .params
+                            .iter()
+                            .map(|p| Inst::Load(p.clone()))
+                            .collect();
+                        code.push(Inst::Call {
+                            name: format!("{}{declared}", crate::EXTERN_PREFIX),
+                            argc: compiled.params.len(),
+                        });
+                        compiled.body = vec![IrStmt::Return { expr: Some(code) }].into();
+                    }
                     // A component's constructor makes an instance.
                     if let Some(t) = program.templates.iter().position(|t| t.ctor == f.name) {
                         let mut code: Vec<Inst> = compiled

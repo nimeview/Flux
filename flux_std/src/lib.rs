@@ -8,7 +8,8 @@ mod os;
 mod str_ext;
 
 pub use modules::{
-    export_in_std_module, is_std_module, std_module_exports, std_module_name, STD_MODULES,
+    available_on, export_in_std_module, is_std_module, module_available_on, set_target,
+    std_module_exports, std_module_name, target, Target, STD_MODULES,
 };
 
 use flux_value::MapKey;
@@ -81,6 +82,11 @@ pub const BUILTIN_FNS: &[&str] = &[
     "parent",
     "exit",
     "run",
+    "now",
+    "after",
+    "every",
+    "cancel",
+    "stop",
     "Some",
     "None",
     "Ok",
@@ -131,7 +137,16 @@ pub const SIDE_EFFECT_BUILTINS: &[&str] = &[
     "remove_dir",
     "exit",
     "run",
+    "now",
+    "after",
+    "every",
+    "cancel",
+    "stop",
 ];
+
+/// The `time` functions that schedule events: the executor runs them, as
+/// they change its timers.
+pub const TIMER_FNS: &[&str] = &["after", "every", "cancel", "stop"];
 
 pub const HOF_FNS: &[&str] = &["map", "filter", "reduce"];
 
@@ -458,6 +473,12 @@ pub fn call_builtin(name: &str, args: &[Value]) -> Option<Value> {
         "assert" => math::assert(args.first()?).ok(),
         "assert_eq" => math::assert_eq(args.first()?, args.get(1)?).ok(),
         "read_line" => Some(io::read_line()),
+        // Milliseconds since 1970-01-01 UTC.
+        "now" => Some(Value::int_i64(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |d| d.as_millis() as i64),
+        )),
         "read_stdin" => Some(os::read_stdin()),
         "read_bytes" => Some(os::read_bytes(str_arg(args.first())?)),
         "write_bytes" => match args.get(1)? {

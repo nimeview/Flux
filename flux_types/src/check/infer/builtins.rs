@@ -692,6 +692,43 @@ pub(super) fn infer_builtin_call(
             }
             Some(Type::String)
         }
+        // `after(ms, Tick(…))`, lowered to `after(ms, Tick, …)`: the event
+        // and its values, sent `ms` milliseconds later. Returns the timer.
+        "after" | "every" => {
+            if let Some(ms) = args.first() {
+                check_arg(ctx, Some(ms), &Type::Int, types, names, source, diagnostics);
+            }
+            let event = args.get(1).and_then(|e| match e {
+                HirExpr::Ident { symbol, .. } => match types.get(symbol) {
+                    Some(Type::Event(values)) => Some(values.clone()),
+                    _ => None,
+                },
+                _ => None,
+            });
+            let Some(values) = event else {
+                diagnostics.push(FluxError::TypeMismatchWithHelp {
+                    expected: format!("an event to send, as in `{name}(500, Tick())`"),
+                    found: format!("{} arguments", args.len()),
+                    span: span_to_miette(span),
+                    source_id: span.source,
+                    help: "write the event as you would emit it: `Name(values…)`".into(),
+                });
+                return Some(Type::Int);
+            };
+            let given = &args[2..];
+            if given.len() != values.len() {
+                diagnostics.push(FluxError::TypeMismatch {
+                    expected: crate::check::count(values.len(), "value"),
+                    found: crate::check::count(given.len(), "value"),
+                    span: span_to_miette(span),
+                    source_id: span.source,
+                });
+            }
+            for (want, arg) in values.iter().zip(given) {
+                check_arg(ctx, Some(arg), want, types, names, source, diagnostics);
+            }
+            Some(Type::Int)
+        }
         _ => {
             // A function with one signature: each argument has its type.
             if let Some((params, ret)) = crate::builtins::os_signature(name) {

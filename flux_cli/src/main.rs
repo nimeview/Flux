@@ -70,6 +70,10 @@ enum Commands {
         /// Fail instead of updating flux.lock when dependencies changed
         #[arg(long)]
         locked: bool,
+        /// Where the program will run: `cli` (default) or `web` (checked
+        /// only: no files, processes, environment, or standard input)
+        #[arg(long, default_value = "cli")]
+        target: String,
     },
     /// Interactive read-eval-print loop
     Repl {
@@ -175,10 +179,21 @@ fn main() {
             };
             flux_cli::test_runner::run_tests(&root, filter.as_deref(), mode)
         }
-        Commands::Check { file, locked } => match check_file(file.as_deref(), locked) {
-            Ok(()) => 0,
-            Err(()) => 1,
-        },
+        Commands::Check {
+            file,
+            locked,
+            target,
+        } => {
+            let Some(target) = flux_std::Target::parse(&target) else {
+                eprintln!("error: unknown target `{target}`; the targets are `cli` and `web`");
+                std::process::exit(1);
+            };
+            flux_std::set_target(target);
+            match check_file(file.as_deref(), locked) {
+                Ok(()) => 0,
+                Err(()) => 1,
+            }
+        }
         Commands::Repl { jit, vm } => repl::run(use_jit(jit, vm)).map_or(1, |_| 0),
         Commands::Fmt { file, write, check } => match fmt_file(&file, write, check) {
             Ok(()) => 0,
@@ -298,12 +313,20 @@ fn run_file(
         Ok(mut compiled) => {
             let _ = report_warnings(&compiled.source, &compiled.sources, &compiled.warnings);
             if compiled.executor.function_arity("main") == Some(0) {
-                let status = run_main(&mut compiled.executor);
+                // After `main`, the program's timers and events run.
+                let status = match run_main(&mut compiled.executor) {
+                    Ok(status) => run_events(&mut compiled.executor, status),
+                    Err(status) => status,
+                };
                 if verbose {
                     if let Some(stats) = compiled.executor.jit_stats() {
                         print_jit_stats(&stats);
                     }
                 }
+                return Ok(status);
+            }
+            let status = run_events(&mut compiled.executor, 0);
+            if status != 0 {
                 return Ok(status);
             }
             if !quiet {
@@ -327,27 +350,45 @@ fn run_file(
     }
 }
 
-fn run_main(executor: &mut flux_runtime::Executor) -> i32 {
-    match executor.call("main", &[]) {
-        Ok(RuntimeValue::Unit) => 0,
-        Ok(value) => match value.as_int().and_then(|n| u8::try_from(n).ok()) {
-            Some(code) => i32::from(code),
-            None => {
-                eprintln!(
-                    "error: `main` returned {}; an exit status must be 0..=255",
-                    value.display_string()
-                );
-                1
-            }
-        },
+/// Runs the program's timers and outside events until none is left or it
+/// calls `stop()`; `status` is the exit status `main` gave.
+fn run_events(executor: &mut flux_runtime::Executor, status: i32) -> i32 {
+    match executor.run_event_loop() {
+        Ok(()) => status,
         Err(err) => {
-            // `exit(code)` stops the program on purpose.
             let code = flux_std::take_exit_code();
             if let (flux_runtime::ArithError::Exit, Some(code)) = (err.kind, code) {
                 return code;
             }
             eprintln!("error: {err:#}");
             1
+        }
+    }
+}
+
+/// Calls `main`: `Ok` with the exit status it gives, or `Err` with the
+/// status after a failure (reported) or `exit(code)`.
+fn run_main(executor: &mut flux_runtime::Executor) -> Result<i32, i32> {
+    match executor.call("main", &[]) {
+        Ok(RuntimeValue::Unit) => Ok(0),
+        Ok(value) => match value.as_int().and_then(|n| u8::try_from(n).ok()) {
+            Some(code) => Ok(i32::from(code)),
+            None => {
+                eprintln!(
+                    "error: `main` returned {}; an exit status must be 0..=255",
+                    value.display_string()
+                );
+                Err(1)
+            }
+        },
+        Err(err) => {
+            // `exit(code)` stops the program on purpose.
+            let code = flux_std::take_exit_code();
+            if let (flux_runtime::ArithError::Exit, Some(code)) = (err.kind, code) {
+                return Err(code);
+            }
+            eprintln!("error: {err:#}");
+            Err(1)
         }
     }
 }

@@ -629,6 +629,12 @@ impl Executor {
             };
         }
 
+        if let Some(host_name) = name.strip_prefix(flux_ir::EXTERN_PREFIX) {
+            return self.call_host(host_name, args);
+        }
+        if flux_std::TIMER_FNS.contains(&name) {
+            return self.call_timer(name, args);
+        }
         if flux_std::is_builtin_fn(name) {
             match flux_std::call_builtin_checked(name, args) {
                 Some(Ok(result)) => return result,

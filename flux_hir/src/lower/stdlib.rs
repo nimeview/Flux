@@ -21,6 +21,17 @@ pub(super) fn register_stdlib_import(
         return false;
     };
 
+    // A module the target lacks altogether cannot be imported.
+    let target = flux_std::target();
+    if !flux_std::module_available_on(target, module) {
+        diagnostics.push(FluxError::NotOnTarget {
+            name: module.to_string(),
+            target: target.name().to_string(),
+            span: span_to_miette(import.span),
+            source_id: import.span.source,
+        });
+        return true;
+    }
     let alias = import.alias.clone().unwrap_or_else(|| module.to_string());
     symbols.module_aliases.insert(alias.clone(), ());
 
@@ -43,8 +54,23 @@ pub(super) fn register_stdlib_import(
             continue;
         }
 
+        // A function the target lacks: named in the import, an error; with
+        // the whole module, an error where it is used.
+        let available = flux_std::available_on(target, module, name);
+        if !available && !import.symbols.is_empty() {
+            diagnostics.push(FluxError::NotOnTarget {
+                name: name.to_string(),
+                target: target.name().to_string(),
+                span: span_to_miette(import.span),
+                source_id: import.span.source,
+            });
+            continue;
+        }
         match symbols.declare(name, SymbolKind::Builtin, import.span) {
             Ok(sym_id) => {
+                if !available {
+                    symbols.not_on_target.insert(sym_id);
+                }
                 symbols
                     .qualified_symbols
                     .insert((alias.clone(), name.to_string()), sym_id);

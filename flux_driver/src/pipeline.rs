@@ -204,6 +204,11 @@ fn executor_error_diagnostic(
         end: 0,
     };
     match err {
+        ExecutorError::MissingHostFunctions(_) => FluxError::Runtime {
+            message: err.to_string(),
+            span: span_to_miette(file_start),
+            source_id: source.id,
+        },
         ExecutorError::Invalid(msg) => FluxError::Parse {
             message: format!("VM validation failed: {msg}"),
             span: span_to_miette(file_start),
@@ -292,6 +297,15 @@ pub fn check_file(path: &Path) -> Result<Checked, CompileFailed> {
 
 /// Compile a `.fl` file from disk, resolving imports.
 pub fn compile_file(path: &Path, options: CompileOptions) -> Result<Compiled, CompileFailed> {
+    compile_file_with_host(path, options, flux_runtime::Host::default())
+}
+
+/// Like [`compile_file`], for a host that gives the program's `extern fn`s.
+pub fn compile_file_with_host(
+    path: &Path,
+    options: CompileOptions,
+    host: flux_runtime::Host,
+) -> Result<Compiled, CompileFailed> {
     if options.phase != CompilePhase::Full {
         let mut diagnostics = DiagnosticBag::new();
         diagnostics.push(FluxError::Parse {
@@ -342,7 +356,7 @@ pub fn compile_file(path: &Path, options: CompileOptions) -> Result<Compiled, Co
             diagnostics,
         ));
     };
-    let executor = Executor::with_mode(ir, options.mode).map_err(|err| {
+    let executor = Executor::with_host(ir, options.mode, host).map_err(|err| {
         diagnostics.push(executor_error_diagnostic(
             err,
             &artifacts.hir,

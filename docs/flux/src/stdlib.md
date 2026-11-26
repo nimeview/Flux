@@ -122,6 +122,22 @@ Some("summary.csv") Some("csv")
 expected a .txt file
 ```
 
+## time
+
+Import with `import time { now, after, every, cancel, stop }`.
+
+| Function | Returns | Notes |
+|---|---|---|
+| `now()` | `Int` | milliseconds since 1970-01-01 UTC |
+| `after(ms: Int, Event(values…))` | `Int` | send the event once, `ms` milliseconds later; return the timer's number |
+| `every(ms: Int, Event(values…))` | `Int` | send the event every `ms` milliseconds; return the timer's number |
+| `cancel(timer: Int)` | | stop a timer |
+| `stop()` | | end the event loop; no timer fires after the current batch |
+
+A negative delay counts as 0. The interval for `every` is at least 1 millisecond. Write the event as it is emitted: `after(500, Tick())` or `after(10, Say("first"))`. Anything else is a type error: "an event to send, as in `after(500, Tick())`".
+
+All five functions are side effects. They cannot run in a derived value or `const` (E017): "side effect `after` is not allowed in a derived expression". See [Timers](./reactive.md#timers) for how the event loop runs them.
+
 ## collections
 
 | Function | Returns | Notes |

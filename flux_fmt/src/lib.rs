@@ -145,6 +145,7 @@ fn item_span(item: &Item) -> Span {
         Item::Event(d) => d.span,
         Item::Fn(d) => d.span,
         Item::Live(d) => d.span,
+        Item::Extern(d) => d.span,
         Item::RFn(d) => d.span,
         Item::Derived(d) => d.span,
         Item::Const(d) => d.span,
@@ -417,6 +418,20 @@ fn format_item(item: &Item, out: &mut String, level: usize) {
             out.push_str("}\n");
         }
         Item::If(i) => format_if_stmt(i, out, level),
+        Item::Extern(e) => {
+            indent(out, level);
+            let ret = e
+                .ret
+                .as_ref()
+                .map(|r| format!(" -> {}", type_name_fmt(r)))
+                .unwrap_or_default();
+            out.push_str(&format!(
+                "{}extern fn {}({}){ret}\n",
+                pub_prefix(e.pub_),
+                e.name.name,
+                params_fmt(&e.params, false)
+            ));
+        }
         Item::Live(l) => {
             indent(out, level);
             out.push_str(&format!(

@@ -435,6 +435,16 @@ If a value comes to read itself at run time through instances, it fails with "a 
 
 Export a component with `pub live fn`. Import it like a function: `import counter { Counter, Label }`. Its name is then also the type. Component code runs on the VM. With `--jit`, the results are the same.
 
+## Timers
+
+Import with `import time { now, after, every, cancel, stop }`. Use `after(500, Tick())` to send an event once, or `every(500, Tick())` to send it repeatedly. Each returns a timer number for `cancel(timer)`. These functions are side effects and cannot run in a derived value or `const` (E017). See the [time module](./stdlib.md#time) for the details.
+
+After `main` returns, `flux run` keeps running while a timer is set, until `stop()`. Without `main`, this starts after the modules start. Each firing is its own batch. Timers due at the same moment fire in the order they were set. `stop()` ends the loop after the current batch; no later timer fires. The exit status is still `main`'s. A runtime error in a fired event stops the program with status 1.
+
+Inside a component's handler, `after(5, Blink())` sends its own event to that instance. The timer does not keep the instance alive. It is skipped if the instance was dropped.
+
+`flux test` does not run timers.
+
 ## Limits
 
 - A module may have its own `on`, `watch`, and top-level `if`, but only the module that declares a source changes it (see [Modules](./modules.md)).

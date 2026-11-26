@@ -44,6 +44,8 @@ pub struct HirProgram {
     /// `a.f(…)` calls of an instance's function, by span: after type
     /// checking, `f(a, …)`, whose first argument is the instance.
     pub member_calls: std::collections::HashSet<Span>,
+    /// The `extern fn`s, which the host provides; their bodies are empty.
+    pub externs: std::collections::HashSet<SymbolId>,
     pub names: std::collections::HashMap<SymbolId, String>,
     /// Maps enum variant name → enum type name.
     pub enum_variants: std::collections::HashMap<String, String>,

@@ -396,6 +396,7 @@ Selective imports: `import io { println, read_line }`. Stdlib modules are built 
 | Module | Symbols |
 |--------|---------|
 | `io` | `print`, `println`, `eprint`, `eprintln`, `args`, `read_line`, `read_file`, `write_file`, `read_bytes`, `write_bytes`, `append_file`, `file_exists`, `read_stdin` |
+| `time` | `now`, `after`, `every`, `cancel`, `stop` (§11) |
 | `env` | `env_var`, `current_dir` |
 | `fs` | `list_dir`, `is_dir`, `create_dir`, `remove_file`, `remove_dir` |
 | `path` | `path_join`, `file_name`, `extension`, `parent` |
@@ -516,7 +517,7 @@ These limits keep extreme programs a language error rather than a native stack o
 | E005 | Type mismatch |
 | E006 | Unknown event |
 | E007 | Unknown type |
-| E008 | Control flow or `snap` in a derived value; an `act fn` called by a derived value, `const` initializer, or `track fn`, directly or through other calls or function values |
+| E008 | Control flow or `snap` in a derived value; an `act fn` or `extern fn` called by a derived value, `const` initializer, or `track fn`, directly or through other calls or function values |
 | E009 | Assign to immutable local or const |
 | E010 | Cyclic dependency in reactive graph |
 | E011 | `watch`/`on` outside module level |
@@ -532,6 +533,7 @@ These limits keep extreme programs a language error rather than a native stack o
 | E031 | A generic call's type argument lacks a trait that its parameter's bound names (§ Methods) |
 | E032 | A module changes a source that another module declares (§ Modules and visibility) |
 | E033 | Naming a struct field private to another module (§ Modules and visibility) |
+| E034 | A module or library function is not available on the target (§11) |
 | E016 | `let` without `mut` cannot be reassigned (use `let mut`) |
 | E017 | Side effect (`print`, I/O) in a derived expression or a `const` initializer |
 | E018 | Runtime error (overflow, division by zero, failed assertion, …) |
@@ -551,7 +553,7 @@ A UTF-8 byte-order mark at the start of a file is ignored, like whitespace.
 |---------|-------------|
 | `flux run [--jit] [--verbose] file.fl` | Compile and execute |
 | `flux repl [--jit]` | Interactive shell |
-| `flux check file.fl` | Type-check only |
+| `flux check [--target cli\|web] file.fl` | Type-check only; the target defaults to `cli` (§11) |
 | `flux test [filter] [--jit]` | Run every `fn test_*()` in the project (see below) |
 | `flux lock [--check]` | Create or update `flux.lock` for path dependencies; `--check` only reports whether it is up to date (exit 1 if not) |
 | `--locked` (on `run`, `check`, `test`) | Require `flux.lock` to match the dependency tree; never write it (§9) |
@@ -562,7 +564,7 @@ A UTF-8 byte-order mark at the start of a file is ignored, like whitespace.
 | `flux lsp-server` | Stdio LSP: diagnostics, hover, completion, go-to-def, format, document symbols, rename |
 | `flux wasm file.fl` | Experimental stub: always fails, writes nothing |
 
-**`flux test`.** Every `.fl` file under the project root (the nearest `flux.toml`, or the current directory) that defines `fn test_*()` is compiled as its own program. Hidden directories and `target/` are skipped. Each test function takes no parameters and runs in a fresh executor after module initialization; the file's `main` is not run. A test passes if it returns `Unit` or `true`. It fails if it returns `false` or any other value, raises any runtime error (including a failed `assert(cond)` or `assert_eq(a, b)`, which report `assertion failed[: a != b]`), or if its file does not compile. Each test is reported as `test <file>::<name> ... ok | FAILED: <reason>`, then a `test result` summary line; the exit status is 1 if anything failed. `filter` keeps tests whose `file::name` contains it. With no tests, it prints `no tests found` and exits 0.
+**`flux test`.** Every `.fl` file under the project root (the nearest `flux.toml`, or the current directory) that defines `fn test_*()` is compiled as its own program. Hidden directories and `target/` are skipped. Each test function takes no parameters and runs in a fresh executor after module initialization; the file's `main` is not run. Timers do not run. A test passes if it returns `Unit` or `true`. It fails if it returns `false` or any other value, raises any runtime error (including a failed `assert(cond)` or `assert_eq(a, b)`, which report `assertion failed[: a != b]`), or if its file does not compile. Each test is reported as `test <file>::<name> ... ok | FAILED: <reason>`, then a `test result` summary line; the exit status is 1 if anything failed. `filter` keeps tests whose `file::name` contains it. With no tests, it prints `no tests found` and exits 0.
 
 ## 9. Package manifest (`flux.toml`)
 
@@ -598,3 +600,53 @@ Pipeline: **parse → resolve imports → HIR → monomorphize → typecheck →
 - Cranelift JIT compiles numeric derived nodes, pure functions (including loops, early `return`, recursion, and calls to functions defined earlier), and eligible `watch`/`on` bodies with tag-aware int/float arithmetic. `match` on integers and on user enums (tuple payloads), string `+` and ordering, `to_string`, and interpolation are compiled. A derived value whose conditional branch reads a reactive node, directly or through an `rfn`, runs on the VM, which records the dependencies of the branch it took (`dynamic_dependencies`). Structs, struct-variant fields, `break`/`continue`, `emit`, calls through function values, and other ineligible IR fall back to the VM. So does any call whose inputs include a struct, a closure, `Option`, `Result`, or a map, which have no tagged form
 - `flux run --jit --verbose` prints JIT compile/fallback statistics
 - WASM backend: a stub that always fails; there is no code generation
+
+## 11. Host model
+
+### Time and the event loop
+
+Import the time functions with `import time { now, after, every, cancel, stop }`.
+
+| Function | Behavior |
+|----------|----------|
+| `now() -> Int` | Milliseconds since 1970-01-01 UTC |
+| `after(ms: Int, Event(values…)) -> Int` | Send the event once, `ms` milliseconds later; return the timer's number |
+| `every(ms: Int, Event(values…)) -> Int` | Send the event every `ms` milliseconds; return the timer's number |
+| `cancel(timer: Int)` | Stop a timer |
+| `stop()` | End the event loop; no timer fires after the current batch |
+
+A negative delay counts as 0. The interval for `every` is at least 1 millisecond. Write the event as it is emitted: `after(500, Tick())` or `after(10, Say("first"))`. Anything else is a type error: "an event to send, as in `after(500, Tick())`".
+
+All five functions are side effects. They cannot run in a derived value or `const` (**E017**), as in "side effect `after` is not allowed in a derived expression".
+
+After `main` returns, `flux run` keeps the program running while a timer is set, until `stop()`. Without `main`, the event loop starts after the modules start. Each firing is its own batch. Timers due at the same moment fire in the order they were set. The exit status is still `main`'s. A runtime error in a fired event stops the program with status 1.
+
+A component's timer for one of its own events sends it to that instance. For example, `after(5, Blink())` inside its handler sends `Blink` to that instance. The timer does not keep the instance alive. It is skipped if the instance was dropped.
+
+`flux test` does not run timers.
+
+### Host functions: `extern fn`
+
+`extern fn name(params) -> T` declares a function provided by the host that runs the program. `pub extern fn` exports it. Its types are checked like a function's. A parameter cannot be `mut`.
+
+A call is an action, like an `act fn` call. Calling it in a derived value, `const`, or `track fn` is **E008**.
+
+`flux check` accepts these declarations. `flux run` provides no host functions. A program that declares one does not start there: "this host does not provide `ask`, declared with `extern fn`".
+
+### Embedding in Rust
+
+`flux_runtime::Host::new().function("name", |args| Ok(value))` provides an `extern fn`. Start the program with `flux_driver::compile_file_with_host(path, options, host)` or `flux_runtime::Executor::with_host(program, mode, host)`. Both fail if a declared `extern fn` is missing. A host function returning `Err(message)` causes the runtime error "a host function failed", with "`name`: message".
+
+`executor.event_sender()` gives an `EventSender`. Its `send(event, values)` queues an event from another thread. `executor.run_event_loop()` delivers queued events in the order they came, each as one batch. It also runs due timers. It keeps running while a timer is set or a sender exists, until `stop()`.
+
+`executor.stopped()`, `next_timer_in()`, and `run_due_timers()` let a host drive time itself.
+
+### Targets
+
+`flux check --target cli|web` selects a target. The default is `cli`. Each target has its part of the library.
+
+`web` has no `fs`, `process`, or `env` module. Its `io` module has no `args`, `read_line`, `read_stdin`, `read_file`, `write_file`, `append_file`, `file_exists`, `read_bytes`, or `write_bytes`.
+
+Importing a module the target lacks is **E034**: "`fs` is not available on target `web`". Naming an unavailable function in an import is also **E034**. With the whole module imported, as in `import io`, using such a function is **E034** where it is used.
+
+An unknown target is an error: "unknown target `mars`; the targets are `cli` and `web`". `web` can only be checked. Nothing builds or runs for it yet.

@@ -26,6 +26,9 @@ pub fn os_signature(name: &str) -> Option<(Vec<Type>, Type)> {
         "path_join" => (vec![s(), s()], s()),
         "file_name" | "extension" | "parent" => (vec![s()], option(s())),
         "exit" => (vec![Type::Int], Type::Unit),
+        "now" => (vec![], Type::Int),
+        "cancel" => (vec![Type::Int], Type::Unit),
+        "stop" => (vec![], Type::Unit),
         "run" => (
             vec![s(), Type::Array(Box::new(s()))],
             result(Type::Tuple(vec![Type::Int, s(), s()])),

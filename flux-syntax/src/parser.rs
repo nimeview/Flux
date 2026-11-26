@@ -23,8 +23,8 @@ use pest_derive::Parser as PestDeriveParser;
 use crate::ast::*;
 
 use decls::{
-    parse_const_binding, parse_derived_binding, parse_enum, parse_event, parse_fn, parse_impl,
-    parse_import, parse_let_binding, parse_live, parse_rfn, parse_struct, parse_trait,
+    parse_const_binding, parse_derived_binding, parse_enum, parse_event, parse_extern, parse_fn,
+    parse_impl, parse_import, parse_let_binding, parse_live, parse_rfn, parse_struct, parse_trait,
     parse_type_alias,
 };
 use stmts::{parse_if_stmt, parse_on, parse_watch};
@@ -277,6 +277,7 @@ pub(super) fn parse_item(
         Rule::event_decl => Some(Item::Event(parse_event(source_id, inner, span))),
         Rule::fn_decl => Some(Item::Fn(parse_fn(source_id, inner, span))),
         Rule::live_decl => Some(Item::Live(parse_live(source_id, inner, span))),
+        Rule::extern_decl => Some(Item::Extern(parse_extern(source_id, inner, span))),
         Rule::rfn_decl => Some(Item::RFn(parse_rfn(source_id, inner, span))),
         Rule::watch_stmt => Some(Item::Watch(parse_watch(source_id, inner, span))),
         Rule::on_stmt => Some(Item::On(parse_on(source_id, inner, span))),

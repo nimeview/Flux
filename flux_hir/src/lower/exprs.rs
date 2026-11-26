@@ -101,6 +101,15 @@ pub(super) fn lower_expr(
                 });
             }
             let sym = resolve_name(name, *span, symbols, diagnostics)?;
+            if symbols.not_on_target.contains(&sym) {
+                diagnostics.push(FluxError::NotOnTarget {
+                    name: name.clone(),
+                    target: flux_std::target().name().to_string(),
+                    span: span_to_miette(*span),
+                    source_id: span.source,
+                });
+                return None;
+            }
             // Bare `None` (the builtin) is the value `None()`, not the constructor.
             if name == "None" && symbols.lookup(name).map(|s| s.kind) == Some(SymbolKind::Builtin) {
                 return Some(HirExpr::Call {
@@ -305,6 +314,54 @@ pub(super) fn lower_expr(
             if let HirExpr::Ident { symbol, .. } = &lowered_callee {
                 if symbols.live_ctors.contains(symbol) {
                     symbols.makes_instance = true;
+                }
+                // `after(500, Tick(1))`: the event and its values follow the
+                // delay as arguments, `after(500, Tick, 1)`.
+                let timer = symbols.get(*symbol).is_some_and(|s| {
+                    s.kind == SymbolKind::Builtin && matches!(s.name.as_str(), "after" | "every")
+                });
+                if timer && args.len() == 2 {
+                    let (event, values): (&str, &[Expr]) = match &args[1] {
+                        Expr::Call {
+                            callee: ev,
+                            args: values,
+                            ..
+                        } => match ev.as_ref() {
+                            Expr::Ident { name, .. } => (name.as_str(), values.as_slice()),
+                            _ => ("", &[]),
+                        },
+                        Expr::Ident { name, .. } => (name.as_str(), &[]),
+                        _ => ("", &[]),
+                    };
+                    let is_event = !event.is_empty()
+                        && (event.contains("::")
+                            || symbols.lookup(event).map(|s| s.kind) == Some(SymbolKind::Event));
+                    if is_event {
+                        let ms = lower_expr(&args[0], symbols, scope, diagnostics, reads_reactive)?;
+                        let event_span = args[1].span();
+                        let event_id = resolve_event(event, event_span, symbols, diagnostics)?;
+                        let mut lowered_args = vec![
+                            ms,
+                            HirExpr::Ident {
+                                symbol: event_id,
+                                span: event_span,
+                            },
+                        ];
+                        for v in values {
+                            lowered_args.push(lower_expr(
+                                v,
+                                symbols,
+                                scope,
+                                diagnostics,
+                                reads_reactive,
+                            )?);
+                        }
+                        return Some(HirExpr::Call {
+                            callee: Box::new(lowered_callee),
+                            args: lowered_args,
+                            span: *span,
+                        });
+                    }
                 }
             }
             let lowered_args = args

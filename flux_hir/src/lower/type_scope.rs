@@ -420,6 +420,12 @@ impl Rewrite<'_> {
             Item::If(i) => self.if_stmt(i),
             // The name stays: it is the constructor's, which a module
             // renames like its other functions (to the type's internal name).
+            Item::Extern(e) => {
+                e.params.iter_mut().for_each(|p| self.ty(&mut p.ty));
+                if let Some(ret) = &mut e.ret {
+                    self.ty(ret);
+                }
+            }
             Item::Live(l) => {
                 l.params.iter_mut().for_each(|p| self.ty(&mut p.ty));
                 for member in &mut l.items {
