@@ -2,7 +2,9 @@
 
 [Introduction](./introduction.md)
 
-[What changed in 0.3](./whats-new.md)
+[What changed in 0.4](./whats-new.md)
+
+[What changed in 0.3](./whats-new-0.3.md)
 
 [What changed in 0.2](./whats-new-0.2.md)
 

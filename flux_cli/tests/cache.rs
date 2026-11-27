@@ -46,12 +46,12 @@ fn compile_succeeds_with_cache_module() {
 #[test]
 fn cache_key_resolved_changes_when_dependency_changes() {
     let root = tempfile::tempdir().expect("tempdir");
-    let math_path = root.path().join("math.fl");
+    let math_path = root.path().join("arith.fl");
     let main_path = root.path().join("import_math.fl");
     fs::write(&math_path, "pub fn double(x: Int) -> Int { x * 2 }\n").unwrap();
     fs::write(
         &main_path,
-        "import math as m\n\nlet x = 5\nlet y = m.double(x)\n",
+        "import arith as m\n\nlet x = 5\nlet y = m.double(x)\n",
     )
     .unwrap();
 
@@ -69,12 +69,12 @@ fn cache_key_resolved_changes_when_dependency_changes() {
 #[test]
 fn cache_recompiles_after_dependency_change() {
     let root = tempfile::tempdir().expect("tempdir");
-    let math_path = root.path().join("math.fl");
+    let math_path = root.path().join("arith.fl");
     let main_path = root.path().join("import_math.fl");
     fs::write(&math_path, "pub fn double(x: Int) -> Int { x * 2 }\n").unwrap();
     fs::write(
         &main_path,
-        "import math as m\n\nlet x = 5\nlet y = m.double(x)\n",
+        "import arith as m\n\nlet x = 5\nlet y = m.double(x)\n",
     )
     .unwrap();
 
@@ -131,7 +131,7 @@ fn import_math_cache_key_includes_dependency() {
     assert!(!key.is_empty());
 
     let math_only = CompileCache::hash_source(
-        &fs::read_to_string(programs_dir().join("ok/modules/math.fl")).unwrap(),
+        &fs::read_to_string(programs_dir().join("ok/modules/arith.fl")).unwrap(),
     );
     assert_ne!(
         key, math_only,

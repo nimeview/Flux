@@ -4,8 +4,11 @@ Notable changes to Flux. The versioning policy is in [`RELEASE.md`](RELEASE.md).
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-11-27
+
 ### Added
 
+- Editor support for components: hover and go to definition for members by name in the body and through an instance (`a.n`, `a.double`, `emit a.Inc()`). Completion after `a.` lists the instance's `pub` members. The document outline shows a component as a class with its members.
 - The `time` module: `now`, `after`, `every`, `cancel`, and `stop`. `flux run` keeps running while a timer is set, until `stop()`. Each firing is one batch. A component's timer for its own event sends it to that instance without keeping it alive. `flux test` does not run timers.
 - `extern fn` and `pub extern fn` declare functions provided by the host. Calls are actions (E008 in a derived value, `const`, or `track fn`). `flux check` accepts them; `flux run` provides no host functions and cannot start a program that declares one.
 - Rust hosts can provide functions with `Host::function` and start programs with `compile_file_with_host` or `Executor::with_host`. `EventSender::send` queues events from another thread. `run_event_loop` delivers them in order, each as one batch, and runs due timers. `stopped`, `next_timer_in`, and `run_due_timers` let a host drive time itself.
@@ -23,6 +26,7 @@ Notable changes to Flux. The versioning policy is in [`RELEASE.md`](RELEASE.md).
 
 ### Changes that can alter programs
 
+- A library module's name always means the library module: `import collections` no longer imports a file `collections.fl` beside the importer. It used to, so a file `collections.fl` with `import collections` imported itself. Such a file gets warning E035: "`collections.fl` is not imported: `collections` is a library module", with help to rename the file. A file is never warned about itself. Migration: rename the local file and import it by its new name.
 - Before 0.4, every struct field was visible everywhere; fields without `pub` are now private to their module. This applies to field reads, writes, `with`, destructuring `let` patterns, and struct literals. A literal must list every field, so outside its module a type with a private field must be built through the functions or methods its module provides. Migration: `flux migrate --write` adds `pub` to every field of every `pub struct` so programs compile as before; other structs and enum variants are left as they are. Then remove `pub` where a field should be private.
 - A derived value, a `const` initializer, or a `track fn` may no longer run an `act fn` (E008), directly, through another function, or through a function value. An action's reads are not tracked, so a derived value computed through one could go stale even when the action only read sources. Migration: write `track fn` instead of `act fn` for a function that a derived value, `const` initializer, or `track fn` uses to compute from sources.
 
@@ -36,6 +40,10 @@ Notable changes to Flux. The versioning policy is in [`RELEASE.md`](RELEASE.md).
 
 ### Fixed
 
+- `-128i8` is the literal -128 of type `Int8`. It used to be read as `-(128i8)` and fail at run time.
+- `flux fmt` keeps suffixed literals as written (`120i8`, `-128i8`, `2.5f32`). It used to rewrite them as casts (`120 as Int8`).
+- In the editor, a watch cycle (E029) through an imported file now shows in that file even when it is open. Only the importer's analysis can see the cycle; the warning goes when the importer closes.
+- The sample module `programs/ok/modules/math.fl` was renamed `arith.fl`; it shadowed the library's `math`.
 - A derived cycle among module values is reported the same way on every run (it could start at a different binding).
 
 ## [0.3.1] - 2026-11-26

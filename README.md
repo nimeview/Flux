@@ -64,7 +64,7 @@ cd my_app
 
 ## Status
 
-Version 0.3 ([what changed](docs/flux/src/whats-new.md)). The language surface is stable on Linux and macOS, while the JIT, `flux wasm`, and `flux migrate` are experimental. There is no package registry yet, only local path dependencies. See [Status and limits](docs/flux/src/status.md).
+Version 0.4 ([what changed](docs/flux/src/whats-new.md)). The language surface is stable on Linux and macOS, while the JIT, `flux wasm`, and `flux migrate` are experimental. There is no package registry yet, only local path dependencies. See [Status and limits](docs/flux/src/status.md).
 
 ## Working on Flux
 

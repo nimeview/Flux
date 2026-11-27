@@ -42,10 +42,10 @@ Deferred and not claimed:
 
 ## Versioning and compatibility
 
-- **One version for the toolchain.** The language, standard library, compiler, and CLI share the workspace version (`Cargo.toml`, currently `0.3.1`). `flux repl` shows it.
+- **One version for the toolchain.** The language, standard library, compiler, and CLI share the workspace version (`Cargo.toml`, currently `0.4.0`). `flux repl` shows it.
 - **Before 1.0**, a minor release (`0.x` → `0.(x+1)`) may change syntax, semantics, the standard library, or CLI behavior. A patch release (`0.x.y`) only fixes defects. A fix can still reject a program that relied on the defect (for example, keywords now end at a word boundary). Every user-visible change, breaking ones included, is listed in `CHANGELOG.md`.
 - **1.0** freezes the stable surface listed above. After that, breaking changes require a major version.
 - **Package `version`** in `flux.toml` is informational. Dependencies are resolved by path, not by version.
 - **`flux.lock`** carries a format `version` (currently `1`). A lock in any other format or content counts as stale: it is rewritten, or rejected under `--locked`. Checksums hash LF-normalized text, so CRLF checkouts match.
-- **Not compatibility surfaces:** the `.flux/cache` IR cache (keyed by a compiler fingerprint, so any rebuilt compiler starts fresh), the IR, JIT internals, and the diagnostic message wording. Diagnostic codes (`E000`–`E032`) are stable within a minor release.
+- **Not compatibility surfaces:** the `.flux/cache` IR cache (keyed by a compiler fingerprint, so any rebuilt compiler starts fresh), the IR, JIT internals, and the diagnostic message wording. Diagnostic codes (`E000`–`E035`) are stable within a minor release.
 

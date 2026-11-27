@@ -4,11 +4,12 @@ Language support for [Flux](https://github.com/nimeview/Flux).
 
 ## What you get
 
-- **Highlighting**, including code inside `{...}` in strings and every number form.
-- **Completion**: local variables and parameters, everything in the file, imported names, `Ok`/`Some` and the other built-in names, types, enum variants, and struct fields after `.`.
+- **Highlighting**, including `live fn`, `extern fn`, code inside `{...}` in strings, and every number form.
+- **Completion**: local variables and parameters, everything in the file, imported names, `Ok`/`Some` and the other built-in names, types, enum variants, struct fields, and an instance's `pub` component members after `.`.
 - **Automatic imports**: accepting `len` also adds `import collections { len }`.
 - **Parameter hints** while typing a call, for your functions and the standard library.
 - **Hover** with types and standard library documentation.
+- **Component members** have hover and go to definition by name in the body and through an instance. The outline shows a component as a class with its members.
 - **Inlay hints** showing inferred types, as in `let it: Item = ...`.
 - **Errors as you type**, and a quick fix that imports an undefined standard library name.
 - **Go to definition, find references, highlighted uses, rename, and outline.**
@@ -26,7 +27,7 @@ cargo build --profile dist -p flux_cli
 cd editors/vscode
 npm install
 npx vsce package
-code --install-extension flux-lang-0.3.1.vsix
+code --install-extension flux-lang-0.4.0.vsix
 ```
 
 The extension finds `flux` in `target/dist`, `target/release`, or `target/debug` of the open folder, and then on your `PATH`. For projects outside this repository, put the binary on your `PATH` or set `flux.path`.

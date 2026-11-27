@@ -546,6 +546,26 @@ fn parse_unary_expr(source_id: SourceId, pair: pest::iterators::Pair<'_, Rule>) 
                         })
                         .unwrap_or(value);
                 }
+                // `-128i8` is the literal -128 of type Int8, not the negation
+                // of 128i8 (which does not fit).
+                let text = expr_pair.as_str().trim();
+                let (digits, suffix) = split_numeric_suffix(text);
+                let ty = suffix
+                    .and_then(suffix_type)
+                    .filter(|t| !t.starts_with("Float"));
+                if let (Some(ty), true) = (
+                    ty,
+                    !digits.is_empty() && digits.chars().all(|c| c.is_ascii_digit() || c == '_'),
+                ) {
+                    if let Ok(n) = decimal_digits(digits).parse::<i128>() {
+                        let span = unary_span;
+                        return Expr::Cast {
+                            expr: Box::new(Expr::Int { value: -n, span }),
+                            ty: ty.into(),
+                            span,
+                        };
+                    }
+                }
             }
             let expr = parse_expr(source_id, expr_pair);
             let span = merge_span(span_of(source_id, &first), expr.span());

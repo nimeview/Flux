@@ -76,3 +76,4 @@ flux::E002
 | E032 | a module changes another module's source; emit that module's event or call its `pub act fn` |
 | E033 | naming another module's private struct field; use the functions or methods that module provides, or mark the field `pub` there |
 | E034 | a module or library function is not available on the target; for example, "`fs` is not available on target `web`" |
+| E035 | warning: a local file is not imported because its name is a library module; rename the file |

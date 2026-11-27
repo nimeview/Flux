@@ -198,7 +198,7 @@ fn resolves_imports_for_open_document_with_unsaved_edits() {
         .join("../programs/ok/modules/import_math.fl");
     let uri = Url::from_file_path(&path).expect("valid file uri");
     let saved = std::fs::read_to_string(&path).expect("read import_math.fl");
-    // Simulate an unsaved edit that still depends on the imported `math` module.
+    // Simulate an unsaved edit that still depends on the imported `arith` module.
     let unsaved = format!("{saved}let z = m::double(y)\nimport io\nwatch {{ print(z) }}\n");
 
     did_open_uri(&client, uri, &unsaved);

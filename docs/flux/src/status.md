@@ -1,17 +1,18 @@
 # Status and limits
 
-Flux is at version 0.3. This page says what you can rely on.
+Flux is at version 0.4. This page says what you can rely on.
 
 ## Stable
 
 These change only by a deliberate decision, recorded in the changelog:
 
 - The behavior of the VM, which is the reference for what programs mean.
-- Numbers, strings, arrays, `Map`, `Option`, `Result`, structs, enums, recursive types, generic functions, structs, and enums, trait bounds and generic impls, closures, and function types.
-- Reactive values: `let mut`, `derived`, `event`, `on`, `watch`, `track fn`, `act fn`.
+- Numbers, strings, `Bytes`, arrays, `Map`, `Option`, `Result`, structs, enums, recursive types, generic functions, structs, and enums, trait bounds and generic impls, generic methods, closures, function types, and `mut` parameters.
+- Reactive values: `let mut`, `derived`, `event`, `on`, `watch`, `track fn`, `act fn`, and components declared with `live fn`.
+- Timers and host functions declared with `extern fn`.
 - Modules, with their own types and reactive state, and local packages with `flux.lock`.
 - `flux init`, `check`, `run`, `test`, `fmt`, `lock`, `repl`, and `lsp-server`.
-- The standard library modules `io`, `collections`, `math`, `str`, `option`, `result`, `testing`, `env`, `fs`, `path`, and `process`.
+- The standard library modules `io`, `collections`, `math`, `str`, `option`, `result`, `testing`, `env`, `fs`, `path`, `process`, and `time`.
 - Linux and macOS, which CI tests.
 
 ## Experimental
@@ -34,7 +35,6 @@ These may change or disappear, with no compatibility promise:
 - In a trace, a statement written directly in a `match` arm reports the line of the `match`. A top-level `if` has no location.
 - When compiled code fails, it is run again on the VM to report the error, so a failure after long native work can take a while.
 - Strings order by Unicode code point, not alphabetically.
-- In the editor, a watch cycle (E029) that runs through two files is reported by `flux check`, but not shown when both files are open.
 
 ## Versions
 

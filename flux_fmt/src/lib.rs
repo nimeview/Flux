@@ -531,6 +531,24 @@ fn raw_spelling(span: Span) -> Option<String> {
 }
 
 /// A numeric literal as the source spells it, without a type suffix.
+/// The text of a suffixed number literal, which the parser reads as a cast
+/// spanning just the literal.
+fn suffixed_literal(expr: &flux_syntax::Expr, span: Span) -> Option<String> {
+    if expr.span() != span
+        || !matches!(
+            expr,
+            flux_syntax::Expr::Int { .. } | flux_syntax::Expr::Float { .. }
+        )
+    {
+        return None;
+    }
+    SOURCE.with(|s| {
+        s.borrow()
+            .get(span.start..span.end)
+            .map(|t| t.trim().to_string())
+    })
+}
+
 fn literal_spelling(span: Span) -> Option<String> {
     SOURCE.with(|s| {
         let source = s.borrow();
@@ -938,9 +956,12 @@ fn expr_fmt(expr: &flux_syntax::Expr) -> String {
                 match_block_fmt(scrutinee, arms)
             }
         }
-        flux_syntax::Expr::Cast { expr, ty, .. } => {
-            format!("{} as {ty}", left_operand_fmt(expr, PREC_CAST))
-        }
+        // A suffixed literal (`120i8`, `-128i8`) is a cast over its own
+        // text: keep it as written.
+        flux_syntax::Expr::Cast { expr, ty, span } => match suffixed_literal(expr, *span) {
+            Some(text) => text,
+            None => format!("{} as {ty}", left_operand_fmt(expr, PREC_CAST)),
+        },
         flux_syntax::Expr::Index { base, index, .. } => {
             format!("{}[{}]", postfix_base_fmt(base), expr_fmt(index))
         }

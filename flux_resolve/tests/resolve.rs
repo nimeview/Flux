@@ -16,20 +16,20 @@ fn resolve_file_with_root_uses_buffer_contents() {
     let _ = fs::remove_dir_all(&root);
     fs::create_dir_all(&root).unwrap();
     fs::write(
-        root.join("math.fl"),
+        root.join("arith.fl"),
         "pub fn double(x: Int) -> Int { x * 2 }\n",
     )
     .unwrap();
     fs::write(
         root.join("main.fl"),
-        "import math as m\n\nlet x = m.double(4)\n",
+        "import arith as m\n\nlet x = m.double(4)\n",
     )
     .unwrap();
 
     let mut diag = DiagnosticBag::new();
     let resolved = resolve_file_with_root(
         &root.join("main.fl"),
-        Some("import math as m\n\nlet x = m.double(99)\n"),
+        Some("import arith as m\n\nlet x = m.double(99)\n"),
         &mut diag,
     )
     .expect("resolve with root override");
@@ -63,13 +63,13 @@ fn unknown_export_reports_e014() {
     let _ = fs::remove_dir_all(&root);
     fs::create_dir_all(&root).unwrap();
     fs::write(
-        root.join("math.fl"),
+        root.join("arith.fl"),
         "pub fn double(x: Int) -> Int { x * 2 }\n",
     )
     .unwrap();
     fs::write(
         root.join("main.fl"),
-        "import math { triple }\n\nlet x = 1\n",
+        "import arith { triple }\n\nlet x = 1\n",
     )
     .unwrap();
 

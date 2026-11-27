@@ -313,9 +313,28 @@ impl ModuleLoader {
         };
         let mut targets = Vec::with_capacity(imports.len());
         for import in imports {
-            if std_module_name(&import.path).is_some()
-                && !local_module_exists(base_dir, &import.path)
-            {
+            // A library module's name always means the library: a file of
+            // that name beside the importer is not imported (it once was,
+            // which made a file `collections.fl` with `import collections`
+            // import itself).
+            if std_module_name(&import.path).is_some() {
+                let beside = base_dir.join(with_module_extension(
+                    &import.path.replace('.', std::path::MAIN_SEPARATOR_STR),
+                ));
+                // Not the importing file itself (`collections.fl` may well
+                // use the library's `collections`).
+                if local_module_exists(base_dir, &import.path)
+                    && canonical_path(&beside) != canonical
+                {
+                    diagnostics.push_warning(
+                        flux_diagnostics::FluxWarning::ShadowedLibraryModule {
+                            name: import.path.clone(),
+                            file: with_module_extension(&import.path),
+                            span: span_to_miette(import.span),
+                            source_id: import.span.source,
+                        },
+                    );
+                }
                 targets.push(None);
                 continue;
             }

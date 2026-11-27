@@ -1,111 +1,73 @@
-# What changed in 0.3
+# What changed in 0.4
 
-Flux 0.3 adds generic data types, trait bounds, a library for command-line programs, and modules that own their types and reactive state. Most 0.2 programs still compile; the changes that can alter or reject one are listed first, each with its migration. The full list is in `CHANGELOG.md` at the root of the repository. [What changed in 0.2](./whats-new-0.2.md) is still available.
+Flux 0.4 is a stabilization release. It adds components, a host model with timers and `extern fn`, checked arithmetic, private fields, `mut` parameters, bit operations and `Bytes`, generic inference from context, and generic methods. It also reduces work in the compiler and runtime. Changes that can alter or reject a program are listed first, each with its migration. The full list is in `CHANGELOG.md` at the root of the repository.
 
 ## Changes that can alter programs
 
-- **A `fn` that changes a source is an error** (E027), as announced in 0.2; it was a warning. This includes `fn main`. `flux migrate --write` turns such a function into an `act fn`.
-- **Integers and floats compare exactly.** `9007199254740993 == 9007199254740992.0` is `false`; the integer used to be rounded to a float first.
-- **Type names belong to their module.** Another file's type is used through an import (`import geo { Point }`) or as `geo::Point`, and only if it is `pub`.
-- **Another module's source is read-only** (E032). Change it through one of that module's events or `pub act fn`s.
-- **Modules initialize in dependency order**: a module after the modules it imports, each running its watches at the end of its own initialization.
+- **Struct fields are private to their module unless marked `pub`** (E033). This applies to reads, writes, `with`, destructuring `let` patterns, and struct literals. A literal must list every field, so outside its module a type with a private field must be built through its module's functions or methods. Migration: `flux migrate --write` adds `pub` to every field of every `pub struct`. Other structs and enum variants are left as they are. Then remove `pub` where a field should be private.
+- **A derived value, `const` initializer, or `track fn` cannot run an `act fn`** (E008). This includes calls through other functions and function values. An action's reads are not tracked, so a derived value computed through one could go stale. Migration: use `track fn` for a function used to compute from sources.
+- **A library module's name always means the library module.** `import collections` no longer imports a file `collections.fl` beside the importer. That file used to import itself if it contained `import collections`. Warning E035 says "`collections.fl` is not imported: `collections` is a library module", with help to rename it. A file is never warned about itself. Migration: rename the local file and import it by its new name.
 
-## Generic types, bounds, and generic impls
+## Components
 
-Structs and enums take type parameters. The values decide the type arguments, so you never write them when building a value; an annotation or a return type supplies what the values leave open, as `Tree[String]` for `Leaf` below. A type parameter can name the traits it needs (`T: Ord`), and `impl[T]` gives every instance of a generic type its methods. The library traits are `Eq`, `Ord`, and `Display`.
+`live fn` declares a component; `pub live fn` exports it. Each call makes an instance with its own sources, derived values, events, handlers, and watches. Outside the body, read `pub` values with `a.n`, emit events with `emit a.Inc(1)`, and call functions with `a.reset()`. Derived values follow the instance members they read. See [Components](./reactive.md#components).
 
-```flux
-import io { println }
+An instance is a handle and lives while a value holds it. A component's `let mut` and `derived` members may hold other instances. Lists and trees can change their children. Removing an instance from a list drops it when nothing else holds it, and it stops reacting. An instance cannot hold itself, directly or through other instances. A store that would do so fails at run time without storing the value.
 
-struct Pair[T] {
-    a: T,
-    b: T
-}
+Recursive components can read members of earlier instances of the same component. A member whose type depends on itself needs a type annotation. A value that comes to read itself at run time fails with "a derived value depends on itself". Component code runs on the VM, with the same results under `--jit`.
 
-enum Tree[T] {
-    Leaf,
-    Node { value: T, left: Tree[T], right: Tree[T] }
-}
+## Timers and the host model
 
-impl[T] Pair[T] {
-    fn swap(self) -> Pair[T] {
-        Pair { a: self.b, b: self.a }
-    }
-}
+The `time` module provides `now`, `after`, `every`, `cancel`, and `stop`. `after(500, Tick())` sends an event once; `every(500, Tick())` sends it repeatedly. After `main`, `flux run` keeps running while a timer is set, until `stop()`. Each firing is one batch. A component's timer for its own event sends it to that instance without keeping it alive. `flux test` does not run timers. See [Timers](./reactive.md#timers) and the [time module](./stdlib.md#time).
 
-impl[T: Ord] Tree[T] {
-    fn insert(self, x: T) -> Tree[T] {
-        match self {
-            Leaf => Node { value: x, left: Leaf, right: Leaf },
-            Node { value, left, right } => {
-                if x < value {
-                    Node { value: value, left: left.insert(x), right: right }
-                } else {
-                    Node { value: value, left: left, right: right.insert(x) }
-                }
-            }
-        }
-    }
-    fn size(self) -> Int {
-        match self { Leaf => 0, Node { value, left, right } => 1 + left.size() + right.size() }
-    }
-}
+`extern fn` declares a function provided by the host; `pub extern fn` exports it. Calls are actions and cannot run in a derived value, `const`, or `track fn` (E008). `flux check` accepts the declarations. `flux run` provides no host functions and cannot start a program that declares one.
 
-fn largest[T: Ord](xs: [T]) -> T {
-    let mut best = xs[0]
-    for x in xs {
-        if x > best {
-            best = x
-        }
-    }
-    best
-}
+Rust hosts provide functions with `Host::function` and start programs with `compile_file_with_host` or `Executor::with_host`. `EventSender::send` queues events from another thread. `run_event_loop` delivers them in order, each as one batch, and runs due timers. A host can drive time itself with `stopped`, `next_timer_in`, and `run_due_timers`. See the [host model in the specification](https://github.com/nimeview/Flux/blob/main/SPEC.md#11-host-model).
 
-fn main() {
-    let p = Pair { a: 1, b: 2 }
-    let words: Tree[String] = Leaf
-    let t = words.insert("pear").insert("apple").insert("plum")
-    println("{p.swap()} {largest([3, 9, 2])} {t.size()}")
-}
-```
+## Target checks
 
-```output
-Pair { a: 2, b: 1 } 9 3
-```
+`flux check --target cli|web` selects a target; the default is `cli`. `web` has no `fs`, `process`, or `env`, and omits command-line and file functions from `io`. Using an unavailable module or function is E034. `web` can only be checked; nothing builds or runs for it yet. See [flux check](./tools.md#flux-check).
 
-A call whose type lacks a bound's trait is the new error E031, at the call: `largest([Point { x: 1, y: 2 }])` says that `Point` does not have `Ord`. Bounds are optional: code that compares `T` without one keeps working. See [Closures, generics, and traits](./abstraction.md).
+## Checked integer arithmetic
 
-## Command-line programs
+Every integer type has `checked_add`, `checked_sub`, `checked_mul`, `checked_div`, `checked_rem`, `checked_neg`, and `checked_pow`. They return `Some(result)` in the receiver's type, or `None` for overflow, division by zero, an integer argument that does not fit that type, or a negative exponent. These methods need no import and are pure, including in derived values and `const` initializers. See [Arithmetic](./basics.md#arithmetic).
 
-New modules: `env` (`env_var`, `current_dir`), `fs` (`list_dir`, `is_dir`, `create_dir`, `remove_file`, `remove_dir`), `path` (`path_join`, `file_name`, `extension`, `parent`), and `process` (`exit`, `run`), and `read_stdin` in `io`. Failures that a program should expect, such as a missing directory, are `Err` with a message, like `read_file`'s.
+## Private fields
 
-```flux
-import io { println }
+Mark a field `pub` before its name, as in `pub owner: String`, to use it from another module. Inside the module, all fields remain visible. Enum variants' named fields stay visible wherever the enum is. Completion after `.` leaves out another module's private fields. See [Private fields](./modules.md#private-fields).
 
-import path { file_name, extension, path_join }
+## Mutable parameters
 
-fn main() {
-    let full = path_join("logs", "app.txt")
-    println("{full} {file_name(full)} {extension(full)}")
-    println("{9007199254740993 == 9007199254740992.0}")
-}
-```
+Write `mut` at both the declaration and the call: `fn grow(mut xs: [Int], n: Int)` and `grow(mut xs, 3)`. The parameter starts as the argument, and its final value is written back to the caller's variable, field, or element. Several parameters can be `mut`, including in generic functions and across modules.
 
-```output
-logs/app.txt Some("app.txt") Some("txt")
-false
-```
+The call must be a statement or a `let` value. It returns a value only with a declared `-> T`. See [Mutable parameters](./basics.md#mutable-parameters).
 
-`examples/general/dir_report.fl` lists a directory and exits with status 1 when it cannot be read.
+## Bit operations and Bytes
 
-## Reactive components
+Integers support `&`, `|`, `^`, `<<`, `>>`, and bitwise `!`. On `Bool`, `!` stays logical NOT. Shifts keep the left operand's type and drop shifted-out bits. Signed right shifts preserve the sign. A negative shift, or one at least the type's width, is `integer overflow`. The JIT runs code with bit operations on the VM. See [Bit operations](./basics.md#bit-operations).
 
-A module can keep its own sources, events, `on` handlers, and watches, and other files use it through its `pub` names: `emit counter::Inc(1)`, `on counter::Inc(by) { }`. Only the module changes its own sources. See [Modules and packages](./modules.md).
+`Bytes` holds raw bytes. Build it with `bytes([Int])` from `collections`, or a string's `to_bytes()`. Indexing gives `UInt8`; methods provide `len`, `slice`, and UTF-8 decoding with `to_text`. The `io` module has `read_bytes` and `write_bytes`. See [Bytes](./data.md#bytes).
+
+## Generic inference and generic methods
+
+A generic call infers missing type arguments from its expected type. This can come from an annotated binding, a declared return type, a parameter, a struct field, an assignment, or an `if` or `match` branch whose type is known. Type functions of generic types work too: `let b: Bag[Int] = Bag::new()`. Call sites have no explicit type arguments. If a type argument stays unknown, the error suggests giving the call's place a type or passing arguments of known types. See [Generics](./abstraction.md#generics).
+
+Methods can declare their own type parameters, with optional bounds: `fn map[U](self, f: fn(T) -> U) -> Box[U]`. Calls infer them from arguments and the expected type. Each distinct instantiation is specialized. A method with its own type parameters cannot take `mut self`. See [Generic methods](./abstraction.md#generic-methods).
+
+## Performance
+
+Source writes in a batch and dependency reads now take constant work per write or read. Module `let mut` arrays change in place for `xs.push(v)` and `xs[i] = v`. These operations used to do quadratic work.
+
+Library calls, component checks, value copies, and mailbox checks do less work. Against 0.3.1, retired instructions fell 15.8% for VM recursion and about 20% for collections on both engines. With `--jit`, handlers and watches without a loop run on the VM. Eligible bodies with `while` or `for` loops still run compiled. Results are the same.
+
+Compile work fell in cycle checks, unused lookups, and grammar rules. Compiling `inventory_totals.fl` still uses 2.1% more instructions than in 0.3.1; `programs/demo/showcase.fl` uses 1.2% more. See [performance measurements](https://github.com/nimeview/Flux/blob/main/PERFORMANCE.md#04-against-03-2026-11-27).
 
 ## Smaller changes
 
-- A generic call can be the argument of another: `id(id(3))`.
-- An array literal takes unknown parts from later elements: `[None, Some(1)]` is an `[Option[Int]]`.
-- A block `match` arm that ends in `if … else` takes the value of the branch that runs.
-- A type parameter named twice (`fn f[T, T]`) is an error (E004).
-- New error codes: E031 (a bound's trait is missing) and E032 (another module's source changed).
+- In the editor, component members have hover and go to definition by name in the body and through an instance. Completion after `a.` lists its `pub` members. The outline shows a component as a class with its members.
+- `-128i8` is the literal -128 of type `Int8`; it used to fail at run time. `flux fmt` keeps suffixed literals as written, including `120i8`, `-128i8`, and `2.5f32`.
+- In the editor, a watch cycle (E029) through an imported file shows there even when it is open. The warning goes when the importer closes.
+- A derived cycle among module values is reported the same way on every run.
+- The sample module `programs/ok/modules/math.fl` was renamed `arith.fl`; it shadowed the library's `math`.
+
+[What changed in 0.3](./whats-new-0.3.md) is still available.

@@ -7,13 +7,14 @@
               │                │               │             │              │              │
            pest AST        import graph     scopes/HIR    mono+check     bytecode     graph + VM
               │                │               │             │              │              │
-              └──────────────── flux_diagnostics (Span, miette E000–E032) ─────────────────┘
+              └──────────────── flux_diagnostics (Span, miette E000–E035) ─────────────────┘
                                                                                        │
                                                                                flux_jit (--jit)
 ```
 
 **`flux_driver`** is the single compile orchestrator used by CLI, LSP, REPL and tests:
 parse → HIR → monomorphize → typecheck → resolve method calls → IR → executor, with optional IR cache validation (`<project>/.flux/cache/`).
+`compile_file_with_host` supplies the runtime's `Host` for a program's `extern fn` declarations.
 
 **Methods.** `x.m(args)` stays a field call in the HIR, because which `m` it is depends on the receiver's type. The type checker records, per call span, the function it resolved: a method of an `impl` (`trait_impls`) or a library function (`flux_std::methods::library_method`, given a hidden symbol in `HirProgram.builtin_ids`). `flux_types::resolve_method_calls` then rewrites each call to a direct call with the receiver first. A statement `place.m(…)` whose name could be a changing method is lowered as `place = place.m(…)` and recorded in `mut_call_sites`; it stores the result back only if the call resolved to a `mut self` method or a changing library method (`changing_calls`), and is otherwise just the call. Places (`p.x`, `xs[i].done`) are one `IrStmt::AssignPlace`, whose indices are evaluated once; the runtime updates them copy-on-write (`exec/place.rs`).
 
@@ -31,14 +32,14 @@ parse → HIR → monomorphize → typecheck → resolve method calls → IR →
 | `flux_hir` | HIR lowering, scopes, symbols | `lower.rs`, `nodes.rs`, `symbol.rs` |
 | `flux_types` | Type inference, monomorphization, checking | `check.rs`, `mono.rs`, `types.rs`, `builtins.rs` |
 | `flux_ir` | Stack-machine bytecode | `lower.rs`, `lib.rs` |
-| `flux-runtime` | Reactive dependency graph + VM executor | `graph.rs`, `exec.rs` |
+| `flux-runtime` | Reactive dependency graph + VM executor | `graph.rs`, `exec.rs`, `exec/live.rs`, `exec/timers.rs` |
 | `flux_jit` | Cranelift JIT backend (numeric hot paths) | `compiler/`, `host.rs` |
 | `flux_std` | Standard library builtins + I/O | `lib.rs`, `io.rs` |
 | `flux_resolve` | Multi-file import resolution | `lib.rs` |
 | `flux_fmt` | Source formatter (AST → source) | `lib.rs` |
 | `flux_lsp` | LSP server (diagnostics, hover, completion, format, symbols, rename) | `server.rs`, `analysis.rs` |
 | `flux_wasm` | WASM backend (stub) | `lib.rs` |
-| `flux_diagnostics` | Spans, miette error types E000–E032 | `error.rs`, `lib.rs` |
+| `flux_diagnostics` | Spans, miette error types E000–E035 | `error.rs`, `lib.rs` |
 | `flux_driver` | Unified compile pipeline + IR cache | `pipeline.rs`, `cache.rs`, `options.rs` |
 | `flux_cli` | CLI binary, REPL, project init | `main.rs`, `repl.rs`, `manifest.rs` |
 
@@ -58,6 +59,10 @@ Writes settle in **batches**: the outermost `emit` or `act fn` call opens one, n
 
 The runtime (`flux-runtime`) keeps the graph in `graph.rs` and runs programs in `exec.rs`. Event dispatch and settling use node ids and reused buffers in `ReactiveState`, kept behind a `Box` so that it does not spread the fields calls use over more cache lines. A derived value with a conditional reads its dependencies as it runs (`tracking_scope`), so it depends only on the branch it took.
 
+**Components.** A `live fn` is compiled as a template of nodes, handlers, and watches. The runtime instantiates it on each call (`flux-runtime/src/exec/live.rs`). Each instance has its own member nodes, handlers, and watches. Instances live while a value holds them. Component code runs on the VM, with the same results under `--jit`.
+
+**Timers and hosts.** `flux-runtime/src/exec/timers.rs` implements timers, the event loop, and the host API. `Host::function` provides an `extern fn`; `EventSender::send` queues an event from another thread. `run_event_loop` delivers queued events in order and runs due timers, each as one batch. `stopped`, `next_timer_in`, and `run_due_timers` let a host drive time itself.
+
 Statements carry their source location in `StmtBlock.locs`, beside the statements rather than between them, because only a runtime error reads it. `SourceMap` turns a location into a path, line, and column.
 
 ---
@@ -76,7 +81,7 @@ VM remains the default executor. `flux run --jit` (or `FLUX_JIT=1` / `[run] jit 
 |----|----------------|
 | Numeric derived nodes | Native code; tag-aware int/float slots |
 | Pure numeric `fn` | Compiled; params in host slot pairs |
-| Numeric `watch`/`on` | Stmt bodies with `if`/`while`/`for`, when eligible; a body that emits runs on the VM |
+| Numeric `watch`/`on` | Eligible bodies with `while`/`for` loops; bodies without a loop or that emit run on the VM |
 | Conditional reading a reactive node | VM, which records the branch's dependencies (`dynamic_dependencies`) |
 | String const, `+`, `==`, ordering, `to_string` | Tag 5 + intern pool; host calls |
 | `match` on integers and user enums | Native, with bindings as Cranelift variables |

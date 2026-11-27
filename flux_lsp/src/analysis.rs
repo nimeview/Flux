@@ -211,6 +211,10 @@ pub fn definition_at_position(
             .or_else(|| analysis.symbols.by_name.get(member).cloned());
     }
 
+    if let Some(id) = live_member_at(analysis, contents, offset, word) {
+        let symbol = analysis.hir.as_ref()?.symbols.get(&id)?;
+        return location_for_span(&analysis.source_paths, symbol.span, "<buffer>");
+    }
     if dot_member_access(contents, offset) {
         return member_definition(analysis, contents, offset, word);
     }
@@ -304,6 +308,11 @@ fn member_definition(
     offset: usize,
     member: &str,
 ) -> Option<SymbolLocation> {
+    // `a.n`, `emit a.Inc(…)`: a member of the instance's component.
+    if let Some(id) = live_member_at(analysis, contents, offset, member) {
+        let symbol = analysis.hir.as_ref()?.symbols.get(&id)?;
+        return location_for_span(&analysis.source_paths, symbol.span, "<buffer>");
+    }
     let hir = analysis.hir.as_ref()?;
     let typed = analysis.typed.as_ref()?;
     let receiver = receiver_expr_before_dot(contents, offset)?;
@@ -323,6 +332,61 @@ fn member_definition(
     let type_tag = inner.display();
     let fn_id = ctx.trait_impl(&type_tag, member)?;
     analysis.symbols.by_id.get(&fn_id).cloned()
+}
+
+/// The member `member` of the component whose instance is the receiver of
+/// the `.` before the word at `offset` (`a.n`, `a.reset`, `emit a.Inc`).
+pub fn live_member_at(
+    analysis: &DocAnalysis,
+    contents: &str,
+    offset: usize,
+    member: &str,
+) -> Option<flux_hir::SymbolId> {
+    let hir = analysis.hir.as_ref()?;
+    let offset = offset.min(contents.len());
+    let start = contents[..offset]
+        .char_indices()
+        .rev()
+        .find(|(_, c)| !(c.is_alphanumeric() || *c == '_'))
+        .map_or(0, |(i, c)| i + c.len_utf8());
+    let dot = contents[..start].strip_suffix('.')?.len();
+    let Type::Live(name) = unwrap_type(&receiver_type_at(analysis, contents, dot)?) else {
+        return None;
+    };
+    let template = hir.templates.iter().find(|t| t.name == name)?;
+    template
+        .members
+        .iter()
+        .find(|(n, _, _)| n == member)
+        .map(|(_, id, _)| *id)
+}
+
+/// The members of a component's instance that code outside it may use.
+fn live_completions(hir: &HirProgram, typed: &TypedProgram, name: &str) -> Vec<MemberCompletion> {
+    let Some(template) = hir.templates.iter().find(|t| t.name == name) else {
+        return Vec::new();
+    };
+    template
+        .members
+        .iter()
+        .filter(|(_, _, public)| *public)
+        .map(|(member, id, _)| {
+            let ty = typed.types.get(id);
+            let kind = match ty {
+                Some(Type::Func { .. }) => MemberKind::Method,
+                _ => MemberKind::Field,
+            };
+            let detail = ty.map(|t| match t {
+                Type::Event(_) => format!("event: emit x.{member}(…)"),
+                other => describe_type(&unwrap_type(other)),
+            });
+            MemberCompletion {
+                label: member.clone(),
+                detail,
+                kind,
+            }
+        })
+        .collect()
 }
 
 /// Member completion items after `.` from struct fields and trait impl methods.
@@ -362,6 +426,9 @@ pub fn member_completions(
     };
     let ctx = TypeCheckContext::from_program(hir);
     let inner = ctx.instance_of(&unwrap_type(&receiver_ty));
+    if let Type::Live(name) = &inner {
+        return live_completions(hir, typed, name);
+    }
     let mut items = Vec::new();
     let mut seen = std::collections::HashSet::new();
 

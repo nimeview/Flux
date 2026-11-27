@@ -59,6 +59,20 @@ pub enum FluxWarning {
         span: miette::SourceSpan,
         source_id: SourceId,
     },
+    /// A file beside the importer has a library module's name: `import`
+    /// of that name means the library module, never the file.
+    #[error("`{file}` is not imported: `{name}` is a library module")]
+    #[diagnostic(
+        code(flux::E035),
+        help("rename the file to import it; `import {name}` always means the library")
+    )]
+    ShadowedLibraryModule {
+        name: String,
+        file: String,
+        #[label("the library module `{name}`")]
+        span: miette::SourceSpan,
+        source_id: SourceId,
+    },
     /// A watch changes a source.
     #[error("this watch changes `{name}`")]
     #[diagnostic(
@@ -88,6 +102,7 @@ impl FluxWarning {
             Self::UnusedBinding { source_id, .. }
             | Self::Deprecated { source_id, .. }
             | Self::WatchWrites { source_id, .. }
+            | Self::ShadowedLibraryModule { source_id, .. }
             | Self::WatchCycle { source_id, .. }
             | Self::UnusedResult { source_id, .. }
             | Self::OldForm { source_id, .. } => *source_id,
@@ -99,6 +114,7 @@ impl FluxWarning {
             Self::UnusedBinding { .. } => "E015",
             Self::Deprecated { .. } | Self::OldForm { .. } => "E026",
             Self::WatchWrites { .. } => "E028",
+            Self::ShadowedLibraryModule { .. } => "E035",
             Self::WatchCycle { .. } => "E029",
             Self::UnusedResult { .. } => "E030",
         }
@@ -110,6 +126,7 @@ impl FluxWarning {
             Self::UnusedBinding { span, .. }
             | Self::Deprecated { span, .. }
             | Self::WatchWrites { span, .. }
+            | Self::ShadowedLibraryModule { span, .. }
             | Self::WatchCycle { span, .. }
             | Self::UnusedResult { span, .. }
             | Self::OldForm { span, .. } => *span,
@@ -127,6 +144,7 @@ impl FluxWarning {
             }),
             Self::UnusedBinding { .. }
             | Self::WatchWrites { .. }
+            | Self::ShadowedLibraryModule { .. }
             | Self::WatchCycle { .. }
             | Self::UnusedResult { .. }
             | Self::OldForm { .. } => None,

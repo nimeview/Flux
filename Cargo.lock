@@ -605,7 +605,7 @@ checksum = "1c66915cc5391097de7a2b0b972e8505aa33c0df401fd3a6811dbdb32881ba48"
 
 [[package]]
 name = "flux_cli"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "clap",
  "criterion",
@@ -631,7 +631,7 @@ dependencies = [
 
 [[package]]
 name = "flux_diagnostics"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "miette",
  "thiserror",
@@ -639,7 +639,7 @@ dependencies = [
 
 [[package]]
 name = "flux_driver"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "bincode",
  "flux_diagnostics",
@@ -655,7 +655,7 @@ dependencies = [
 
 [[package]]
 name = "flux_fmt"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "flux_diagnostics",
  "flux_syntax",
@@ -664,7 +664,7 @@ dependencies = [
 
 [[package]]
 name = "flux_hir"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "flux_diagnostics",
  "flux_resolve",
@@ -676,7 +676,7 @@ dependencies = [
 
 [[package]]
 name = "flux_ir"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "flux_diagnostics",
  "flux_hir",
@@ -688,7 +688,7 @@ dependencies = [
 
 [[package]]
 name = "flux_jit"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "bincode",
  "cranelift",
@@ -709,7 +709,7 @@ dependencies = [
 
 [[package]]
 name = "flux_lsp"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "flux_diagnostics",
  "flux_driver",
@@ -729,7 +729,7 @@ dependencies = [
 
 [[package]]
 name = "flux_resolve"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "flux_diagnostics",
  "flux_std",
@@ -742,7 +742,7 @@ dependencies = [
 
 [[package]]
 name = "flux_runtime"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "flux_diagnostics",
  "flux_hir",
@@ -758,14 +758,14 @@ dependencies = [
 
 [[package]]
 name = "flux_std"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "flux_value",
 ]
 
 [[package]]
 name = "flux_syntax"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "flux_diagnostics",
  "miette",
@@ -776,7 +776,7 @@ dependencies = [
 
 [[package]]
 name = "flux_types"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "flux_diagnostics",
  "flux_hir",
@@ -788,14 +788,14 @@ dependencies = [
 
 [[package]]
 name = "flux_value"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "stacker",
 ]
 
 [[package]]
 name = "flux_wasm"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "flux_ir",
 ]

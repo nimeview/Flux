@@ -335,9 +335,68 @@ fn send_diagnostics(
     Ok(())
 }
 
+/// One analysis diagnostic as the protocol's.
+fn to_lsp_diagnostic(d: crate::analysis::RangedDiagnostic) -> Diagnostic {
+    Diagnostic {
+        range: Range::new(
+            Position::new((d.start_line - 1) as u32, (d.start_column - 1) as u32),
+            Position::new((d.end_line - 1) as u32, (d.end_column - 1) as u32),
+        ),
+        severity: Some(match d.level {
+            crate::analysis::DiagnosticLevel::Error => DiagnosticSeverity::ERROR,
+            crate::analysis::DiagnosticLevel::Warning => DiagnosticSeverity::WARNING,
+        }),
+        code: Some(NumberOrString::String(d.code)),
+        source: Some("flux".to_string()),
+        message: d.message,
+        data: d.fix.map(|fix| {
+            serde_json::json!({
+                "title": fix.title,
+                "replacement": fix.replacement,
+                "range": Range::new(
+                    Position::new((fix.start_line - 1) as u32, (fix.start_column - 1) as u32),
+                    Position::new((fix.end_line - 1) as u32, (fix.end_column - 1) as u32),
+                ),
+            })
+        }),
+        ..Default::default()
+    }
+}
+
+/// Diagnostics only an importer's analysis finds: a watch cycle (E029) that
+/// runs through the imported file and the importer, which the imported
+/// file's own analysis cannot see.
+fn seen_only_from_importer(code: &str) -> bool {
+    code == "E029"
+}
+
+/// What open document `uri` shows: its own analysis's diagnostics, plus the
+/// ones open importers found in it that it cannot find itself.
+fn open_document_diagnostics(store: &mut DocumentStore, uri: &Url) -> Vec<Diagnostic> {
+    let mut own: Vec<Diagnostic> = store
+        .analyze(uri)
+        .map(|analysis| {
+            analysis
+                .diagnostics
+                .into_iter()
+                .filter(|d| d.path.is_none())
+                .map(to_lsp_diagnostic)
+                .collect()
+        })
+        .unwrap_or_default();
+    for d in store.foreign_diagnostics(uri) {
+        if !own.contains(&d) {
+            own.push(d);
+        }
+    }
+    own
+}
+
 /// Every `publishDiagnostics` that analyzing `uri` produces. Diagnostics in
-/// imported files go to those files' URIs (unless open: their own analysis owns
-/// them), and imported files that no longer have any get an empty list.
+/// imported files go to those files' URIs: a closed file gets them all; an
+/// open one keeps its own analysis's, plus those only an importer can find
+/// (see [`seen_only_from_importer`]). Files that no longer have any get an
+/// empty list.
 pub fn document_diagnostics(store: &mut DocumentStore, uri: &Url) -> Vec<PublishDiagnosticsParams> {
     let Some(analysis) = store.analyze(uri) else {
         return Vec::new();
@@ -348,49 +407,36 @@ pub fn document_diagnostics(store: &mut DocumentStore, uri: &Url) -> Vec<Publish
         let target = match d.path.as_deref() {
             None => uri.clone(),
             Some(path) => match Url::from_file_path(path) {
-                Ok(target) if !store.is_open(&target) => target,
+                Ok(target) if !store.is_open(&target) || seen_only_from_importer(&d.code) => target,
                 _ => continue,
             },
         };
-        by_uri.entry(target).or_default().push(Diagnostic {
-            range: Range::new(
-                Position::new((d.start_line - 1) as u32, (d.start_column - 1) as u32),
-                Position::new((d.end_line - 1) as u32, (d.end_column - 1) as u32),
-            ),
-            severity: Some(match d.level {
-                crate::analysis::DiagnosticLevel::Error => DiagnosticSeverity::ERROR,
-                crate::analysis::DiagnosticLevel::Warning => DiagnosticSeverity::WARNING,
-            }),
-            code: Some(NumberOrString::String(d.code)),
-            source: Some("flux".to_string()),
-            message: d.message,
-            data: d.fix.map(|fix| {
-                serde_json::json!({
-                    "title": fix.title,
-                    "replacement": fix.replacement,
-                    "range": Range::new(
-                        Position::new((fix.start_line - 1) as u32, (fix.start_column - 1) as u32),
-                        Position::new((fix.end_line - 1) as u32, (fix.end_column - 1) as u32),
-                    ),
-                })
-            }),
-            ..Default::default()
-        });
+        by_uri.entry(target).or_default().push(to_lsp_diagnostic(d));
     }
-    let own = by_uri.remove(uri).unwrap_or_default();
+    let mut own = by_uri.remove(uri).unwrap_or_default();
     let reported: HashSet<Url> = by_uri.keys().cloned().collect();
     let stale = store.replace_foreign(uri, by_uri);
+    // What importers found in this file that its own analysis cannot.
+    for d in store.foreign_diagnostics(uri) {
+        if !own.contains(&d) {
+            own.push(d);
+        }
+    }
     let mut out = vec![PublishDiagnosticsParams {
         version: store.version(uri),
         uri: uri.clone(),
         diagnostics: own,
     }];
-    // An open file's diagnostics come from its own analysis.
-    for target in reported.union(&stale).filter(|t| !store.is_open(t)) {
+    for target in reported.union(&stale) {
+        let diagnostics = if store.is_open(target) {
+            open_document_diagnostics(store, target)
+        } else {
+            store.foreign_diagnostics(target)
+        };
         out.push(PublishDiagnosticsParams {
-            version: None,
+            version: store.version(target),
             uri: target.clone(),
-            diagnostics: store.foreign_diagnostics(target),
+            diagnostics,
         });
     }
     // Root first, then imported files in a stable order.
@@ -403,7 +449,6 @@ pub fn close_diagnostics(store: &mut DocumentStore, uri: &Url) -> Vec<PublishDia
     let mut targets: Vec<Url> = store
         .replace_foreign(uri, HashMap::new())
         .into_iter()
-        .filter(|target| !store.is_open(target))
         .collect();
     targets.sort_by_key(|u| u.to_string());
     let mut out = vec![PublishDiagnosticsParams {
@@ -411,11 +456,17 @@ pub fn close_diagnostics(store: &mut DocumentStore, uri: &Url) -> Vec<PublishDia
         diagnostics: Vec::new(),
         version: None,
     }];
+    // An open file loses what this one found in it, and keeps its own.
     for target in targets {
+        let diagnostics = if store.is_open(&target) {
+            open_document_diagnostics(store, &target)
+        } else {
+            store.foreign_diagnostics(&target)
+        };
         out.push(PublishDiagnosticsParams {
-            diagnostics: store.foreign_diagnostics(&target),
+            diagnostics,
+            version: store.version(&target),
             uri: target,
-            version: None,
         });
     }
     out
@@ -456,13 +507,20 @@ fn compute_hover(store: &mut DocumentStore, params: HoverParams) -> Option<Hover
 
     // A method or type function: found by position, as its internal name is
     // not the word under the cursor.
+    // A component's member (`n` in its body, `a.n` outside) likewise.
     let method = analysis.as_ref().and_then(|a| {
-        let id = crate::analysis::symbol_at_position(a, &text, position.line, position.character)?;
+        let id = crate::analysis::live_member_at(a, &text, offset, word).or_else(|| {
+            crate::analysis::symbol_at_position(a, &text, position.line, position.character)
+        })?;
         let name = a.hir.as_ref()?.names.get(&id)?;
-        if !(name.starts_with("__impl_") || name.contains("::")) {
+        if !(name.starts_with("__impl_") || name.starts_with("__live_") || name.contains("::")) {
             return None;
         }
         let ty = a.typed.as_ref()?.types.get(&id)?;
+        let ty = match ty {
+            flux_types::Type::Cell(inner) | flux_types::Type::Read(inner) => inner.as_ref(),
+            other => other,
+        };
         Some(format!("{word}: {}", crate::analysis::describe_type(ty)))
     });
     // A name the program defines itself hides the library's.
@@ -981,10 +1039,39 @@ fn compute_document_symbols(
         .into_iter()
         .filter_map(|sym| {
             let (sl, sc, el, ec) = span_to_lsp_range(&text, &sym.span, &analysis)?;
+            // A component: a class with its members.
+            let template = hir.templates.iter().find(|t| t.name == sym.name);
+            let children = template.map(|t| {
+                t.members
+                    .iter()
+                    .filter_map(|(name, id, _)| {
+                        let span = hir.symbols.get(id)?.span;
+                        let (sl, sc, el, ec) = span_to_lsp_range(&text, &span, &analysis)?;
+                        let kind = match analysis.typed.as_ref().and_then(|t| t.types.get(id)) {
+                            Some(flux_types::Type::Func { .. }) => SymbolKind::METHOD,
+                            Some(flux_types::Type::Event(_)) => SymbolKind::EVENT,
+                            _ => SymbolKind::FIELD,
+                        };
+                        let range = Range::new(Position::new(sl, sc), Position::new(el, ec));
+                        Some(DocumentSymbol {
+                            name: name.clone(),
+                            detail: None,
+                            kind,
+                            tags: None,
+                            range,
+                            selection_range: range,
+                            children: None,
+                            #[allow(deprecated)]
+                            deprecated: None,
+                        })
+                    })
+                    .collect()
+            });
             Some(DocumentSymbol {
                 name: sym.name,
-                detail: None,
+                detail: template.map(|_| "live fn".to_string()),
                 kind: match sym.kind {
+                    _ if template.is_some() => SymbolKind::CLASS,
                     OutlineKind::Variable => SymbolKind::VARIABLE,
                     OutlineKind::Function => SymbolKind::FUNCTION,
                     OutlineKind::Event => SymbolKind::EVENT,
@@ -995,7 +1082,7 @@ fn compute_document_symbols(
                 tags: None,
                 range: Range::new(Position::new(sl, sc), Position::new(el, ec)),
                 selection_range: Range::new(Position::new(sl, sc), Position::new(el, ec)),
-                children: None,
+                children,
                 #[allow(deprecated)]
                 deprecated: None,
             })
@@ -1146,6 +1233,148 @@ fn keyword_doc(word: &str) -> Option<&'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A watch cycle through two files is found by the importer's analysis,
+    /// at a watch in the imported file: it shows there even when that file
+    /// is open (its own analysis cannot see the cycle), and goes when the
+    /// importer closes.
+    #[test]
+    fn a_cycle_through_an_open_imported_file_shows_in_it() {
+        let dir = std::env::temp_dir().join(format!("flux-lsp-cycle-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let shared = "pub event Bump\n\npub let mut a = 0\n\npub let mut b = 0\n\non Bump {\n    a += 1\n}\n\npub act fn set_b(v: Int) {\n    b = v\n}\n\nwatch a {\n    set_b(a)\n}\n";
+        let main = "import shared { a, b, Bump, set_b }\n\nwatch b {\n    emit Bump()\n}\n\nfn main() {\n}\n";
+        std::fs::write(dir.join("shared.fl"), shared).unwrap();
+        std::fs::write(dir.join("main.fl"), main).unwrap();
+        let shared_uri =
+            Url::from_file_path(dir.join("shared.fl").canonicalize().unwrap()).unwrap();
+        let main_uri = Url::from_file_path(dir.join("main.fl").canonicalize().unwrap()).unwrap();
+        let mut store = DocumentStore::new();
+        store.open(shared_uri.clone(), 1, shared.to_string());
+        store.open(main_uri.clone(), 1, main.to_string());
+        let codes = |params: &[PublishDiagnosticsParams], uri: &Url| -> Vec<String> {
+            params
+                .iter()
+                .filter(|p| p.uri == *uri)
+                .flat_map(|p| p.diagnostics.iter())
+                .filter_map(|d| match &d.code {
+                    Some(NumberOrString::String(c)) => Some(c.clone()),
+                    _ => None,
+                })
+                .collect()
+        };
+        let published = document_diagnostics(&mut store, &main_uri);
+        assert!(
+            codes(&published, &shared_uri).contains(&"E029".to_string()),
+            "{published:?}"
+        );
+        // The imported file's own publish keeps it.
+        let own = document_diagnostics(&mut store, &shared_uri);
+        assert!(
+            codes(&own, &shared_uri).contains(&"E029".to_string()),
+            "{own:?}"
+        );
+        // Closing the importer takes it away.
+        store.close(&main_uri);
+        let closed = close_diagnostics(&mut store, &main_uri);
+        assert!(
+            !codes(&closed, &shared_uri).contains(&"E029".to_string()),
+            "{closed:?}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The editor knows a component's members: hover and definition of a
+    /// member by its name in the body and through an instance (`a.n`,
+    /// `emit a.Inc`), completion after `a.`, and the component in the outline.
+    #[test]
+    fn live_fn_members_in_the_editor() {
+        let src = "import io { println }\n\nlive fn Counter(start: Int) {\n    pub let mut n = start\n    pub derived double = n * 2\n    pub event Inc(by: Int)\n\n    on Inc(by) {\n        n += by\n    }\n}\n\nact fn main() {\n    let a = Counter(1)\n    emit a.Inc(2)\n    println(\"{a.n}\")\n    let d = a.double\n}\n";
+        let dir = std::env::temp_dir().join(format!("flux-lsp-live-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("main.fl"), src).unwrap();
+        let uri = Url::from_file_path(dir.join("main.fl").canonicalize().unwrap()).unwrap();
+        let mut store = DocumentStore::new();
+        store.open(uri.clone(), 1, src.to_string());
+        let at = |line: u32, character: u32| lsp_types::TextDocumentPositionParams {
+            text_document: lsp_types::TextDocumentIdentifier { uri: uri.clone() },
+            position: Position::new(line, character),
+        };
+        let hover = |store: &mut DocumentStore, line, ch| match compute_hover(
+            store,
+            HoverParams {
+                text_document_position_params: at(line, ch),
+                work_done_progress_params: Default::default(),
+            },
+        )
+        .map(|h| h.contents)
+        {
+            Some(HoverContents::Markup(m)) => m.value,
+            other => format!("{other:?}"),
+        };
+        let definition_line = |store: &mut DocumentStore, line, ch| match compute_definition(
+            store,
+            GotoDefinitionParams {
+                text_document_position_params: at(line, ch),
+                work_done_progress_params: Default::default(),
+                partial_result_params: Default::default(),
+            },
+        ) {
+            Some(GotoDefinitionResponse::Scalar(l)) => {
+                Some((l.range.start.line, l.range.start.character))
+            }
+            _ => None,
+        };
+        // `n` in the handler, `a.n`, `a.double`, `Inc` in `emit a.Inc`.
+        assert!(
+            hover(&mut store, 8, 8).contains("n: "),
+            "{}",
+            hover(&mut store, 8, 8)
+        );
+        assert_eq!(definition_line(&mut store, 8, 8), Some((3, 16)));
+        assert!(hover(&mut store, 15, 17).contains("n: "));
+        assert_eq!(definition_line(&mut store, 15, 17), Some((3, 16)));
+        assert!(hover(&mut store, 16, 15).contains("double: Int64"));
+        assert_eq!(definition_line(&mut store, 16, 15), Some((4, 16)));
+        assert!(hover(&mut store, 14, 12).contains("Inc: event"));
+        assert_eq!(definition_line(&mut store, 14, 12), Some((5, 14)));
+        let completion = compute_completion(
+            &mut store,
+            CompletionParams {
+                text_document_position: at(16, 14),
+                work_done_progress_params: Default::default(),
+                partial_result_params: Default::default(),
+                context: None,
+            },
+        );
+        let labels: Vec<String> = completion.iter().map(|c| c.label.clone()).collect();
+        assert_eq!(labels, ["n", "double", "Inc"]);
+        let Some(DocumentSymbolResponse::Nested(symbols)) = compute_document_symbols(
+            &mut store,
+            DocumentSymbolParams {
+                text_document: lsp_types::TextDocumentIdentifier { uri: uri.clone() },
+                work_done_progress_params: Default::default(),
+                partial_result_params: Default::default(),
+            },
+        ) else {
+            panic!("no symbols");
+        };
+        let counter = symbols
+            .iter()
+            .find(|s| s.name == "Counter")
+            .expect("Counter");
+        assert_eq!(counter.kind, SymbolKind::CLASS);
+        let members: Vec<&str> = counter
+            .children
+            .iter()
+            .flatten()
+            .map(|c| c.name.as_str())
+            .collect();
+        assert_eq!(members, ["n", "double", "Inc"]);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn advertises_incremental_sync() {
