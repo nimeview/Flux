@@ -25,13 +25,13 @@ use crate::graph::{NodeId, RuntimeValue};
 pub(super) struct Instance {
     pub(super) template: usize,
     /// Each member's node, by the member's internal name.
-    pub(super) nodes: HashMap<String, NodeId>,
+    pub(super) nodes: rustc_hash::FxHashMap<String, NodeId>,
 }
 
 /// What the executor keeps about components and their instances.
 #[derive(Default)]
 pub(super) struct LiveState {
-    pub(super) instances: HashMap<u64, Instance>,
+    pub(super) instances: rustc_hash::FxHashMap<u64, Instance>,
     pub(super) next_id: u64,
     pub(super) mailbox: Arc<InstanceMailbox>,
     /// Per graph node: the instance it belongs to, if any.
@@ -100,13 +100,13 @@ impl Executor {
         self.live.instances.get(&receiver)?.nodes.get(name).copied()
     }
 
-    /// The node `name` means here: a global binding, or the receiver's member.
+    /// The node `name` means here: a global binding, or the receiver's member
+    /// (whose internal name says which it is).
     pub(super) fn resolve_node(&self, name: &str) -> Option<NodeId> {
-        self.graph
-            .name_to_id
-            .get(name)
-            .copied()
-            .or_else(|| self.member_node(name))
+        if self.receiver.is_some() && name.starts_with("__live_") {
+            return self.member_node(name);
+        }
+        self.graph.name_to_id.get(name).copied()
     }
 
     /// Whether instance `id` still exists: made, and its last handle not dropped.
@@ -115,6 +115,7 @@ impl Executor {
     }
 
     /// Runs `f` with `receiver` as the instance member names refer to.
+    #[inline]
     pub(super) fn with_receiver<R>(
         &mut self,
         receiver: Option<u64>,
@@ -173,6 +174,9 @@ impl Executor {
     /// Runs the handlers of a component's own event `event`, for the
     /// current receiver. Returns `false` when `event` is not one.
     pub(super) fn run_member_handlers(&mut self, event: &str, values: &[RuntimeValue]) -> bool {
+        if self.live.member_events.is_empty() {
+            return false;
+        }
         let Some(handlers) = self.live.member_events.get(event).cloned() else {
             return false;
         };
@@ -207,6 +211,7 @@ impl Executor {
 
     /// Runs `on` handler `idx` with `values`; with a receiver, always on the
     /// VM. Returns `false` after a runtime error.
+    #[inline]
     pub(super) fn run_handler(
         &mut self,
         idx: usize,
@@ -221,14 +226,12 @@ impl Executor {
         for (slot, value) in values[..named].iter().enumerate() {
             locals.set(slot as u32, value.clone());
         }
-        let shown = flux_value::type_display_name(event).to_string();
-        let shown = shown.rsplit("__").next().unwrap_or(&shown).to_string();
         let ran_native =
             receiver.is_none() && self.try_run_jit_on(idx, &body, &mut locals, &values[..named]);
         if !ran_native {
             self.with_receiver(receiver, |this| this.run_stmts(&body, &mut locals));
             if self.trap.is_some() {
-                self.push_trace_frame(format!("on {shown}"), None);
+                self.push_trace_frame(format!("on {}", event_shown(event)), None);
             }
         }
         locals.clear();
@@ -236,7 +239,7 @@ impl Executor {
             self.locals_pool.push(locals);
         }
         if self.trap.is_some() {
-            self.set_trap_context(&format!("`on {shown}`"), None);
+            self.set_trap_context(&format!("`on {}`", event_shown(event)), None);
             return false;
         }
         true
@@ -257,7 +260,7 @@ impl Executor {
 
         // A node per member: sources start with their literal value (a
         // parameter with its argument), derived values are computed below.
-        let mut nodes = HashMap::new();
+        let mut nodes = rustc_hash::FxHashMap::default();
         let mut proto_to_node: HashMap<usize, NodeId> = HashMap::new();
         let mut derived = Vec::new();
         for &proto in &tmpl.nodes {
@@ -404,7 +407,12 @@ impl Executor {
     /// Checks a value about to be stored in node `id`: an instance's member
     /// may not come to hold the instance. Raises the error and returns
     /// `false` if it would.
+    #[inline]
     pub(super) fn may_store(&mut self, id: NodeId, value: &RuntimeValue) -> bool {
+        // Without instances, there is nothing to check.
+        if self.live.instances.is_empty() {
+            return true;
+        }
         let Some(owner) = self
             .live
             .node_receiver
@@ -431,6 +439,7 @@ impl Executor {
             r.changed_marks.resize(n, false);
             r.reached.resize(n, false);
             r.evaluating.resize(n, false);
+            r.mutated_marks.resize(n, false);
         }
         if self.live.node_receiver.len() < n {
             self.live.node_receiver.resize(n, None);
@@ -462,6 +471,9 @@ impl Executor {
                 }
                 self.reactive.changed_nodes.retain(|n| !ids.contains(n));
                 self.reactive.mutated_sources.retain(|n| !ids.contains(n));
+                for &node in &ids {
+                    self.reactive.mutated_marks[node.0 as usize] = false;
+                }
                 for subs in self.live.subscriptions.values_mut() {
                     subs.retain(|(owner, _)| *owner != id);
                 }
@@ -549,4 +561,12 @@ fn replace_handles(value: &RuntimeValue) -> RuntimeValue {
         )),
         other => other.clone(),
     })
+}
+
+/// An event's name as the source wrote it: without a module's or a
+/// component's prefix.
+#[cold]
+fn event_shown(event: &str) -> String {
+    let shown = flux_value::type_display_name(event);
+    shown.rsplit("__").next().unwrap_or(shown).to_string()
 }

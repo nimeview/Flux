@@ -151,10 +151,11 @@ impl ReactiveGraph {
 
     /// The nodes in dependency order.
     pub fn topo(&self) -> impl Iterator<Item = NodeId> + '_ {
+        let all = self.topo_stale == 0;
         self.topo_order
             .iter()
             .enumerate()
-            .filter(|(i, id)| self.topo_pos[id.0 as usize] == *i)
+            .filter(move |(i, id)| all || self.topo_pos[id.0 as usize] == *i)
             .map(|(_, id)| *id)
     }
 

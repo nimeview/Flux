@@ -1,0 +1,25 @@
+// Many instances of a component, each with its own source, derived value,
+// and handler of a global event; a derived value sums them all.
+event Tick
+event Make(n: Int)
+
+live fn Counter(start: Int) {
+    pub let mut n = start
+    pub derived double = n * 2
+
+    on Tick {
+        n += 1
+    }
+}
+
+let mut all: [Counter] = []
+
+derived total = all.map(|c| c.double).reduce(0, |x, y| x + y)
+
+on Make(n) {
+    let mut i = 0
+    while i < n {
+        all.push(Counter(i))
+        i += 1
+    }
+}

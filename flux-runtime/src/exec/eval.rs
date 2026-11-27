@@ -299,9 +299,16 @@ impl Executor {
                     }
                     stack.push(result);
                 }
-                Inst::Call { name, argc } => {
+                Inst::Call { name, argc } | Inst::CallOnSource { name, argc, .. } => {
                     debug_assert_vm(stack.len() >= *argc, "stack underflow in Call arguments");
                     let mut args = stack.split_off(stack.len().saturating_sub(*argc));
+                    // `xs = push(xs, v)` on a source: if the source still holds
+                    // this array, it lets go, so the call below changes it in
+                    // place; the assignment stores the result back. (No code
+                    // runs in between that could read the source.)
+                    if let Inst::CallOnSource { source, .. } = inst {
+                        self.release_source(source, args.first());
+                    }
                     // `base with { x: v }`: `(base, "x", v, ...)`; the struct
                     // is copied only if something else holds it.
                     if name == flux_ir::WITH_FIELDS {
@@ -487,20 +494,38 @@ impl Executor {
     /// A binding, function, or builtin by name, recording a reactive read;
     /// `None` if nothing has that name.
     fn load_global(&mut self, name: &str) -> Option<RuntimeValue> {
+        // A component's member: the receiver's.
+        if self.receiver.is_some() && name.starts_with("__live_") {
+            if let Some(id) = self.member_node(name) {
+                self.record_dep(id);
+                self.refresh(id);
+                return Some(self.graph.get(id).clone());
+            }
+        }
         // One lookup serves the dependency record, the refresh, and the read.
         if let Some(&id) = self.graph.name_to_id.get(name) {
             self.record_dep(id);
             self.refresh(id);
             return Some(self.graph.get(id).clone());
         }
-        // A component's member: the receiver's.
-        if let Some(id) = self.member_node(name) {
-            self.record_dep(id);
-            self.refresh(id);
-            return Some(self.graph.get(id).clone());
-        }
         is_bound(name, &self.graph, &self.functions)
             .then(|| resolve_load(name, &self.graph, &self.functions))
+    }
+
+    /// Empties source `name` if it holds the same array or map as `arg`.
+    fn release_source(&mut self, name: &str, arg: Option<&RuntimeValue>) {
+        let Some(id) = self.resolve_node(name) else {
+            return;
+        };
+        let held = &mut self.graph.nodes[id.0 as usize].value;
+        let same = match (&*held, arg) {
+            (RuntimeValue::Array(a), Some(RuntimeValue::Array(b))) => std::sync::Arc::ptr_eq(a, b),
+            (RuntimeValue::Map(a), Some(RuntimeValue::Map(b))) => std::sync::Arc::ptr_eq(a, b),
+            _ => false,
+        };
+        if same {
+            *held = RuntimeValue::Unit;
+        }
     }
 
     fn unbound(&mut self, name: &str) -> RuntimeValue {
@@ -632,7 +657,7 @@ impl Executor {
         if let Some(host_name) = name.strip_prefix(flux_ir::EXTERN_PREFIX) {
             return self.call_host(host_name, args);
         }
-        if flux_std::TIMER_FNS.contains(&name) {
+        if flux_std::is_timer_fn(name) {
             return self.call_timer(name, args);
         }
         if flux_std::is_builtin_fn(name) {
@@ -650,26 +675,37 @@ impl Executor {
             );
             return RuntimeValue::Unit;
         }
-        let Some(func) = self.functions.get(name) else {
-            debug_assert_vm(
-                false,
-                &format!("call to undefined function `{name}` at runtime"),
-            );
-            return RuntimeValue::Unit;
-        };
+        // A user function: no user function shares a library function's
+        // name (lowering renames it).
+        if let Some(func) = self.functions.get(name) {
+            let func = std::sync::Arc::clone(func);
+            return self.call_user(name, &func, args);
+        }
+        debug_assert_vm(
+            false,
+            &format!("call to undefined function `{name}` at runtime"),
+        );
+        RuntimeValue::Unit
+    }
+
+    fn call_user(
+        &mut self,
+        name: &str,
+        func: &std::sync::Arc<flux_ir::CompiledFunction>,
+        args: &[RuntimeValue],
+    ) -> RuntimeValue {
         // Deep recursion is a language error, not a native stack overflow.
         if self.call_depth >= flux_value::MAX_CALL_DEPTH {
             self.raise(flux_value::ArithError::CallDepthExceeded);
             return RuntimeValue::Unit;
         }
-        let func = std::sync::Arc::clone(func);
         self.call_depth += 1;
         // An interpreted call takes a few KB of native stack; grow it on the
         // heap when it runs low, so the depth limit holds on any thread.
         // An `act fn` called outside a batch is one.
         let opened = func.act && self.begin_batch();
         let result = stacker::maybe_grow(64 * 1024, 2 * 1024 * 1024, || {
-            self.run_user_fn(name, &func, args)
+            self.run_user_fn(name, func, args)
         });
         self.end_batch(opened);
         self.call_depth -= 1;

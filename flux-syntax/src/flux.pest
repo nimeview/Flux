@@ -13,8 +13,6 @@ item = {
   | trait_decl
   | impl_decl
   | event_decl
-  | live_decl
-  | extern_decl
   | fn_decl
   | rfn_decl
   | watch_stmt
@@ -23,6 +21,8 @@ item = {
   | derived_binding
   | let_binding
   | if_stmt
+  | live_decl
+  | extern_decl
 }
 
 type_alias_decl = { pub_modifier? ~ "type" ~ ident ~ "=" ~ type_name }
@@ -185,20 +185,16 @@ or_expr = { and_expr ~ ("||" ~ and_expr)* }
 and_expr = { eq_expr ~ ("&&" ~ eq_expr)* }
 eq_expr = { rel_expr ~ (eq_op ~ rel_expr)* }
 eq_op = { "==" | "!=" }
-rel_expr = { bitor_expr ~ (rel_op ~ bitor_expr)* }
+rel_expr = { add_expr ~ (rel_op ~ add_expr)* }
 rel_op = { "<=" | ">=" | "<" | ">" }
-// Bit operations on integers, below comparisons as in Rust: `|` < `^` < `&`
-// < shifts < `+`. `||`, `&&`, and closures `|x|` keep their meaning.
-bitor_expr = { bitxor_expr ~ (bitor_op ~ bitxor_expr)* }
-bitor_op = @{ "|" ~ !("|" | "=") }
-bitxor_expr = { bitand_expr ~ (bitxor_op ~ bitand_expr)* }
-bitxor_op = @{ "^" ~ !"=" }
-bitand_expr = { shift_expr ~ (bitand_op ~ shift_expr)* }
-bitand_op = @{ "&" ~ !("&" | "=") }
-shift_expr = { add_expr ~ (shift_op ~ add_expr)* }
-shift_op = { "<<" | ">>" }
-add_expr = { mul_expr ~ (add_op ~ mul_expr)* }
+// `+`, `-`, and below them the bit operations on integers, as in Rust:
+// shifts, then `&`, `^`, `|` (all below `+`, above comparisons). One rule
+// for all of them, whose precedence the parser applies: a rule per level
+// cost every expression a level each. `||`, `&&`, and closures `|x|` keep
+// their meaning.
+add_expr = { mul_expr ~ ((add_op | bits_op) ~ mul_expr)* }
 add_op = { "+" | "-" }
+bits_op = @{ "<<" | ">>" | "|" ~ !("|" | "=") | "^" ~ !"=" | "&" ~ !("&" | "=") }
 mul_expr = { cast_expr ~ (mul_op ~ cast_expr)* }
 mul_op = { "*" | "/" | "%" }
 
@@ -221,7 +217,8 @@ field_suffix = { "." ~ (ident | tuple_index) }
 tuple_index = @{ ASCII_DIGIT+ }
 call_args = { "(" ~ arg_list? ~ ")" }
 arg_list = { call_arg ~ ("," ~ call_arg)* ~ ","? }
-call_arg = { mut_arg | expr }
+// Silent: an argument is its `mut_arg` or `expr` pair, one level less to build.
+call_arg = _{ mut_arg | expr }
 // `f(mut list)`: the call may change `list` (a `mut` parameter).
 mut_arg = { kw_mut ~ expr }
 

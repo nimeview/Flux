@@ -217,3 +217,23 @@ fn stress_repeated_full_pipeline() {
         compile_src(&name, &src).executor.get_number("health");
     }
 }
+
+/// Growing and rewriting a source's array in its handlers changes it in
+/// place: copying it on each step made this quadratic (100,000 steps took
+/// minutes).
+#[test]
+fn stress_source_array_grows_in_place() {
+    let src = "import collections { len }\n\nevent Fill(n: Int)\nevent Bump\n\nlet mut xs: [Int] = []\n\nderived total = xs.reduce(0, |a, b| a + b)\n\non Fill(n) {\n    let mut i = 0\n    while i < n {\n        xs.push(i)\n        i += 1\n    }\n}\n\non Bump {\n    let mut i = 0\n    while i < len(xs) {\n        xs[i] = xs[i] + 1\n        i += 1\n    }\n}\n";
+    let mut compiled = compile_src("grow.fl", src);
+    compiled
+        .executor
+        .emit("Fill", RuntimeValue::int_i64(100_000));
+    compiled.executor.emit("Bump", RuntimeValue::Unit);
+    assert_eq!(
+        compiled
+            .executor
+            .get_value("total")
+            .and_then(|v| v.as_int()),
+        Some(5_000_050_000)
+    );
+}

@@ -88,10 +88,14 @@ impl Executor {
                 match slot {
                     Some(slot) => locals.set(*slot, value),
                     None => {
-                        debug_assert_vm(
-                            self.is_source_binding(target),
-                            &format!("assignment to `{target}` has no slot"),
-                        );
+                        // Checked only in debug builds: the check and its
+                        // message cost an allocation per write.
+                        if cfg!(debug_assertions) {
+                            debug_assert_vm(
+                                self.is_source_binding(target),
+                                &format!("assignment to `{target}` has no slot"),
+                            );
+                        }
                         self.set_source(target, value);
                     }
                 }
@@ -161,13 +165,23 @@ impl Executor {
                         result
                     }
                     None => {
-                        let mut root = self
-                            .resolve_node(target)
-                            .map(|id| self.graph.get(id).clone())
+                        // The source lets go of its value while the part is
+                        // replaced, so an array or map is changed in place
+                        // rather than copied; it gets it back either way.
+                        let node = self.resolve_node(target);
+                        let mut root = node
+                            .map(|id| {
+                                std::mem::replace(
+                                    &mut self.graph.nodes[id.0 as usize].value,
+                                    RuntimeValue::Unit,
+                                )
+                            })
                             .unwrap_or(RuntimeValue::Unit);
                         let result = super::place::update(&mut root, &keys, value);
-                        if result.is_ok() {
-                            self.set_source(target, root);
+                        match (&result, node) {
+                            (Ok(()), _) => self.set_source(target, root),
+                            (Err(_), Some(id)) => self.graph.nodes[id.0 as usize].value = root,
+                            (Err(_), None) => {}
                         }
                         result
                     }

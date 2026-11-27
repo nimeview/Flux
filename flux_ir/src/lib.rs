@@ -250,6 +250,15 @@ pub enum Inst {
         template: u32,
         argc: usize,
     },
+    /// `xs = push(xs, v)` (or `set`) on a reactive source `source`: like
+    /// `Call`, but when the first argument is still the array the source
+    /// holds, the source lets go of it first, so the call changes it in
+    /// place instead of copying it (the assignment then stores it back).
+    CallOnSource {
+        name: String,
+        argc: usize,
+        source: String,
+    },
     /// `a.f(x)`: pops `argc` arguments, the first the instance, and calls
     /// the component's function `name` on that instance with the rest.
     CallMember {

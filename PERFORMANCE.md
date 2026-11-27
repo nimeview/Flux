@@ -23,6 +23,9 @@ compilation is excluded. Criterion keeps per-run results in
 | `structs_match` | `push` of enum/struct values, `match`, `get` (3,000 elements) |
 | `enum_match` | `match` on integers and on a user enum with payloads, in a loop (100k iterations) |
 | `reactive_events_1000` | 1,000 events through a source and 5 derived values |
+| `components_1000` | Make 1,000 component instances, then 10 global events that change every instance and a derived sum over them |
+| `derived_graph_300` | 300 derived values, each reading two earlier ones, with 100 events |
+| `timers_1000` | 1,000 timer firings through the event loop |
 | `compile_inventory_totals` | parse → HIR → types → IR of `examples/general/inventory_totals.fl` |
 
 ## Baseline (2026-11-01)
@@ -357,6 +360,56 @@ Intel Core i9-9880H, macOS, release build. `cargo bench -p flux_cli --bench work
 Running programs is as fast as in 0.2, within the spread between rounds, with one exception: `collections` is 7% slower on the VM in both rounds (6–14% on the JIT). The most likely cause, not yet confirmed by a profile: since 0.3, `map`, `filter`, and `reduce` stop at the first failing callback instead of calling it on the remaining elements (see the 0.3.0 changelog), which adds a check after each call, and the workload calls a closure for each of its 20,000 elements three times. That behavior is a fix and is kept.
 
 Compiling is 3–8% slower: type names are resolved per module, and generic types, bounds, and generic impls add work to type checking and specialization even for a program that uses none of them. A compile of the 46-line `inventory_totals.fl` takes about 1 ms.
+
+## 0.4 against 0.3 (2026-11-27)
+
+Intel Core i9-9880H, macOS, release build. The machine was under heavy outside load. Wall-clock times, including Criterion's, varied by ±10% between runs. Comparisons use retired instructions from `/usr/bin/time -l` on macOS, which other load hardly changes. Cycles were a cross-check. The v0.3.1 and 0.4 binaries ran alternately, taking the best of 2–7 runs. Each workload's `fn run()` was called in a loop from `main`.
+
+Compile stages were counted in-process with the new tool `cargo run --release -p flux_driver --example compile_stages -- FILE [TIMES]`. It reports instructions per stage on macOS. `compile_repeat` counted whole compiles.
+
+Instruction changes from 0.3.1 to 0.4; negative means fewer:
+
+| Workload | VM | JIT |
+|----------|----|-----|
+| compute_loop | -0.1% | +0.2% |
+| recursion | -15.8% | +0.4% |
+| strings | -5.1% | -4.3% |
+| collections | -21.0% | -20.1% |
+| structs_match | -1.6% | -1.3% |
+| enum_match | -4.3% | +0.3% |
+| reactive events (400,000 events through a source and 5 derived values) | -8.1% | -37.3% |
+
+Compiling `inventory_totals.fl` went from 6.08M to 6.20M instructions (+2.1%). Compiling `programs/demo/showcase.fl` went from 12.82M to 12.97M (+1.2%).
+
+Before the fixes, the 0.4 work had made events 28–40% slower, collections and recursion 10–18% slower, JIT `enum_match` 16% slower, and `compute_loop` 5% slower. Compiling was 5–14% slower. What was found and fixed:
+
+- Each source write built a debug message string, even in release builds. Each handler run built the event's display name.
+- Library calls (`len`, `push`, …) scanned about 85 names. They now use a `match`; a user function is still found after them. This also made user calls and closures faster than in 0.3, as seen in `recursion` and `collections`.
+- Checks needed only by components now run only in programs with a `live fn`. They check for a value reading itself while computed, a binding read before it is set, an instance holding itself, and nested value depth for stack growth.
+- The executor's new timer and host fields made fields used by calls span more cache lines. The timer and host fields are now boxed. `Value::clone` copies numbers, characters, and Booleans inline.
+- The dropped-instance mailbox is checked through an atomic flag instead of a lock per batch.
+- The IR cycle check copied every node with its code. Lookups added for components, `mut` parameters, and targets ran for every identifier and call even when unused. These added compile costs were removed.
+- The grammar's four new levels for `|`, `^`, `&`, and shifts cost every expression four rules. They now share the `+`/`-` rule, with precedence applied by the parser. Precedence is unchanged: `+ -`, then shifts, `&`, `^`, `|`, from highest to lowest. A call argument no longer adds a rule level.
+
+With `--jit`, an event handler or `watch` whose body has no loop now runs on the VM. Copying values into compiled slots and back cost more than the code itself. An event took about 20,000 instructions compiled and 12,000 interpreted. Eligible bodies with a `while` or `for` loop still run compiled. Results are the same either way; the VM is the reference.
+
+The new benchmarks run with `cargo bench -p flux_cli --bench workloads`. `components_1000` makes 1,000 instances, then sends 10 global events that change every instance and a derived sum over them. `derived_graph_300` has 300 derived values, each reading two earlier ones, and sends 100 events. `timers_1000` runs 1,000 timer firings through the event loop.
+
+Against the start of this phase (`aa88632`), instruction changes were:
+
+| Workload | VM | JIT |
+|----------|----|-----|
+| Make 1,000 instances | -42% | -40% |
+| 300 events over 1,000 instances | -65% | -65% |
+| 2,000 events over the 300-value graph | -6% | -4% |
+| 100,000 timer firings | -36% | -55% |
+
+What these workloads showed:
+
+- A batch writing many sources through 1,000 handlers checked each write against all earlier writes. A derived value reading 1,000 instances checked each read against all earlier reads. Both were quadratic. Both now take constant work per write or read.
+- `xs.push(v)` and `xs[i] = v` on a module `let mut` array copied the whole array each time. This was quadratic; local arrays already changed in place. The source now lets go of the array while it is changed, so it changes in place. In one handler, 20,000 pushes took 7.1 s and now take 0.2 s. Another workload with 20,000 pushes and 20,000 element writes took 4.4 s and now takes 0.04 s. A stress test guards this.
+- Instance members are found by their internal names without first trying the global table.
+- A projection node for `let mut current`, discussed for components, was not needed. No benchmark showed the cost.
 
 ## Findings
 

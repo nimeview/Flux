@@ -28,7 +28,7 @@ pub use width::{FloatWidth, IntWidth, OverflowError};
 use std::collections::HashMap;
 
 /// Canonical runtime value representation shared across VM, stdlib, and CLI output.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, PartialEq)]
 pub enum Value {
     Int {
         width: IntWidth,
@@ -66,21 +66,82 @@ pub enum Value {
     Unit,
 }
 
+impl Clone for Value {
+    /// Numbers, characters, and Booleans are copied inline; the VM clones a
+    /// value on every read of a local, so this path is hot.
+    #[inline]
+    fn clone(&self) -> Self {
+        match self {
+            Self::Int { width, bits } => Self::Int {
+                width: *width,
+                bits: *bits,
+            },
+            Self::Float { width, bits } => Self::Float {
+                width: *width,
+                bits: *bits,
+            },
+            Self::Bool(b) => Self::Bool(*b),
+            Self::Char(c) => Self::Char(*c),
+            Self::Unit => Self::Unit,
+            _ => self.clone_shared(),
+        }
+    }
+}
+
+impl Value {
+    #[inline(never)]
+    fn clone_shared(&self) -> Self {
+        match self {
+            Self::String(s) => Self::String(s.clone()),
+            Self::Array(a) => Self::Array(a.clone()),
+            Self::UserStruct(s) => Self::UserStruct(s.clone()),
+            Self::UserEnum(e) => Self::UserEnum(e.clone()),
+            Self::Closure(c) => Self::Closure(c.clone()),
+            Self::Option(o) => Self::Option(o.clone()),
+            Self::Result(r) => Self::Result(r.clone()),
+            Self::Map(m) => Self::Map(m.clone()),
+            Self::Bytes(b) => Self::Bytes(b.clone()),
+            Self::Instance(i) => Self::Instance(i.clone()),
+            Self::Int { width, bits } => Self::Int {
+                width: *width,
+                bits: *bits,
+            },
+            Self::Float { width, bits } => Self::Float {
+                width: *width,
+                bits: *bits,
+            },
+            Self::Bool(b) => Self::Bool(*b),
+            Self::Char(c) => Self::Char(*c),
+            Self::Unit => Self::Unit,
+        }
+    }
+}
+
 /// Where dropped instances are reported: the executor that owns their
 /// state empties it at its next safe point.
 #[derive(Debug, Default)]
 pub struct InstanceMailbox {
     dropped: std::sync::Mutex<Vec<u64>>,
+    /// Whether `dropped` may have entries: checked without the lock.
+    any: std::sync::atomic::AtomicBool,
 }
 
 impl InstanceMailbox {
     /// The instances dropped since the last call.
     pub fn take(&self) -> Vec<u64> {
-        std::mem::take(&mut *self.dropped.lock().unwrap_or_else(|e| e.into_inner()))
+        if !self.any.load(std::sync::atomic::Ordering::Acquire) {
+            return Vec::new();
+        }
+        let mut dropped = self.dropped.lock().unwrap_or_else(|e| e.into_inner());
+        self.any.store(false, std::sync::atomic::Ordering::Release);
+        std::mem::take(&mut *dropped)
     }
 
     /// Whether instance `id` was dropped and not yet taken.
     pub fn contains(&self, id: u64) -> bool {
+        if !self.any.load(std::sync::atomic::Ordering::Acquire) {
+            return false;
+        }
         self.dropped
             .lock()
             .unwrap_or_else(|e| e.into_inner())
@@ -107,11 +168,15 @@ pub struct InstanceRef {
 
 impl Drop for InstanceRef {
     fn drop(&mut self) {
-        self.mailbox
+        let mut dropped = self
+            .mailbox
             .dropped
             .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .push(self.id);
+            .unwrap_or_else(|e| e.into_inner());
+        dropped.push(self.id);
+        self.mailbox
+            .any
+            .store(true, std::sync::atomic::Ordering::Release);
     }
 }
 

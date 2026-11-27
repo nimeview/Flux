@@ -51,7 +51,8 @@ pub(crate) fn is_numeric_code(code: &[Inst], jit_fns: &HashSet<String>) -> bool 
         | Inst::CallValue { .. }
         | Inst::Member(_)
         | Inst::Construct { .. }
-        | Inst::CallMember { .. } => false,
+        | Inst::CallMember { .. }
+        | Inst::CallOnSource { .. } => false,
         Inst::MakeUserEnum { .. } => true,
         Inst::MakeUserStruct { .. } | Inst::FieldGet(_) => false,
         // Bit operations run on the VM.

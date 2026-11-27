@@ -26,6 +26,14 @@ Notable changes to Flux. The versioning policy is in [`RELEASE.md`](RELEASE.md).
 - Before 0.4, every struct field was visible everywhere; fields without `pub` are now private to their module. This applies to field reads, writes, `with`, destructuring `let` patterns, and struct literals. A literal must list every field, so outside its module a type with a private field must be built through the functions or methods its module provides. Migration: `flux migrate --write` adds `pub` to every field of every `pub struct` so programs compile as before; other structs and enum variants are left as they are. Then remove `pub` where a field should be private.
 - A derived value, a `const` initializer, or a `track fn` may no longer run an `act fn` (E008), directly, through another function, or through a function value. An action's reads are not tracked, so a derived value computed through one could go stale even when the action only read sources. Migration: write `track fn` instead of `act fn` for a function that a derived value, `const` initializer, or `track fn` uses to compute from sources.
 
+### Changed
+
+- Library calls use a `match` instead of scanning about 85 names. Component checks run only in programs with a `live fn`. Executor fields, value copies, and mailbox checks cost less. Against 0.3.1, retired instructions fell 15.8% for VM recursion and about 20% for collections on both engines. See [performance measurements](PERFORMANCE.md#04-against-03-2026-11-27).
+- With `--jit`, event handlers and watches without a loop run on the VM. Eligible bodies with a `while` or `for` loop still run compiled. Results are the same. Reactive events use 8.1% fewer instructions on the VM and 37.3% fewer under `--jit` than in 0.3.1.
+- Source writes in a batch and dependency reads now take constant work per write or read. Module `let mut` arrays change in place for `xs.push(v)` and `xs[i] = v`. These operations used to do quadratic work.
+- Compile work was reduced in cycle checks, unused lookups, and grammar rules. Compiling `inventory_totals.fl` still uses 2.1% more instructions than in 0.3.1; `programs/demo/showcase.fl` uses 1.2% more.
+- New workloads cover 1,000 component instances, a graph of 300 derived values, and timer firings. The new `compile_stages` tool counts instructions per compile stage on macOS; `compile_repeat` counts whole compiles.
+
 ### Fixed
 
 - A derived cycle among module values is reported the same way on every run (it could start at a different binding).

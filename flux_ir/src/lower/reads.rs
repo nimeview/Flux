@@ -231,7 +231,10 @@ fn collect_expr_reads(
             collect_expr_reads(base, program, reactive_fns, set);
             // `a.n` reads the member of a component: an edge of the
             // components' graph, which must have no cycle.
-            if let Some(member) = program.member_reads.get(span) {
+            if let Some(member) = (!program.member_reads.is_empty())
+                .then(|| program.member_reads.get(span))
+                .flatten()
+            {
                 if !SKIP_MEMBERS.with(|s| s.get()) {
                     set.insert(*member);
                 }

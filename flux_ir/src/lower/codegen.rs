@@ -215,7 +215,7 @@ fn emit_expr(expr: &HirExpr, program: &HirProgram, code: &mut Vec<Inst>) {
         }
         HirExpr::Call { callee, args, span } => {
             // `a.f(x)`, now `f(a, x)`: the component's function on instance `a`.
-            if program.member_calls.contains(span) {
+            if !program.member_calls.is_empty() && program.member_calls.contains(span) {
                 if let HirExpr::Ident { symbol, .. } = callee.as_ref() {
                     if let Some(name) = runtime_symbol_name(program, symbol) {
                         for arg in args {
@@ -231,9 +231,14 @@ fn emit_expr(expr: &HirExpr, program: &HirProgram, code: &mut Vec<Inst>) {
             }
             // `after(ms, Tick, v…)`: the event goes by name.
             if let HirExpr::Ident { symbol, .. } = callee.as_ref() {
-                let timer = program.symbols.get(symbol).is_some_and(|s| {
-                    s.kind == SymbolKind::Builtin && matches!(s.name.as_str(), "after" | "every")
-                });
+                let timer = program
+                    .names
+                    .get(symbol)
+                    .is_some_and(|n| n == "after" || n == "every")
+                    && program
+                        .symbols
+                        .get(symbol)
+                        .is_some_and(|s| s.kind == SymbolKind::Builtin);
                 if let (true, Some(HirExpr::Ident { symbol: event, .. })) = (timer, args.get(1)) {
                     if let (Some(fname), Some(ename)) =
                         (program.names.get(symbol), program.names.get(event))
@@ -447,11 +452,15 @@ fn emit_expr(expr: &HirExpr, program: &HirProgram, code: &mut Vec<Inst>) {
         HirExpr::Field { base, field, span } => {
             emit_expr(base, program, code);
             // `a.n` of an instance: its member, by internal name.
-            match program
-                .member_reads
-                .get(span)
-                .and_then(|id| program.names.get(id))
-            {
+            let member = if program.member_reads.is_empty() {
+                None
+            } else {
+                program
+                    .member_reads
+                    .get(span)
+                    .and_then(|id| program.names.get(id))
+            };
+            match member {
                 Some(member) => code.push(Inst::Member(member.clone())),
                 None => code.push(Inst::FieldGet(field.clone())),
             }

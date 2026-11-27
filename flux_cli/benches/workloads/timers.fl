@@ -1,0 +1,19 @@
+// A chain of timers due at once: each firing sets the next one.
+import time { after }
+
+event Start
+event Tick
+
+let mut n = 0
+
+on Start {
+    n = 0
+    after(0, Tick())
+}
+
+on Tick {
+    n += 1
+    if n < 1000 {
+        after(0, Tick())
+    }
+}

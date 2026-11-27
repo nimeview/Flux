@@ -29,6 +29,21 @@ use crate::ExecutionMode;
 
 use values::{code_has_lazy_if, eval_const};
 
+/// Whether a handler's or watch's body has a loop: only then is it worth
+/// running compiled.
+fn has_loop(body: &[flux_ir::IrStmt]) -> bool {
+    use flux_ir::IrStmt;
+    body.iter().any(|stmt| match stmt {
+        IrStmt::While { .. } | IrStmt::For { .. } => true,
+        IrStmt::If {
+            then_body,
+            else_body,
+            ..
+        } => has_loop(then_body) || else_body.as_ref().is_some_and(|b| has_loop(b)),
+        _ => false,
+    })
+}
+
 /// A frame of local bindings, indexed by the slots `flux_ir::resolve_locals`
 /// assigns. A slot is unbound (`None`) until its binding runs.
 #[derive(Default)]
@@ -90,6 +105,8 @@ impl From<(RuntimeValue, FlowControl)> for StmtResult {
 /// they reuse so an event does not allocate.
 struct ReactiveState {
     mutated_sources: Vec<NodeId>,
+    /// Per graph node: in `mutated_sources` (a batch may write a thousand).
+    mutated_marks: Vec<bool>,
     changed_nodes: Vec<NodeId>,
     /// Spare buffer for `changed_nodes`, empty between watch rounds.
     changed_spare: Vec<NodeId>,
@@ -126,6 +143,11 @@ struct ReactiveState {
     reached: Vec<bool>,
     /// Per graph node: being computed now. Reading one then is a cycle.
     evaluating: Vec<bool>,
+    /// How many values `ensure_current` is computing, one inside another.
+    eval_depth: u32,
+    /// The program has components. Only then can a value read itself at run
+    /// time, or a chain of values be deep, so only then are they checked.
+    components: bool,
     /// While modules initialize (in a program with components): the sources
     /// whose computed initial value is not set yet.
     unset: HashSet<NodeId>,
@@ -176,10 +198,11 @@ pub struct Executor {
     /// The instance whose component code is running, if any: member names
     /// mean its members.
     receiver: Option<u64>,
-    /// What `after` and `every` set, and events sent from outside.
-    timers: timers::Timers,
+    /// What `after` and `every` set, and events sent from outside. Boxed,
+    /// like `reactive`, to keep the fields calls use close together.
+    timers: Box<timers::Timers>,
     /// The host's functions for the program's `extern fn`s.
-    host: timers::Host,
+    host: Box<timers::Host>,
 }
 
 impl Executor {
@@ -397,6 +420,7 @@ impl Executor {
             defer_propagation: false,
             reactive: Box::new(ReactiveState {
                 mutated_sources: Vec::new(),
+                mutated_marks: vec![false; node_count],
                 changed_nodes: Vec::new(),
                 changed_spare: Vec::new(),
                 changed_marks: vec![false; node_count],
@@ -414,6 +438,8 @@ impl Executor {
                 stale_count: 0,
                 reached: vec![false; node_count],
                 evaluating: vec![false; node_count],
+                eval_depth: 0,
+                components: has_templates,
                 unset: HashSet::new(),
                 dirty_stack: Vec::new(),
                 dirty_order: Vec::new(),
@@ -429,8 +455,8 @@ impl Executor {
                 ..live_state
             }),
             receiver: None,
-            timers: timers::Timers::default(),
-            host,
+            timers: Box::default(),
+            host: Box::new(host),
             trap: None,
             vm_only: false,
             initial_watches: None,
@@ -493,7 +519,9 @@ impl Executor {
             }
             start = group.stmts_end;
             this.defer_propagation = false;
-            this.reactive.mutated_sources.clear();
+            for id in std::mem::take(&mut this.reactive.mutated_sources) {
+                this.reactive.mutated_marks[id.0 as usize] = false;
+            }
             this.reactive.changed_nodes.clear();
             if this.trap.is_some() {
                 break;
@@ -662,7 +690,8 @@ impl Executor {
             return;
         }
         let handlers = self.reactive.event_handlers.get(event).cloned();
-        let subscribed = self.live.subscriptions.contains_key(event);
+        let subscribed =
+            !self.live.subscriptions.is_empty() && self.live.subscriptions.contains_key(event);
         if handlers.is_none() && !subscribed {
             return;
         }
@@ -719,17 +748,21 @@ impl Executor {
         if !matches!(self.graph.nodes[id.0 as usize].kind, NodeKind::Source) {
             return;
         }
-        if !self.may_store(id, &value) {
-            return;
-        }
-        if !self.reactive.unset.is_empty() {
-            self.reactive.unset.remove(&id);
+        if self.reactive.components {
+            if !self.may_store(id, &value) {
+                return;
+            }
+            if !self.reactive.unset.is_empty() {
+                self.reactive.unset.remove(&id);
+            }
         }
         self.graph.set_source(id, value);
         self.mark_stale(id);
         // A handler or watch body writes as a batch, applied when it ends.
         if self.defer_propagation || self.in_watch {
-            if !self.reactive.mutated_sources.contains(&id) {
+            let mark = &mut self.reactive.mutated_marks[id.0 as usize];
+            if !*mark {
+                *mark = true;
                 self.reactive.mutated_sources.push(id);
             }
             return;
@@ -754,6 +787,9 @@ impl Executor {
             return;
         }
         let mut sources = std::mem::take(&mut self.reactive.mutated_sources);
+        for id in &sources {
+            self.reactive.mutated_marks[id.0 as usize] = false;
+        }
         self.reactive.changed_nodes.extend_from_slice(&sources);
         self.recompute_from(&sources);
         sources.clear();
@@ -818,6 +854,9 @@ impl Executor {
 
     /// Evaluate one derived node via the active backend, falling back to VM bytecode.
     fn eval_derived(&mut self, id: NodeId, idx: usize) -> RuntimeValue {
+        if !self.reactive.components {
+            return self.eval_derived_marked(id, idx);
+        }
         let at = id.0 as usize;
         self.reactive.evaluating[at] = true;
         let value = self.eval_derived_marked(id, idx);
@@ -828,6 +867,7 @@ impl Executor {
         value
     }
 
+    #[inline]
     fn eval_derived_marked(&mut self, id: NodeId, idx: usize) -> RuntimeValue {
         let dynamic = self.reactive.node_dynamic[idx];
         // A static node records nothing, and hides its reads from an outer one.
@@ -839,12 +879,15 @@ impl Executor {
             node_index: &self.node_index,
         };
         let name = &self.graph.nodes[id.0 as usize].name;
-        let receiver = self
-            .live
-            .node_receiver
-            .get(id.0 as usize)
-            .copied()
-            .flatten();
+        let receiver = if self.live.instances.is_empty() {
+            None
+        } else {
+            self.live
+                .node_receiver
+                .get(id.0 as usize)
+                .copied()
+                .flatten()
+        };
         // Compiled code reads slot values, which are stale until recomputed;
         // an instance's values run on the VM.
         let native = if self.vm_only || self.reactive.stale_count > 0 || receiver.is_some() {
@@ -853,18 +896,27 @@ impl Executor {
             self.backend.try_eval_derived(name, &ctx)
         };
         let value = match native {
+            Some(Ok(v)) => v,
             Some(Err(_)) => {
                 self.replay_on_vm();
-                self.with_receiver(receiver, |this| this.eval_derived_vm(idx))
+                self.eval_derived_with(receiver, idx)
             }
-            Some(Ok(v)) => v,
-            None => self.with_receiver(receiver, |this| this.eval_derived_vm(idx)),
+            None => self.eval_derived_with(receiver, idx),
         };
 
         if let Some(Some(tracked)) = self.tracking.pop() {
             self.commit_tracked_deps(id, tracked);
         }
         value
+    }
+
+    /// `eval_derived_vm` for an instance's value, or a module's.
+    #[inline]
+    fn eval_derived_with(&mut self, receiver: Option<u64>, idx: usize) -> RuntimeValue {
+        match receiver {
+            None => self.eval_derived_vm(idx),
+            Some(_) => self.with_receiver(receiver, |this| this.eval_derived_vm(idx)),
+        }
     }
 
     fn eval_derived_vm(&mut self, idx: usize) -> RuntimeValue {
@@ -883,7 +935,8 @@ impl Executor {
         if new_deps.is_empty() {
             return;
         }
-        new_deps.sort_by_key(|d| d.0);
+        new_deps.sort_unstable_by_key(|d| d.0);
+        new_deps.dedup();
         self.graph.set_derived_deps(id, new_deps);
     }
 
@@ -908,18 +961,28 @@ impl Executor {
 
     /// Records a read of graph node `id` by the value being computed. A
     /// value that reads itself while being computed is a cycle.
+    #[inline]
     pub(super) fn record_dep(&mut self, id: NodeId) {
-        if self.reactive.evaluating[id.0 as usize] {
-            self.raise(flux_value::ArithError::ReactiveCycle);
-            return;
+        if self.reactive.components {
+            if self.reactive.evaluating[id.0 as usize] {
+                self.raise(flux_value::ArithError::ReactiveCycle);
+                return;
+            }
+            if !self.reactive.unset.is_empty() && self.reactive.unset.contains(&id) {
+                self.raise(flux_value::ArithError::ReadBeforeInit);
+                return;
+            }
         }
-        if !self.reactive.unset.is_empty() && self.reactive.unset.contains(&id) {
-            self.raise(flux_value::ArithError::ReadBeforeInit);
-            return;
-        }
+        // Duplicates go when the reads are committed (sorted): checking
+        // each read against all the others cost a value that reads a
+        // thousand instances a million comparisons.
         if let Some(Some(tracked)) = self.tracking.last_mut() {
-            if !tracked.contains(&id) {
+            if tracked.last() != Some(&id) {
                 tracked.push(id);
+                if tracked.len() >= 4096 && tracked.len().is_power_of_two() {
+                    tracked.sort_unstable_by_key(|d| d.0);
+                    tracked.dedup();
+                }
             }
         }
     }
@@ -963,8 +1026,20 @@ impl Executor {
             return;
         };
         // A chain of instances (a list, a tree) can be read from its far
-        // end, each value reading the next: grow the stack when low.
-        let value = stacker::maybe_grow(64 * 1024, 2 * 1024 * 1024, || self.eval_derived(id, idx));
+        // end, each value reading the next: deep down, grow the stack when
+        // low (checking it costs a little on every value).
+        let value = if self.reactive.components {
+            self.reactive.eval_depth += 1;
+            let value = if self.reactive.eval_depth > 32 {
+                stacker::maybe_grow(64 * 1024, 2 * 1024 * 1024, || self.eval_derived(id, idx))
+            } else {
+                self.eval_derived(id, idx)
+            };
+            self.reactive.eval_depth -= 1;
+            value
+        } else {
+            self.eval_derived(id, idx)
+        };
         if self.trap.is_some() {
             self.note_derived_failure(id);
             return;
@@ -1031,7 +1106,10 @@ impl Executor {
         values: &[RuntimeValue],
     ) -> bool {
         // Compiled code reads a copy of the values: a stale one would be old.
-        if self.vm_only || self.reactive_stale() {
+        // A body without a loop runs on the VM: copying values into slots and
+        // back cost more than its code (an event took 20k instructions
+        // compiled, 11k interpreted).
+        if self.vm_only || self.reactive_stale() || !has_loop(body) {
             return false;
         }
         // Handler slots hold tagged handles until `apply_jit_assignments` reads them.
@@ -1054,7 +1132,7 @@ impl Executor {
         body: &[flux_ir::IrStmt],
         prev: Option<RuntimeValue>,
     ) -> bool {
-        if self.vm_only || self.reactive_stale() {
+        if self.vm_only || self.reactive_stale() || !has_loop(body) {
             return false;
         }
         let _heap = flux_value::heap_scope();

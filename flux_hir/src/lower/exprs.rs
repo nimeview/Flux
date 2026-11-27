@@ -101,7 +101,7 @@ pub(super) fn lower_expr(
                 });
             }
             let sym = resolve_name(name, *span, symbols, diagnostics)?;
-            if symbols.not_on_target.contains(&sym) {
+            if !symbols.not_on_target.is_empty() && symbols.not_on_target.contains(&sym) {
                 diagnostics.push(FluxError::NotOnTarget {
                     name: name.clone(),
                     target: flux_std::target().name().to_string(),
@@ -312,14 +312,18 @@ pub(super) fn lower_expr(
             symbols.lowering_callee = was;
             let lowered_callee = lowered_callee?;
             if let HirExpr::Ident { symbol, .. } = &lowered_callee {
-                if symbols.live_ctors.contains(symbol) {
+                if !symbols.live_ctors.is_empty() && symbols.live_ctors.contains(symbol) {
                     symbols.makes_instance = true;
                 }
                 // `after(500, Tick(1))`: the event and its values follow the
                 // delay as arguments, `after(500, Tick, 1)`.
-                let timer = symbols.get(*symbol).is_some_and(|s| {
-                    s.kind == SymbolKind::Builtin && matches!(s.name.as_str(), "after" | "every")
-                });
+                let timer_name = matches!(callee.as_ref(), Expr::Ident { name, .. }
+                    if name == "after" || name == "every" || name.ends_with("::after") || name.ends_with("::every"));
+                let timer = timer_name
+                    && symbols.get(*symbol).is_some_and(|s| {
+                        s.kind == SymbolKind::Builtin
+                            && matches!(s.name.as_str(), "after" | "every")
+                    });
                 if timer && args.len() == 2 {
                     let (event, values): (&str, &[Expr]) = match &args[1] {
                         Expr::Call {

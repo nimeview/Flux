@@ -16,7 +16,19 @@ use flux_value::MapKey;
 pub use flux_value::Value;
 pub use os::take_exit_code;
 
-pub const BUILTIN_FNS: &[&str] = &[
+/// Declares the library's function names: the list, and a check that the
+/// compiler turns into a fast `match` instead of a scan of the list.
+macro_rules! builtin_fns {
+    ($($name:literal),* $(,)?) => {
+        pub const BUILTIN_FNS: &[&str] = &[$($name),*];
+
+        fn is_listed_builtin(name: &str) -> bool {
+            matches!(name, $($name)|*)
+        }
+    };
+}
+
+builtin_fns![
     "print",
     "println",
     "eprint",
@@ -151,12 +163,18 @@ pub const TIMER_FNS: &[&str] = &["after", "every", "cancel", "stop"];
 pub const HOF_FNS: &[&str] = &["map", "filter", "reduce"];
 
 pub fn is_hof(name: &str) -> bool {
-    HOF_FNS.contains(&name) || methods::METHOD_HOFS.contains(&name)
+    matches!(name, "map" | "filter" | "reduce")
+        || (name.starts_with('\0') && methods::METHOD_HOFS.contains(&name))
+}
+
+/// Whether `name` is one of [`TIMER_FNS`].
+pub fn is_timer_fn(name: &str) -> bool {
+    matches!(name, "after" | "every" | "cancel" | "stop")
 }
 
 /// Returns `true` if `name` is a builtin function.
 pub fn is_builtin_fn(name: &str) -> bool {
-    BUILTIN_FNS.contains(&name) || methods::METHOD_FNS.contains(&name)
+    is_listed_builtin(name) || (name.starts_with('\0') && methods::METHOD_FNS.contains(&name))
 }
 
 /// Call a builtin function. Returns `None` if `name` is not a builtin.

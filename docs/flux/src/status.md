@@ -18,7 +18,7 @@ These change only by a deliberate decision, recorded in the changelog:
 
 These may change or disappear, with no compatibility promise:
 
-- **`--jit`**, the Cranelift backend. It gives the same results as the VM, and falls back to the VM for what it cannot compile. It is much faster in numeric loops and recursion. It does not compile structs, maps, `Option`, `Result`, closures, or functions that print, and it is slower than the VM on small event handlers. `flux run --jit --verbose` shows what fell back and why.
+- **`--jit`**, the Cranelift backend. It gives the same results as the VM, and falls back to the VM for what it cannot compile. It is much faster in numeric loops and recursion. It does not compile structs, maps, `Option`, `Result`, closures, or functions that print. Event handlers and watches whose bodies have no loop run on the VM; copying values into compiled slots and back costs more than their code. Eligible bodies with a `while` or `for` loop still run compiled. `flux run --jit --verbose` shows what fell back and why.
 - **`flux wasm`**, a stub that always fails and writes nothing.
 - **`flux migrate`**, which rewrites older forms to the current syntax (see [Tools](./tools.md#flux-migrate)).
 

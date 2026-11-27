@@ -308,7 +308,22 @@ fn has_arm_block(e: &HirExpr) -> bool {
 }
 
 fn take_for_push(target: &str, code: &mut [Inst]) {
+    // A reactive source: the call may change it in place if, when it runs,
+    // the source still holds that very array (`Inst::CallOnSource`).
     if !target.starts_with("\0flux_local_") {
+        if let [Inst::Load(first), .., last @ Inst::Call { .. }] = code {
+            if let Inst::Call { name, argc } = last {
+                if first == target
+                    && ((name == "push" && *argc == 2) || (name == "set" && *argc == 3))
+                {
+                    *last = Inst::CallOnSource {
+                        name: name.clone(),
+                        argc: *argc,
+                        source: target.to_string(),
+                    };
+                }
+            }
+        }
         return;
     }
     let [Inst::Load(first), value @ .., Inst::Call { name, argc }] = code else {

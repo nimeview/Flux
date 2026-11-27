@@ -399,7 +399,8 @@ pub(crate) fn lower_insts(
             | Inst::CallValue { .. }
             | Inst::Member(_)
             | Inst::Construct { .. }
-            | Inst::CallMember { .. } => return None,
+            | Inst::CallMember { .. }
+            | Inst::CallOnSource { .. } => return None,
             Inst::BindLocal { name, .. } => {
                 let val = stack.pop()?;
                 locals.set(name, val, b);

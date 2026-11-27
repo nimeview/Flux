@@ -79,11 +79,8 @@ pub(super) fn parse_expr(source_id: SourceId, pair: pest::iterators::Pair<'_, Ru
         Rule::and_expr => parse_chained_binary(source_id, pair, "&&", BinaryOp::And),
         Rule::eq_expr => parse_chained_eq(source_id, pair),
         Rule::rel_expr => parse_chained_rel(source_id, pair),
-        Rule::add_expr => parse_chained_add(source_id, pair),
+        Rule::add_expr => parse_chained_bits(source_id, pair),
         Rule::mul_expr => parse_chained_mul(source_id, pair),
-        Rule::bitor_expr | Rule::bitxor_expr | Rule::bitand_expr | Rule::shift_expr => {
-            parse_chained_bits(source_id, pair)
-        }
         Rule::cast_expr => parse_cast_expr(source_id, pair),
         Rule::unary_expr => parse_unary_expr(source_id, pair),
         Rule::postfix_expr => parse_postfix_expr(source_id, pair),
@@ -361,27 +358,6 @@ fn parse_chained_rel(source_id: SourceId, pair: pest::iterators::Pair<'_, Rule>)
     expr
 }
 
-fn parse_chained_add(source_id: SourceId, pair: pest::iterators::Pair<'_, Rule>) -> Expr {
-    let mut inner = pair.into_inner();
-    let mut expr = parse_expr(source_id, inner.next().expect("add lhs"));
-    while let Some(op_pair) = inner.next() {
-        let op = match op_pair.as_str() {
-            "+" => BinaryOp::Add,
-            "-" => BinaryOp::Sub,
-            _ => continue,
-        };
-        let rhs = parse_expr(source_id, inner.next().expect("add rhs"));
-        let span = merge_span(expr.span(), rhs.span());
-        expr = Expr::Binary {
-            op,
-            left: Box::new(expr),
-            right: Box::new(rhs),
-            span,
-        };
-    }
-    expr
-}
-
 pub fn split_numeric_suffix(text: &str) -> (&str, Option<&str>) {
     const SUFFIXES: &[&str] = &[
         "i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64", "f32", "f64",
@@ -485,11 +461,37 @@ fn parse_chained_mul(source_id: SourceId, pair: pest::iterators::Pair<'_, Rule>)
 }
 
 /// `a | b`, `a ^ b`, `a & b`, `a << n`, `a >> n`: left to right in each level.
+/// `a | b ^ c & d << e + f`: the operands and operators in order, combined
+/// by precedence (`+` and `-`, then shifts, `&`, `^`, `|`), each left to
+/// right.
 fn parse_chained_bits(source_id: SourceId, pair: pest::iterators::Pair<'_, Rule>) -> Expr {
+    fn precedence(op: BinaryOp) -> u8 {
+        match op {
+            BinaryOp::Add | BinaryOp::Sub => 5,
+            BinaryOp::Shl | BinaryOp::Shr => 4,
+            BinaryOp::BitAnd => 3,
+            BinaryOp::BitXor => 2,
+            _ => 1,
+        }
+    }
+    fn combine(operands: &mut Vec<Expr>, op: BinaryOp) {
+        let right = operands.pop().expect("bit rhs");
+        let left = operands.pop().expect("bit lhs");
+        let span = merge_span(left.span(), right.span());
+        operands.push(Expr::Binary {
+            op,
+            left: Box::new(left),
+            right: Box::new(right),
+            span,
+        });
+    }
     let mut inner = pair.into_inner();
-    let mut expr = parse_expr(source_id, inner.next().expect("bit lhs"));
+    let mut operands = vec![parse_expr(source_id, inner.next().expect("bit lhs"))];
+    let mut ops: Vec<BinaryOp> = Vec::new();
     while let Some(op_pair) = inner.next() {
         let op = match op_pair.as_str() {
+            "+" => BinaryOp::Add,
+            "-" => BinaryOp::Sub,
             "|" => BinaryOp::BitOr,
             "^" => BinaryOp::BitXor,
             "&" => BinaryOp::BitAnd,
@@ -497,16 +499,20 @@ fn parse_chained_bits(source_id: SourceId, pair: pest::iterators::Pair<'_, Rule>
             ">>" => BinaryOp::Shr,
             _ => continue,
         };
-        let rhs = parse_expr(source_id, inner.next().expect("bit rhs"));
-        let span = merge_span(expr.span(), rhs.span());
-        expr = Expr::Binary {
-            op,
-            left: Box::new(expr),
-            right: Box::new(rhs),
-            span,
-        };
+        while ops
+            .last()
+            .is_some_and(|top| precedence(*top) >= precedence(op))
+        {
+            let top = ops.pop().expect("operator");
+            combine(&mut operands, top);
+        }
+        ops.push(op);
+        operands.push(parse_expr(source_id, inner.next().expect("bit rhs")));
     }
-    expr
+    while let Some(op) = ops.pop() {
+        combine(&mut operands, op);
+    }
+    operands.pop().expect("bit expression")
 }
 
 fn parse_unary_expr(source_id: SourceId, pair: pest::iterators::Pair<'_, Rule>) -> Expr {
@@ -590,22 +596,19 @@ fn parse_postfix_expr(source_id: SourceId, pair: pest::iterators::Pair<'_, Rule>
                         .find(|p| p.as_rule() == Rule::arg_list)
                         .map(|list| {
                             list.into_inner()
-                                .map(|arg| {
-                                    let arg = arg.into_inner().next().expect("call argument");
-                                    match arg.as_rule() {
-                                        Rule::mut_arg => {
-                                            let span = span_of(source_id, &arg);
-                                            let value = arg
-                                                .into_inner()
-                                                .find(|p| p.as_rule() != Rule::kw_mut)
-                                                .expect("mut argument");
-                                            Expr::MutArg {
-                                                expr: Box::new(parse_expr(source_id, value)),
-                                                span,
-                                            }
+                                .map(|arg| match arg.as_rule() {
+                                    Rule::mut_arg => {
+                                        let span = span_of(source_id, &arg);
+                                        let value = arg
+                                            .into_inner()
+                                            .find(|p| p.as_rule() != Rule::kw_mut)
+                                            .expect("mut argument");
+                                        Expr::MutArg {
+                                            expr: Box::new(parse_expr(source_id, value)),
+                                            span,
                                         }
-                                        _ => parse_expr(source_id, arg),
                                     }
+                                    _ => parse_expr(source_id, arg),
                                 })
                                 .collect()
                         })

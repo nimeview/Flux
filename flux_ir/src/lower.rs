@@ -355,20 +355,30 @@ pub fn lower_to_ir(
     // members through other instances do not count, as those instances
     // were made before (a cycle through `let mut` holders is found at run
     // time). Any other cycle is an error, however many instances there are.
-    let checked: Vec<IrNode> = nodes
-        .iter()
-        .enumerate()
-        .map(|(i, n)| IrNode {
-            deps: n
-                .deps
-                .iter()
-                .copied()
-                .filter(|d| !recursive_edges.contains(&(NodeId(i as u32), *d)))
-                .collect(),
-            ..n.clone()
-        })
-        .collect();
-    if let Some(cycle) = find_dependency_cycle(&checked) {
+    let checked: Vec<IrNode>;
+    let checked_nodes = if recursive_edges.is_empty() {
+        &nodes
+    } else {
+        checked = nodes
+            .iter()
+            .enumerate()
+            .map(|(i, n)| IrNode {
+                deps: n
+                    .deps
+                    .iter()
+                    .copied()
+                    .filter(|d| !recursive_edges.contains(&(NodeId(i as u32), *d)))
+                    .collect(),
+                name: n.name.clone(),
+                kind: n.kind,
+                init: None,
+                code: Vec::new(),
+                effect: None,
+            })
+            .collect();
+        &checked
+    };
+    if let Some(cycle) = find_dependency_cycle(checked_nodes) {
         let cycle_names: Vec<String> = cycle.iter().map(|&idx| nodes[idx].name.clone()).collect();
         let cycle_text = format_cycle(&cycle_names);
         let name_to_symbol: HashMap<&str, SymbolId> = program

@@ -1593,6 +1593,10 @@ fn rebuild_place(root: &Ident, path: &[PlaceStep]) -> Expr {
 
 /// The `mut` parameters of the function `callee` names, if it has any.
 pub(super) fn mut_callee(callee: &Expr, symbols: &SymbolTable) -> Option<crate::symbol::MutParams> {
+    // Most programs have no `mut` parameters: then no name needs a lookup.
+    if symbols.mut_params.is_empty() {
+        return None;
+    }
     let Expr::Ident { name, .. } = callee else {
         return None;
     };
