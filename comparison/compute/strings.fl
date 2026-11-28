@@ -1,0 +1,19 @@
+import io { println }
+
+fn main() {
+    let mut parts: [String] = []
+    let mut i = 0
+    while i < 200000 {
+        parts.push("item{i % 1000}")
+        i += 1
+    }
+    let text = parts.join(",")
+    let words = text.split(",")
+    let mut total = 0
+    for w in words {
+        if w.ends_with("7") {
+            total += w.len()
+        }
+    }
+    println("{words.len()} {total}")
+}

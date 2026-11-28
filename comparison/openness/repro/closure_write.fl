@@ -1,0 +1,1 @@
+fn main() { let mut x = 0; let f = |n: Int| match n { _ => { x = n; x } }; f(1) }

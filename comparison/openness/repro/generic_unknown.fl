@@ -1,0 +1,2 @@
+fn empty[T]() -> [T] { [] }
+fn main() { let xs = empty(); let done = 0 }

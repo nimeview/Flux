@@ -1,0 +1,1 @@
+live fn C() { fn id[T](x: T) -> T { x } }

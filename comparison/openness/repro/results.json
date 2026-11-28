@@ -1,0 +1,1528 @@
+{
+  "e002": {
+    "source": "let limit = 10\nfn main() -> Int { limit }\n",
+    "command": [
+      "flux",
+      "check",
+      "<repo>/comparison/openness/repro/e002.fl"
+    ],
+    "exit": 1,
+    "check": "flux::E002\n\n  x cannot read reactive `limit` in a pure function\n   ,-[<repo>/comparison/openness/repro/e002.fl:2:20]\n 1 | let limit = 10\n 2 | fn main() -> Int { limit }\n   :                    ^^|^^\n   :                      `-- reactive read\n   `----\n  help: `limit` is a module `let` (a reactive source); if it is a fixed value, declare it `const limit = \u2026` to read it here, or use `snap(limit)`\n"
+  },
+  "e003": {
+    "source": "let mut x = 1\nderived y = x * 2\nact fn main() { y = 4 }\n",
+    "command": [
+      "flux",
+      "check",
+      "<repo>/comparison/openness/repro/e003.fl"
+    ],
+    "exit": 1,
+    "check": "flux::E003\n\n  x cannot assign to derived binding `y`\n   ,-[<repo>/comparison/openness/repro/e003.fl:3:17]\n 2 | derived y = x * 2\n 3 | act fn main() { y = 4 }\n   :                 ^^^|^^\n   :                    `-- invalid assignment\n   `----\n  help: derived bindings are read-only; assign to a source binding instead\n"
+  },
+  "e008_loop": {
+    "source": "fn count() -> Int { let mut n = 0; while n < 3 { n += 1 }; n }\nderived y = count()\n",
+    "command": [
+      "flux",
+      "check",
+      "<repo>/comparison/openness/repro/e008_loop.fl"
+    ],
+    "exit": 0,
+    "check": "ok\nflux::E015\n\n  x unused binding `y`\n   ,-[<repo>/comparison/openness/repro/e008_loop.fl:2:1]\n 1 | fn count() -> Int { let mut n = 0; while n < 3 { n += 1 }; n }\n 2 | derived y = count()\n   : ^^^^^^^^^^|^^^^^^^^^\n   :           `-- never read\n   `----\n  help: remove the binding or reference it from a derived value, watch, or handler\n"
+  },
+  "e008_return": {
+    "source": "fn count() -> Int { return 3 }\nderived y = count()\n",
+    "command": [
+      "flux",
+      "check",
+      "<repo>/comparison/openness/repro/e008_return.fl"
+    ],
+    "exit": 0,
+    "check": "ok\nflux::E015\n\n  x unused binding `y`\n   ,-[<repo>/comparison/openness/repro/e008_return.fl:2:1]\n 1 | fn count() -> Int { return 3 }\n 2 | derived y = count()\n   : ^^^^^^^^^^|^^^^^^^^^\n   :           `-- never read\n   `----\n  help: remove the binding or reference it from a derived value, watch, or handler\n"
+  },
+  "e008_snap": {
+    "source": "let mut x = 1\nfn read() -> Int { snap(x) }\nderived y = read()\n",
+    "command": [
+      "flux",
+      "check",
+      "<repo>/comparison/openness/repro/e008_snap.fl"
+    ],
+    "exit": 1,
+    "check": "flux::E015\n\n  x unused binding `y`\n   ,-[<repo>/comparison/openness/repro/e008_snap.fl:3:1]\n 2 | fn read() -> Int { snap(x) }\n 3 | derived y = read()\n   : ^^^^^^^^^|^^^^^^^^^\n   :          `-- never read\n   `----\n  help: remove the binding or reference it from a derived value, watch, or handler\nflux::E008\n\n  x control flow `snap()` read inside `read` is not allowed in a derived expression\n   ,-[<repo>/comparison/openness/repro/e008_snap.fl:3:13]\n 2 | fn read() -> Int { snap(x) }\n 3 | derived y = read()\n   :             ^^^|^^\n   :                `-- not allowed here\n   `----\n  help: use `watch`, `on`, `track fn`, or `act fn` for statements with side effects or loops\n"
+  },
+  "e008_action": {
+    "source": "let mut x = 1\nact fn read() -> Int { x }\nfn call() -> Int { read() }\nderived y = call()\n",
+    "command": [
+      "flux",
+      "check",
+      "<repo>/comparison/openness/repro/e008_action.fl"
+    ],
+    "exit": 1,
+    "check": "flux::E015\n\n  x unused binding `y`\n   ,-[<repo>/comparison/openness/repro/e008_action.fl:4:1]\n 3 | fn call() -> Int { read() }\n 4 | derived y = call()\n   : ^^^^^^^^^|^^^^^^^^^\n   :          `-- never read\n   `----\n  help: remove the binding or reference it from a derived value, watch, or handler\nflux::E008\n\n  x a derived value cannot call the `act fn` `read`\n   ,-[<repo>/comparison/openness/repro/e008_action.fl:4:13]\n 3 | fn call() -> Int { read() }\n 4 | derived y = call()\n   :             ^^^|^^\n   :                `-- runs `read`\n   `----\n  help: an `act fn` is an action, and a derived value does not follow what it reads; write `track fn read` for a function that computes from sources\n"
+  },
+  "e008_const": {
+    "source": "act fn read() -> Int { 1 }\nconst Y = read()\n",
+    "command": [
+      "flux",
+      "check",
+      "<repo>/comparison/openness/repro/e008_const.fl"
+    ],
+    "exit": 1,
+    "check": "flux::E015\n\n  x unused binding `Y`\n   ,-[<repo>/comparison/openness/repro/e008_const.fl:2:1]\n 1 | act fn read() -> Int { 1 }\n 2 | const Y = read()\n   : ^^^^^^^^|^^^^^^^^\n   :         `-- never read\n   `----\n  help: remove the binding or reference it from a derived value, watch, or handler\nflux::E008\n\n  x a `const` initializer cannot call the `act fn` `read`\n   ,-[<repo>/comparison/openness/repro/e008_const.fl:2:11]\n 1 | act fn read() -> Int { 1 }\n 2 | const Y = read()\n   :           ^^^|^^\n   :              `-- runs `read`\n   `----\n  help: an `act fn` is an action, and a derived value does not follow what it reads; write `track fn read` for a function that computes from sources\n"
+  },
+  "e008_track": {
+    "source": "act fn read() -> Int { 1 }\ntrack fn read2() -> Int { read() }\n",
+    "command": [
+      "flux",
+      "check",
+      "<repo>/comparison/openness/repro/e008_track.fl"
+    ],
+    "exit": 1,
+    "check": "flux::E008\n\n  x the `track fn` `read2` cannot call the `act fn` `read`\n   ,-[<repo>/comparison/openness/repro/e008_track.fl:2:1]\n 1 | act fn read() -> Int { 1 }\n 2 | track fn read2() -> Int { read() }\n   : ^^^^^^^^^^^^^^^^^|^^^^^^^^^^^^^^^^\n   :                  `-- runs `read`\n   `----\n  help: an `act fn` is an action, and a derived value does not follow what it reads; write `track fn read` for a function that computes from sources\n"
+  },
+  "e008_extern": {
+    "source": "extern fn read() -> Int\nderived y = read()\n",
+    "command": [
+      "flux",
+      "check",
+      "<repo>/comparison/openness/repro/e008_extern.fl"
+    ],
+    "exit": 1,
+    "check": "flux::E015\n\n  x unused binding `y`\n   ,-[<repo>/comparison/openness/repro/e008_extern.fl:2:1]\n 1 | extern fn read() -> Int\n 2 | derived y = read()\n   : ^^^^^^^^^|^^^^^^^^^\n   :          `-- never read\n   `----\n  help: remove the binding or reference it from a derived value, watch, or handler\nflux::E008\n\n  x a derived value cannot call the `act fn` `read`\n   ,-[<repo>/comparison/openness/repro/e008_extern.fl:2:13]\n 1 | extern fn read() -> Int\n 2 | derived y = read()\n   :             ^^^|^^\n   :                `-- runs `read`\n   `----\n  help: an `act fn` is an action, and a derived value does not follow what it reads; write `track fn read` for a function that computes from sources\n"
+  },
+  "e008_track_extern": {
+    "source": "extern fn read() -> Int\ntrack fn read2() -> Int { read() }\n",
+    "command": [
+      "flux",
+      "check",
+      "<repo>/comparison/openness/repro/e008_track_extern.fl"
+    ],
+    "exit": 1,
+    "check": "flux::E008\n\n  x the `track fn` `read2` cannot call the `act fn` `read`\n   ,-[<repo>/comparison/openness/repro/e008_track_extern.fl:2:1]\n 1 | extern fn read() -> Int\n 2 | track fn read2() -> Int { read() }\n   : ^^^^^^^^^^^^^^^^^|^^^^^^^^^^^^^^^^\n   :                  `-- runs `read`\n   `----\n  help: an `act fn` is an action, and a derived value does not follow what it reads; write `track fn read` for a function that computes from sources\n"
+  },
+  "e010": {
+    "source": "derived a: Int = b + 1\nderived b: Int = a + 1\n",
+    "command": [
+      "flux",
+      "check",
+      "<repo>/comparison/openness/repro/e010.fl"
+    ],
+    "exit": 1,
+    "check": "flux::E010\n\n  x cyclic dependency in reactive graph: a -> b -> a\n   ,-[<repo>/comparison/openness/repro/e010.fl:1:1]\n 1 | derived a: Int = b + 1\n   : ^^^^^^^^^^^|^^^^^^^^^^^\n   :            `-- part of cycle\n 2 | derived b: Int = a + 1\n   `----\n  help: break the cycle by making one binding a source, or remove a dependency edge\n"
+  },
+  "e010_branch": {
+    "source": "derived a: Int = if false { b } else { 1 }\nderived b: Int = a + 1\n",
+    "command": [
+      "flux",
+      "check",
+      "<repo>/comparison/openness/repro/e010_branch.fl"
+    ],
+    "exit": 1,
+    "check": "flux::E010\n\n  x cyclic dependency in reactive graph: a -> b -> a\n   ,-[<repo>/comparison/openness/repro/e010_branch.fl:1:1]\n 1 | derived a: Int = if false { b } else { 1 }\n   : ^^^^^^^^^^^^^^^^^^^^^|^^^^^^^^^^^^^^^^^^^^^\n   :                      `-- part of cycle\n 2 | derived b: Int = a + 1\n   `----\n  help: break the cycle by making one binding a source, or remove a dependency edge\n"
+  },
+  "e011_watch": {
+    "source": "fn main() { watch { } }\n",
+    "command": [
+      "flux",
+      "check",
+      "<repo>/comparison/openness/repro/e011_watch.fl"
+    ],
+    "exit": 1,
+    "check": "flux::E011\n\n  x `watch` is only allowed at module level\n   ,-[<repo>/comparison/openness/repro/e011_watch.fl:1:13]\n 1 | fn main() { watch { } }\n   :             ^^^^|^^^^\n   :                 `-- not allowed here\n   `----\n  help: move this `watch` out of the function body and declare it at the top level of the module\n"
+  },
+  "e011_on": {
+    "source": "event Tick\nfn main() { on Tick { } }\n",
+    "command": [
+      "flux",
+      "check",
+      "<repo>/comparison/openness/repro/e011_on.fl"
+    ],
+    "exit": 1,
+    "check": "flux::E011\n\n  x `on` is only allowed at module level\n   ,-[<repo>/comparison/openness/repro/e011_on.fl:2:13]\n 1 | event Tick\n 2 | fn main() { on Tick { } }\n   :             ^^^^^|^^^^^\n   :                  `-- not allowed here\n   `----\n  help: move this `on` out of the function body and declare it at the top level of the module\n"
+  },
+  "e016": {
+    "source": "let x = 1\nevent Tick\non Tick { x = 2 }\n",
+    "command": [
+      "flux",
+      "check",
+      "<repo>/comparison/openness/repro/e016.fl"
+    ],
+    "exit": 1,
+    "check": "flux::E016\n\n  x binding `x` is assigned; declare it with `let mut`\n   ,-[<repo>/comparison/openness/repro/e016.fl:1:1]\n 1 | let x = 1\n   : ^^^^^|^^^^\n   :      `-- binding declared here\n 2 | event Tick\n 3 | on Tick { x = 2 }\n   `----\n  help: use `derived` for computed values, or `let mut` for reassignable sources\n"
+  },
+  "e009_local": {
+    "source": "fn main() { let x = 1; x = 2 }\n",
+    "command": [
+      "flux",
+      "check",
+      "<repo>/comparison/openness/repro/e009_local.fl"
+    ],
+    "exit": 1,
+    "check": "flux::E009\n\n  x cannot assign to immutable local `x`\n   ,-[<repo>/comparison/openness/repro/e009_local.fl:1:24]\n 1 | fn main() { let x = 1; x = 2 }\n   :                        ^^^|^^\n   :                           `-- immutable local\n   `----\n  help: use `let mut x = ...` to declare a mutable local, or assign to a `let mut` source binding\n"
+  },
+  "e009_const": {
+    "source": "const X = 1\nact fn main() { X = 2 }\n",
+    "command": [
+      "flux",
+      "check",
+      "<repo>/comparison/openness/repro/e009_const.fl"
+    ],
+    "exit": 1,
+    "check": "flux::E009\n\n  x cannot assign to immutable local `X`\n   ,-[<repo>/comparison/openness/repro/e009_const.fl:2:17]\n 1 | const X = 1\n 2 | act fn main() { X = 2 }\n   :                 ^^^|^^\n   :                    `-- immutable local\n   `----\n  help: use `let mut X = ...` to declare a mutable local, or assign to a `let mut` source binding\n"
+  },
+  "e017_derived": {
+    "source": "import io { println }\nfn noisy() -> Int { println(\"again\"); 1 }\nderived x = noisy()\n",
+    "command": [
+      "flux",
+      "check",
+      "<repo>/comparison/openness/repro/e017_derived.fl"
+    ],
+    "exit": 1,
+    "check": "flux::E015\n\n  x unused binding `x`\n   ,-[<repo>/comparison/openness/repro/e017_derived.fl:3:1]\n 2 | fn noisy() -> Int { println(\"again\"); 1 }\n 3 | derived x = noisy()\n   : ^^^^^^^^^^|^^^^^^^^^\n   :           `-- never read\n   `----\n  help: remove the binding or reference it from a derived value, watch, or handler\nflux::E017\n\n  x side effect `noisy` is not allowed in a derived expression\n   ,-[<repo>/comparison/openness/repro/e017_derived.fl:3:13]\n 2 | fn noisy() -> Int { println(\"again\"); 1 }\n 3 | derived x = noisy()\n   :             ^^^|^^^\n   :                `-- side effect\n   `----\n  help: move I/O and printing into `watch`, `on`, or a function body such as `main`\n"
+  },
+  "e017_const": {
+    "source": "import io { println }\nconst X = println(\"again\")\n",
+    "command": [
+      "flux",
+      "check",
+      "<repo>/comparison/openness/repro/e017_const.fl"
+    ],
+    "exit": 1,
+    "check": "flux::E015\n\n  x unused binding `X`\n   ,-[<repo>/comparison/openness/repro/e017_const.fl:2:1]\n 1 | import io { println }\n 2 | const X = println(\"again\")\n   : ^^^^^^^^^^^^^|^^^^^^^^^^^^^\n   :              `-- never read\n   `----\n  help: remove the binding or reference it from a derived value, watch, or handler\nflux::E017\n\n  x side effect `println` is not allowed in a `const` initializer\n   ,-[<repo>/comparison/openness/repro/e017_const.fl:2:11]\n 1 | import io { println }\n 2 | const X = println(\"again\")\n   :           ^^^^^^^^|^^^^^^^\n   :                   `-- side effect\n   `----\n  help: move I/O and printing into `watch`, `on`, or a function body such as `main`\n"
+  },
+  "e017_emit": {
+    "source": "event Tick\nfn noisy() -> Int { emit Tick(); 1 }\nderived x = noisy()\n",
+    "command": [
+      "flux",
+      "check",
+      "<repo>/comparison/openness/repro/e017_emit.fl"
+    ],
+    "exit": 1,
+    "check": "flux::E015\n\n  x unused binding `x`\n   ,-[<repo>/comparison/openness/repro/e017_emit.fl:3:1]\n 2 | fn noisy() -> Int { emit Tick(); 1 }\n 3 | derived x = noisy()\n   : ^^^^^^^^^^|^^^^^^^^^\n   :           `-- never read\n   `----\n  help: remove the binding or reference it from a derived value, watch, or handler\nflux::E017\n\n  x side effect `noisy` is not allowed in a derived expression\n   ,-[<repo>/comparison/openness/repro/e017_emit.fl:3:13]\n 2 | fn noisy() -> Int { emit Tick(); 1 }\n 3 | derived x = noisy()\n   :             ^^^|^^^\n   :                `-- side effect\n   `----\n  help: move I/O and printing into `watch`, `on`, or a function body such as `main`\n"
+  },
+  "e027": {
+    "source": "let mut x = 0\nfn main() { x = 1 }\n",
+    "command": [
+      "flux",
+      "check",
+      "<repo>/comparison/openness/repro/e027.fl"
+    ],
+    "exit": 1,
+    "check": "flux::E027\n\n  x `main` changes `x`, but only `on` handlers and `act fn` change state\n   ,-[<repo>/comparison/openness/repro/e027.fl:2:13]\n 1 | let mut x = 0\n 2 | fn main() { x = 1 }\n   :             |\n   :             `-- changes state\n   `----\n  help: write `act fn main` so that callers see one change; `flux migrate` does it\n"
+  },
+  "e027_track": {
+    "source": "let mut x = 0\ntrack fn f() { x = 1 }\n",
+    "command": [
+      "flux",
+      "check",
+      "<repo>/comparison/openness/repro/e027_track.fl"
+    ],
+    "exit": 1,
+    "check": "flux::E027\n\n  x `f` changes `x`, but only `on` handlers and `act fn` change state\n   ,-[<repo>/comparison/openness/repro/e027_track.fl:2:16]\n 1 | let mut x = 0\n 2 | track fn f() { x = 1 }\n   :                |\n   :                `-- changes state\n   `----\n  help: a `track fn` is recomputed whenever what it reads changes; change state in an `act fn` or an `on` handler\n"
+  },
+  "e027_method": {
+    "source": "let mut x = 0\nstruct P { n: Int }\nimpl P { fn f(self) { x = 1 } }\n",
+    "command": [
+      "flux",
+      "check",
+      "<repo>/comparison/openness/repro/e027_method.fl"
+    ],
+    "exit": 1,
+    "check": "flux::E027\n\n  x `f` changes `x`, but only `on` handlers and `act fn` change state\n   ,-[<repo>/comparison/openness/repro/e027_method.fl:3:23]\n 2 | struct P { n: Int }\n 3 | impl P { fn f(self) { x = 1 } }\n   :                       |\n   :                       `-- changes state\n   `----\n  help: change state in an `act fn` or an `on` handler\n"
+  },
+  "e028": {
+    "source": "import io { println }\nlet mut x = 0\nlet mut y = 0\nwatch x { y = x + 1 }\nwatch y { println(\"y={y}\") }\nact fn main() { x = 2 }\n",
+    "command": [
+      "flux",
+      "check",
+      "<repo>/comparison/openness/repro/e028.fl"
+    ],
+    "exit": 0,
+    "check": "ok\nflux::E028\n\n  x this watch changes `y`\n   ,-[<repo>/comparison/openness/repro/e028.fl:4:11]\n 3 | let mut y = 0\n 4 | watch x { y = x + 1 }\n   :           |\n   :           `-- changes state\n 5 | watch y { println(\"y={y}\") }\n   `----\n  help: a watch reacts to changes; compute `y` with `let`, or `emit` an event whose `on` handler changes it\n",
+    "run_exit": 0,
+    "run": "y=1\ny=3\nflux::E028\n\n  x this watch changes `y`\n   ,-[<repo>/comparison/openness/repro/e028.fl:4:11]\n 3 | let mut y = 0\n 4 | watch x { y = x + 1 }\n   :           |\n   :           `-- changes state\n 5 | watch y { println(\"y={y}\") }\n   `----\n  help: a watch reacts to changes; compute `y` with `let`, or `emit` an event whose `on` handler changes it\n"
+  },
+  "e029": {
+    "source": "import io { println }\nlet mut x = 0\nwatch x { x += 1; println(\"seen={x}\") }\nact fn main() { x = 5; println(\"main={x}\") }\n",
+    "command": [
+      "flux",
+      "check",
+      "<repo>/comparison/openness/repro/e029.fl"
+    ],
+    "exit": 0,
+    "check": "ok\nflux::E028\n\n  x this watch changes `x`\n   ,-[<repo>/comparison/openness/repro/e029.fl:3:11]\n 2 | let mut x = 0\n 3 | watch x { x += 1; println(\"seen={x}\") }\n   :           |\n   :           `-- changes state\n 4 | act fn main() { x = 5; println(\"main={x}\") }\n   `----\n  help: a watch reacts to changes; compute `x` with `let`, or `emit` an event whose `on` handler changes it\nflux::E029\n\n  x this watch wakes itself through `x`\n   ,-[<repo>/comparison/openness/repro/e029.fl:3:1]\n 2 | let mut x = 0\n 3 | watch x { x += 1; println(\"seen={x}\") }\n   : ^^|^^\n   :   `-- this watch\n 4 | act fn main() { x = 5; println(\"main={x}\") }\n   `----\n  help: each watch runs at most once per batch, so the last change in the cycle does not wake the watch it reaches; compute the value with `let`, or change it in an `on` handler\n",
+    "run_exit": 0,
+    "run": "seen=1\nmain=5\nseen=6\nflux::E028\n\n  x this watch changes `x`\n   ,-[<repo>/comparison/openness/repro/e029.fl:3:11]\n 2 | let mut x = 0\n 3 | watch x { x += 1; println(\"seen={x}\") }\n   :           |\n   :           `-- changes state\n 4 | act fn main() { x = 5; println(\"main={x}\") }\n   `----\n  help: a watch reacts to changes; compute `x` with `let`, or `emit` an event whose `on` handler changes it\nflux::E029\n\n  x this watch wakes itself through `x`\n   ,-[<repo>/comparison/openness/repro/e029.fl:3:1]\n 2 | let mut x = 0\n 3 | watch x { x += 1; println(\"seen={x}\") }\n   : ^^|^^\n   :   `-- this watch\n 4 | act fn main() { x = 5; println(\"main={x}\") }\n   `----\n  help: each watch runs at most once per batch, so the last change in the cycle does not wake the watch it reaches; compute the value with `let`, or change it in an `on` handler\n"
+  },
+  "e030": {
+    "source": "import collections { push }\nfn main() { let xs = [1]; push(xs, 2); let done = 0 }\n",
+    "command": [
+      "flux",
+      "check",
+      "<repo>/comparison/openness/repro/e030.fl"
+    ],
+    "exit": 0,
+    "check": "ok\nflux::E030\n\n  x the result of `push` is not used\n   ,-[<repo>/comparison/openness/repro/e030.fl:2:27]\n 1 | import collections { push }\n 2 | fn main() { let xs = [1]; push(xs, 2); let done = 0 }\n   :                           ^^^^^|^^^^^\n   :                                `-- this value is dropped\n   `----\n  help: it returns a new array: write `xs = push(xs, v)`\n"
+  },
+  "e031": {
+    "source": "struct P { x: Int }\nfn f[T: Ord](x: T) -> T { x }\nfn main() { f(P { x: 1 }) }\n",
+    "command": [
+      "flux",
+      "check",
+      "<repo>/comparison/openness/repro/e031.fl"
+    ],
+    "exit": 1,
+    "check": "flux::E031\n\n  x `P` does not have trait `Ord`, which `f` needs for `T`\n   ,-[<repo>/comparison/openness/repro/e031.fl:3:13]\n 2 | fn f[T: Ord](x: T) -> T { x }\n 3 | fn main() { f(P { x: 1 }) }\n   :             ^^^^^^|^^^^^^\n   :                   `-- `T` is `P` here\n   `----\n  help: `Ord` holds for numbers and `String`\n"
+  },
+  "e032": {
+    "source": "import owner { x }\nact fn main() { x = 2 }\n",
+    "command": [
+      "flux",
+      "check",
+      "<repo>/comparison/openness/repro/e032.fl"
+    ],
+    "exit": 1,
+    "check": "flux::E032\n\n  x `x` belongs to another module; only that module changes it\n   ,-[<repo>/comparison/openness/repro/e032.fl:2:17]\n 1 | import owner { x }\n 2 | act fn main() { x = 2 }\n   :                 |\n   :                 `-- changes another module's source\n   `----\n  help: emit one of its events, or call one of its `pub act fn`s\n"
+  },
+  "e033": {
+    "source": "import owner { P, make }\nfn main() -> Int { make().hidden }\n",
+    "command": [
+      "flux",
+      "check",
+      "<repo>/comparison/openness/repro/e033.fl"
+    ],
+    "exit": 1,
+    "check": "flux::E033\n\n  x field `hidden` of `P` is private to its module\n   ,-[<repo>/comparison/openness/repro/e033.fl:2:20]\n 1 | import owner { P, make }\n 2 | fn main() -> Int { make().hidden }\n   :                    ^^^^^^|^^^^^^\n   :                          `-- not visible here\n   `----\n  help: only `P`'s module can name it; use the functions or methods that module provides, or mark the field `pub` there\n"
+  },
+  "e034": {
+    "source": "import fs { read_file }\nfn main() { read_file(\"x\") }\n",
+    "command": [
+      "flux",
+      "check",
+      "--target",
+      "web",
+      "<repo>/comparison/openness/repro/e034.fl"
+    ],
+    "exit": 1,
+    "check": "flux::E034\n\n  x `fs` is not available on target `web`\n   ,-[<repo>/comparison/openness/repro/e034.fl:1:1]\n 1 | import fs { read_file }\n   : ^^^^^^^^^^^|^^^^^^^^^^^\n   :            `-- not on this target\n 2 | fn main() { read_file(\"x\") }\n   `----\n  help: a `web` program cannot use it; check another target, or leave it out\n"
+  },
+  "e035": {
+    "source": "import io\nfn main() { println(\"hello\") }\n",
+    "command": [
+      "flux",
+      "check",
+      "<repo>/comparison/openness/repro/shadow/e035.fl"
+    ],
+    "exit": 0,
+    "check": "ok\nflux::E035\n\n  x `io.fl` is not imported: `io` is a library module\n   ,-[<repo>/comparison/openness/repro/shadow/e035.fl:1:1]\n 1 | import io\n   : ^^^^^|^^^^\n   :      `-- the library module `io`\n 2 | fn main() { println(\"hello\") }\n   `----\n  help: rename the file to import it; `import io` always means the library\n"
+  },
+  "e021_return": {
+    "source": "fn f() -> Int { Some(1)? }\n",
+    "command": [
+      "flux",
+      "check",
+      "<repo>/comparison/openness/repro/e021_return.fl"
+    ],
+    "exit": 1,
+    "check": "flux::E021\n\n  x `?` needs the function to return `Result[\u2026]` or `Option[\u2026]`, but it returns `Int64`\n   ,-[<repo>/comparison/openness/repro/e021_return.fl:1:17]\n 1 | fn f() -> Int { Some(1)? }\n   :                 ^^^^|^^^\n   :                     `-- here\n   `----\n  help: `?` works in a function declared `-> Result[T, E]` on a `Result[U, E]` with the same `E`, or in `-> Option[T]` on an `Option[U]`\n"
+  },
+  "e021_infer": {
+    "source": "fn f() { Some(1)? }\n",
+    "command": [
+      "flux",
+      "check",
+      "<repo>/comparison/openness/repro/e021_infer.fl"
+    ],
+    "exit": 1,
+    "check": "flux::E021\n\n  x `?` is only allowed in a function with a declared `Result[\u2026]` or `Option[\u2026]` return type\n   ,-[<repo>/comparison/openness/repro/e021_infer.fl:1:10]\n 1 | fn f() { Some(1)? }\n   :          ^^^^|^^^\n   :              `-- here\n   `----\n  help: `?` works in a function declared `-> Result[T, E]` on a `Result[U, E]` with the same `E`, or in `-> Option[T]` on an `Option[U]`\n"
+  },
+  "e021_kind": {
+    "source": "fn f() -> Result[Int, String] { Ok(Some(1)?) }\n",
+    "command": [
+      "flux",
+      "check",
+      "<repo>/comparison/openness/repro/e021_kind.fl"
+    ],
+    "exit": 1,
+    "check": "flux::E021\n\n  x `?` on `Option<Int64>` in a function returning `Result<Int64, String>`; use `?` on a `Result`\n   ,-[<repo>/comparison/openness/repro/e021_kind.fl:1:36]\n 1 | fn f() -> Result[Int, String] { Ok(Some(1)?) }\n   :                                    ^^^^|^^^\n   :                                        `-- here\n   `----\n  help: `?` works in a function declared `-> Result[T, E]` on a `Result[U, E]` with the same `E`, or in `-> Option[T]` on an `Option[U]`\n"
+  },
+  "e021_error": {
+    "source": "fn f() -> Result[Int, String] { let x: Result[Int, Int] = Err(2); Ok(x?) }\n",
+    "command": [
+      "flux",
+      "check",
+      "<repo>/comparison/openness/repro/e021_error.fl"
+    ],
+    "exit": 1,
+    "check": "flux::E021\n\n  x `?` on a `Result` with error type `Int64` in a function returning error type `String`; the error types must match\n   ,-[<repo>/comparison/openness/repro/e021_error.fl:1:70]\n 1 | fn f() -> Result[Int, String] { let x: Result[Int, Int] = Err(2); Ok(x?) }\n   :                                                                      ^|\n   :                                                                       `-- here\n   `----\n  help: `?` works in a function declared `-> Result[T, E]` on a `Result[U, E]` with the same `E`, or in `-> Option[T]` on an `Option[U]`\n"
+  },
+  "e021_top": {
+    "source": "let x = Some(1)?\n",
+    "command": [
+      "flux",
+      "check",
+      "<repo>/comparison/openness/repro/e021_top.fl"
+    ],
+    "exit": 1,
+    "check": "flux::E015\n\n  x unused binding `x`\n   ,-[<repo>/comparison/openness/repro/e021_top.fl:1:1]\n 1 | let x = Some(1)?\n   : ^^^^^^^^|^^^^^^^^\n   :         `-- never read\n   `----\n  help: remove the binding or reference it from a derived value, watch, or handler\nflux::E021\n\n  x `?` is only allowed in a function with a declared `Result[\u2026]` or `Option[\u2026]` return type\n   ,-[<repo>/comparison/openness/repro/e021_top.fl:1:9]\n 1 | let x = Some(1)?\n   :         ^^^^|^^^\n   :             `-- here\n   `----\n  help: `?` works in a function declared `-> Result[T, E]` on a `Result[U, E]` with the same `E`, or in `-> Option[T]` on an `Option[U]`\n"
+  },
+  "e025": {
+    "source": "struct S { me: S }\n",
+    "command": [
+      "flux",
+      "check",
+      "<repo>/comparison/openness/repro/e025.fl"
+    ],
+    "exit": 1,
+    "check": "flux::E025\n\n  x no value of type `S` can exist\n   ,-[<repo>/comparison/openness/repro/e025.fl:1:1]\n 1 | struct S { me: S }\n   : ^^^^^^^^^|^^^^^^^^\n   :          `-- declared here\n   `----\n  help: it always contains itself; end the chain with an enum variant, `Option`, or an array\n"
+  },
+  "local_derived": {
+    "source": "fn main() { let x = 1; derived y = x + 1 }\n",
+    "command": [
+      "flux",
+      "check",
+      "<repo>/comparison/openness/repro/local_derived.fl"
+    ],
+    "exit": 1,
+    "check": "flux::E001\n\n  x undefined name `derived`\n   ,-[<repo>/comparison/openness/repro/local_derived.fl:1:24]\n 1 | fn main() { let x = 1; derived y = x + 1 }\n   :                        ^^^|^^^\n   :                           `-- not found\n   `----\n"
+  },
+  "top_assignment": {
+    "source": "let mut x = 0\nx = 1\n",
+    "command": [
+      "flux",
+      "check",
+      "<repo>/comparison/openness/repro/top_assignment.fl"
+    ],
+    "exit": 1,
+    "check": "flux::E000\n\n  x parse error: expected EOI, item, eq_op, rel_op, add_op, bits_op, mul_op, kw_with, index_suffix, try_suffix, field_suffix, call_args, or kw_as\n   ,-[<repo>/comparison/openness/repro/top_assignment.fl:2:1]\n 1 | let mut x = 0\n 2 | x = 1\n   : |\n   : `-- here\n   `----\n  help: check syntax near the highlighted token\n"
+  },
+  "local_source": {
+    "source": "fn main() { let mut x = 1; let y = x * 2; x = 2; y }\n",
+    "command": [
+      "flux",
+      "check",
+      "<repo>/comparison/openness/repro/local_source.fl"
+    ],
+    "exit": 0,
+    "check": "ok\n",
+    "run_exit": 2,
+    "run": ""
+  },
+  "generic_args": {
+    "source": "fn id[T](x: T) -> T { x }\nfn main() { id::[Int](1) }\n",
+    "command": [
+      "flux",
+      "check",
+      "<repo>/comparison/openness/repro/generic_args.fl"
+    ],
+    "exit": 1,
+    "check": "flux::E000\n\n  x parse error: expected stmt, place_step, assign_op, eq_op, rel_op, add_op, bits_op, mul_op, kw_with, index_suffix, try_suffix, field_suffix, call_args, or kw_as\n   ,-[<repo>/comparison/openness/repro/generic_args.fl:2:15]\n 1 | fn id[T](x: T) -> T { x }\n 2 | fn main() { id::[Int](1) }\n   :               |\n   :               `-- here\n   `----\n  help: check syntax near the highlighted token\n"
+  },
+  "generic_unknown": {
+    "source": "fn empty[T]() -> [T] { [] }\nfn main() { let xs = empty(); let done = 0 }\n",
+    "command": [
+      "flux",
+      "check",
+      "<repo>/comparison/openness/repro/generic_unknown.fl"
+    ],
+    "exit": 1,
+    "check": "flux::E005\n\n  x type mismatch: expected `type arguments for `empty` from its arguments or from where the call is`, found `type arguments that nothing fixes`\n   ,-[<repo>/comparison/openness/repro/generic_unknown.fl:2:22]\n 1 | fn empty[T]() -> [T] { [] }\n 2 | fn main() { let xs = empty(); let done = 0 }\n   :                      ^^^|^^^\n   :                         `-- expected `type arguments for `empty` from its arguments or from where the call is`\n   `----\n  help: give the call's place a type, as in `let xs: [Int] = empty()`, or pass arguments of known types\n"
+  },
+  "enum_payload": {
+    "source": "enum Tree { Leaf, Node(Tree, Tree) }\n",
+    "command": [
+      "flux",
+      "check",
+      "<repo>/comparison/openness/repro/enum_payload.fl"
+    ],
+    "exit": 1,
+    "check": "flux::E000\n\n  x parse error: a tuple variant holds one type; use a struct for several, as in `Pair(Point)` or `Pair { x: Int, y: Int }`\n   ,-[<repo>/comparison/openness/repro/enum_payload.fl:1:23]\n 1 | enum Tree { Leaf, Node(Tree, Tree) }\n   :                       ^^^^^^|^^^^^\n   :                             `-- here\n   `----\n  help: check syntax near the highlighted token\n"
+  },
+  "if_operand_chain": {
+    "source": "fn f(x: Int) -> Int { let y = if x > 0 { 1 } else if x == 0 { 0 } else { -1 }; y }\n",
+    "command": [
+      "flux",
+      "check",
+      "<repo>/comparison/openness/repro/if_operand_chain.fl"
+    ],
+    "exit": 1,
+    "check": "flux::E000\n\n  x parse error: expected eq_op, rel_op, add_op, bits_op, mul_op, kw_with, index_suffix, try_suffix, field_suffix, call_args, or kw_as\n   ,-[<repo>/comparison/openness/repro/if_operand_chain.fl:1:44]\n 1 | fn f(x: Int) -> Int { let y = if x > 0 { 1 } else if x == 0 { 0 } else { -1 }; y }\n   :                                            |\n   :                                            `-- here\n   `----\n  help: check syntax near the highlighted token\n"
+  },
+  "if_operand_stmts": {
+    "source": "fn f() -> Int { let y = if true { let x = 1; x } else { 2 }; y }\n",
+    "command": [
+      "flux",
+      "check",
+      "<repo>/comparison/openness/repro/if_operand_stmts.fl"
+    ],
+    "exit": 1,
+    "check": "flux::E000\n\n  x parse error: expected eq_op, rel_op, add_op, bits_op, mul_op, kw_with, index_suffix, try_suffix, field_suffix, call_args, or kw_as\n   ,-[<repo>/comparison/openness/repro/if_operand_stmts.fl:1:39]\n 1 | fn f() -> Int { let y = if true { let x = 1; x } else { 2 }; y }\n   :                                       |\n   :                                       `-- here\n   `----\n  help: check syntax near the highlighted token\n"
+  },
+  "if_tail_ok": {
+    "source": "fn f(x: Int) -> Int { if x > 0 { let n = 1; n } else if x == 0 { 0 } else { -1 } }\n",
+    "command": [
+      "flux",
+      "check",
+      "<repo>/comparison/openness/repro/if_tail_ok.fl"
+    ],
+    "exit": 0,
+    "check": "ok\n"
+  },
+  "map_import": {
+    "source": "fn main() { let m: Map[String, Int] = map_new(); m.len() }\n",
+    "command": [
+      "flux",
+      "check",
+      "<repo>/comparison/openness/repro/map_import.fl"
+    ],
+    "exit": 1,
+    "check": "flux::E001\n\n  x undefined name `map_new`\n   ,-[<repo>/comparison/openness/repro/map_import.fl:1:39]\n 1 | fn main() { let m: Map[String, Int] = map_new(); m.len() }\n   :                                       ^^^|^^^\n   :                                          `-- not found\n   `----\n"
+  },
+  "map_empty": {
+    "source": "fn main() { let m: Map[String, Int] = {}; m.len() }\n",
+    "command": [
+      "flux",
+      "check",
+      "<repo>/comparison/openness/repro/map_empty.fl"
+    ],
+    "exit": 1,
+    "check": "flux::E000\n\n  x parse error: expected unary_expr\n   ,-[<repo>/comparison/openness/repro/map_empty.fl:1:39]\n 1 | fn main() { let m: Map[String, Int] = {}; m.len() }\n   :                                       |\n   :                                       `-- here\n   `----\n  help: check syntax near the highlighted token\n"
+  },
+  "map_key": {
+    "source": "import collections { map_new }\nfn main() { let m: Map[Float, Int] = map_new(); m.len() }\n",
+    "command": [
+      "flux",
+      "check",
+      "<repo>/comparison/openness/repro/map_key.fl"
+    ],
+    "exit": 1,
+    "check": "flux::E005\n\n  x type mismatch: expected `a map key type (an integer type, String, Bool, or Char)`, found `Float64`\n   ,-[<repo>/comparison/openness/repro/map_key.fl:2:20]\n 1 | import collections { map_new }\n 2 | fn main() { let m: Map[Float, Int] = map_new(); m.len() }\n   :                    ^^^^^^^|^^^^^^^\n   :                           `-- expected `a map key type (an integer type, String, Bool, or Char)`\n   `----\n"
+  },
+  "live_mut_param": {
+    "source": "live fn C(mut x: Int) { pub let n = x }\n",
+    "command": [
+      "flux",
+      "check",
+      "<repo>/comparison/openness/repro/live_mut_param.fl"
+    ],
+    "exit": 1,
+    "check": "flux::E000\n\n  x parse error: parameter `x` of a live fn cannot be `mut`: an instance keeps its own copy\n   ,-[<repo>/comparison/openness/repro/live_mut_param.fl:1:11]\n 1 | live fn C(mut x: Int) { pub let n = x }\n   :           ^^^^^|^^^^\n   :                `-- here\n   `----\n  help: check syntax near the highlighted token\n"
+  },
+  "live_destructure": {
+    "source": "live fn C() { let (a, b) = (1, 2) }\n",
+    "command": [
+      "flux",
+      "check",
+      "<repo>/comparison/openness/repro/live_destructure.fl"
+    ],
+    "exit": 1,
+    "check": "flux::E000\n\n  x parse error: a member of a live fn names one value; destructure it in a function\n   ,-[<repo>/comparison/openness/repro/live_destructure.fl:1:19]\n 1 | live fn C() { let (a, b) = (1, 2) }\n   :                   ^^^|^^\n   :                      `-- here\n   `----\n  help: check syntax near the highlighted token\n"
+  },
+  "live_generic": {
+    "source": "live fn C() { fn id[T](x: T) -> T { x } }\n",
+    "command": [
+      "flux",
+      "check",
+      "<repo>/comparison/openness/repro/live_generic.fl"
+    ],
+    "exit": 1,
+    "check": "flux::E000\n\n  x parse error: function `id` of a live fn cannot have type parameters\n   ,-[<repo>/comparison/openness/repro/live_generic.fl:1:18]\n 1 | live fn C() { fn id[T](x: T) -> T { x } }\n   :                  ^|\n   :                   `-- here\n   `----\n  help: check syntax near the highlighted token\n"
+  },
+  "live_mut_fn": {
+    "source": "live fn C() { fn set(mut x: Int) { x = 1 } }\n",
+    "command": [
+      "flux",
+      "check",
+      "<repo>/comparison/openness/repro/live_mut_fn.fl"
+    ],
+    "exit": 1,
+    "check": "flux::E000\n\n  x parse error: function `set` of a live fn cannot take `mut` parameters\n   ,-[<repo>/comparison/openness/repro/live_mut_fn.fl:1:18]\n 1 | live fn C() { fn set(mut x: Int) { x = 1 } }\n   :                  ^|^\n   :                   `-- here\n   `----\n  help: check syntax near the highlighted token\n"
+  },
+  "live_derived_construct": {
+    "source": "live fn C() { pub let n = 1 }\nderived c = C()\n",
+    "command": [
+      "flux",
+      "check",
+      "<repo>/comparison/openness/repro/live_derived_construct.fl"
+    ],
+    "exit": 1,
+    "check": "flux::E015\n\n  x unused binding `c`\n   ,-[<repo>/comparison/openness/repro/live_derived_construct.fl:2:1]\n 1 | live fn C() { pub let n = 1 }\n 2 | derived c = C()\n   : ^^^^^^^^|^^^^^^^\n   :         `-- never read\n   `----\n  help: remove the binding or reference it from a derived value, watch, or handler\nflux::E008\n\n  x a derived value cannot call the `act fn` `C`\n   ,-[<repo>/comparison/openness/repro/live_derived_construct.fl:2:13]\n 1 | live fn C() { pub let n = 1 }\n 2 | derived c = C()\n   :             ^|^\n   :              `-- runs `C`\n   `----\n  help: an `act fn` is an action, and a derived value does not follow what it reads; write `track fn C` for a function that computes from sources\n"
+  },
+  "live_const_construct": {
+    "source": "live fn C() { pub let n = 1 }\nconst C1 = C()\n",
+    "command": [
+      "flux",
+      "check",
+      "<repo>/comparison/openness/repro/live_const_construct.fl"
+    ],
+    "exit": 1,
+    "check": "flux::E015\n\n  x unused binding `C1`\n   ,-[<repo>/comparison/openness/repro/live_const_construct.fl:2:1]\n 1 | live fn C() { pub let n = 1 }\n 2 | const C1 = C()\n   : ^^^^^^^|^^^^^^^\n   :        `-- never read\n   `----\n  help: remove the binding or reference it from a derived value, watch, or handler\nflux::E008\n\n  x a `const` initializer cannot call the `act fn` `C`\n   ,-[<repo>/comparison/openness/repro/live_const_construct.fl:2:12]\n 1 | live fn C() { pub let n = 1 }\n 2 | const C1 = C()\n   :            ^|^\n   :             `-- runs `C`\n   `----\n  help: an `act fn` is an action, and a derived value does not follow what it reads; write `track fn C` for a function that computes from sources\n"
+  },
+  "live_track_construct": {
+    "source": "live fn C() { pub let n = 1 }\ntrack fn make() -> C { C() }\n",
+    "command": [
+      "flux",
+      "check",
+      "<repo>/comparison/openness/repro/live_track_construct.fl"
+    ],
+    "exit": 1,
+    "check": "flux::E008\n\n  x the `track fn` `make` cannot call the `act fn` `C`\n   ,-[<repo>/comparison/openness/repro/live_track_construct.fl:2:1]\n 1 | live fn C() { pub let n = 1 }\n 2 | track fn make() -> C { C() }\n   : ^^^^^^^^^^^^^^|^^^^^^^^^^^^^\n   :               `-- runs `C`\n   `----\n  help: an `act fn` is an action, and a derived value does not follow what it reads; write `track fn C` for a function that computes from sources\n"
+  },
+  "live_write": {
+    "source": "live fn C() { pub let mut n = 1 }\nlet mut c = C()\nact fn main() { c.n = 2 }\n",
+    "command": [
+      "flux",
+      "check",
+      "<repo>/comparison/openness/repro/live_write.fl"
+    ],
+    "exit": 1,
+    "check": "flux::E032\n\n  x `c` belongs to an instance of `C`; only the instance's own code changes it\n   ,-[<repo>/comparison/openness/repro/live_write.fl:3:17]\n 2 | let mut c = C()\n 3 | act fn main() { c.n = 2 }\n   :                 ^^^^|^^^\n   :                     `-- changes an instance's member\n   `----\n  help: emit one of its `pub` events, or call one of its `pub act fn`s\n"
+  },
+  "live_private": {
+    "source": "live fn C() { let n = 1 }\nlet c = C()\nact fn main() { let x = c.n; let done = 0 }\n",
+    "command": [
+      "flux",
+      "check",
+      "<repo>/comparison/openness/repro/live_private.fl"
+    ],
+    "exit": 1,
+    "check": "flux::E033\n\n  x field `n` of `C` is private to its module\n   ,-[<repo>/comparison/openness/repro/live_private.fl:3:25]\n 2 | let c = C()\n 3 | act fn main() { let x = c.n; let done = 0 }\n   :                         ^|^\n   :                          `-- not visible here\n   `----\n  help: mark it `pub` in `live fn C` to use it outside\n"
+  },
+  "live_function_value": {
+    "source": "live fn C() { pub fn get() -> Int { 1 } }\nlet c = C()\nfn main() { let f = snap(c).get; let done = 0 }\n",
+    "command": [
+      "flux",
+      "check",
+      "<repo>/comparison/openness/repro/live_function_value.fl"
+    ],
+    "exit": 1,
+    "check": "flux::E005\n\n  x type mismatch: expected `a call, `x.get(\u2026)``, found ``get` read as a value`\n   ,-[<repo>/comparison/openness/repro/live_function_value.fl:3:21]\n 2 | let c = C()\n 3 | fn main() { let f = snap(c).get; let done = 0 }\n   :                     ^^^^^|^^^^^\n   :                          `-- expected `a call, `x.get(\u2026)``\n   `----\n"
+  },
+  "live_watch": {
+    "source": "import io { println }\nlive fn C() { pub let n = 1 }\nlet c = C()\nwatch { println(\"{c.n}\") }\n",
+    "command": [
+      "flux",
+      "check",
+      "<repo>/comparison/openness/repro/live_watch.fl"
+    ],
+    "exit": 1,
+    "check": "flux::E005\n\n  x type mismatch: expected `a name the watch can follow`, found ``.n` of an instance, in a `watch` without a target`\n   ,-[<repo>/comparison/openness/repro/live_watch.fl:4:19]\n 3 | let c = C()\n 4 | watch { println(\"{c.n}\") }\n   :                   ^|^\n   :                    `-- expected `a name the watch can follow`\n   `----\n  help: give it a name and follow that: `derived n = x.n`, then `watch n { \u2026 }`\n"
+  },
+  "live_emit_index": {
+    "source": "live fn C() { pub event Tick }\nlet cs = [C()]\nact fn main() { emit cs[0].Tick() }\n",
+    "command": [
+      "flux",
+      "check",
+      "<repo>/comparison/openness/repro/live_emit_index.fl"
+    ],
+    "exit": 1,
+    "check": "flux::E006\n\n  x unknown event `event #SymbolId(4)`\n   ,-[<repo>/comparison/openness/repro/live_emit_index.fl:3:17]\n 2 | let cs = [C()]\n 3 | act fn main() { emit cs[0].Tick() }\n   :                 ^^^|^^^\n   :                    `-- unknown event\n   `----\nflux::E019\n\n  x no method `Tick` for type `[Int64]`\n   ,-[<repo>/comparison/openness/repro/live_emit_index.fl:3:24]\n 2 | let cs = [C()]\n 3 | act fn main() { emit cs[0].Tick() }\n   :                        ^^^^^|^^^^\n   :                             `-- method not found\n   `----\n  help: methods come from `impl Trait for [Int64]`; add one that defines `Tick`\n"
+  },
+  "live_cycle": {
+    "source": "live fn C() { derived a: Int = b + 1; derived b: Int = a + 1 }\nlet c = C()\n",
+    "command": [
+      "flux",
+      "check",
+      "<repo>/comparison/openness/repro/live_cycle.fl"
+    ],
+    "exit": 1,
+    "check": "flux::E015\n\n  x unused binding `c`\n   ,-[<repo>/comparison/openness/repro/live_cycle.fl:2:1]\n 1 | live fn C() { derived a: Int = b + 1; derived b: Int = a + 1 }\n 2 | let c = C()\n   : ^^^^^^|^^^^^\n   :       `-- never read\n   `----\n  help: remove the binding or reference it from a derived value, watch, or handler\nflux::E010\n\n  x cyclic dependency in reactive graph: C.a -> C.b -> C.a\n   ,-[<repo>/comparison/openness/repro/live_cycle.fl:1:15]\n 1 | live fn C() { derived a: Int = b + 1; derived b: Int = a + 1 }\n   :               ^^^^^^^^^^^|^^^^^^^^^^\n   :                          `-- part of cycle\n 2 | let c = C()\n   `----\n  help: break the cycle by making one binding a source, or remove a dependency edge\n"
+  },
+  "live_template_cross": {
+    "source": "live fn C() { pub derived d: Int = total + 1 }\nlet c = C()\nderived total: Int = c.d\n",
+    "command": [
+      "flux",
+      "check",
+      "<repo>/comparison/openness/repro/live_template_cross.fl"
+    ],
+    "exit": 0,
+    "check": "ok\n",
+    "run_exit": 1,
+    "run": "flux::E010\n\n  x cyclic dependency in reactive graph: C.d \u2192 total \u2192 C.d\n   ,-[<repo>/comparison/openness/repro/live_template_cross.fl:1:15]\n 1 | live fn C() { pub derived d: Int = total + 1 }\n   :               ^^^^^^^^^^^^^^^|^^^^^^^^^^^^^^^\n   :                              `-- part of cycle\n 2 | let c = C()\n   `----\n  help: break the cycle by making one binding a source, or remove a dependency edge\n"
+  },
+  "live_hold_cycle": {
+    "source": "live fn C() { pub let mut children: [C] = []; pub event Adopt(x: C); on Adopt(x) { children.push(x) } }\nlet c = C()\nact fn main() { emit c.Adopt(c) }\n",
+    "command": [
+      "flux",
+      "check",
+      "<repo>/comparison/openness/repro/live_hold_cycle.fl"
+    ],
+    "exit": 0,
+    "check": "ok\n",
+    "run_exit": 1,
+    "run": "error: runtime error: an instance cannot hold itself, directly or through the instances it holds in `on Adopt`\n  at on Adopt (<repo>/comparison/openness/repro/live_hold_cycle.fl:1:84)\n  at main (<repo>/comparison/openness/repro/live_hold_cycle.fl:3:17)\n"
+  },
+  "live_dynamic_cycle": {
+    "source": "live fn C() { pub let mut children: [C] = []; pub derived size: Int = 1 + children.map(|c| c.size).reduce(0, |a, b| a + b); pub event Adopt(x: C); on Adopt(x) { children.push(x) } }\nlet c = C()\nact fn main() { emit c.Adopt(c) }\n",
+    "command": [
+      "flux",
+      "check",
+      "<repo>/comparison/openness/repro/live_dynamic_cycle.fl"
+    ],
+    "exit": 0,
+    "check": "ok\n",
+    "run_exit": 1,
+    "run": "error: runtime error: an instance cannot hold itself, directly or through the instances it holds in `on Adopt`\n  at on Adopt (<repo>/comparison/openness/repro/live_dynamic_cycle.fl:1:162)\n  at main (<repo>/comparison/openness/repro/live_dynamic_cycle.fl:3:17)\n"
+  },
+  "live_drop": {
+    "source": "live fn C() { let n = 1 }\nfn main() { C(); let done = 0 }\n",
+    "command": [
+      "flux",
+      "check",
+      "<repo>/comparison/openness/repro/live_drop.fl"
+    ],
+    "exit": 0,
+    "check": "ok\nflux::E030\n\n  x the result of `C` is not used\n   ,-[<repo>/comparison/openness/repro/live_drop.fl:2:13]\n 1 | live fn C() { let n = 1 }\n 2 | fn main() { C(); let done = 0 }\n   :             ^|^\n   :              `-- this value is dropped\n   `----\n  help: an instance lives while something holds it: write `let x = C(\u2026)`\n"
+  },
+  "live_fixed_param": {
+    "source": "import io { println }\nlive fn C(x: Int) { pub fn get() -> Int { x }; pub act fn reset() { x = 2 } }\nlet mut c = C(1)\nact fn main() { c.reset(); println(\"{c.get()}\") }\n",
+    "command": [
+      "flux",
+      "check",
+      "<repo>/comparison/openness/repro/live_fixed_param.fl"
+    ],
+    "exit": 0,
+    "check": "ok\n",
+    "run_exit": 0,
+    "run": "2\n"
+  },
+  "live_plain_read": {
+    "source": "live fn C() { pub let n = 1 }\nlet c = C()\nfn f(c: C) -> Int { c.n }\nfn main() -> Int { f(snap(c)) }\n",
+    "command": [
+      "flux",
+      "check",
+      "<repo>/comparison/openness/repro/live_plain_read.fl"
+    ],
+    "exit": 0,
+    "check": "ok\n",
+    "run_exit": 1,
+    "run": ""
+  },
+  "const_reactive": {
+    "source": "let mut x = 1\nconst X = x\n",
+    "command": [
+      "flux",
+      "check",
+      "<repo>/comparison/openness/repro/const_reactive.fl"
+    ],
+    "exit": 1,
+    "check": "flux::E008\n\n  x control flow `reactive read in const` is not allowed in a derived expression\n   ,-[<repo>/comparison/openness/repro/const_reactive.fl:2:1]\n 1 | let mut x = 1\n 2 | const X = x\n   : ^^^^^^|^^^^^\n   :       `-- not allowed here\n   `----\n  help: use `watch`, `on`, `track fn`, or `act fn` for statements with side effects or loops\n"
+  },
+  "const_snap": {
+    "source": "let mut x = 1\nconst X = snap(x)\n",
+    "command": [
+      "flux",
+      "check",
+      "<repo>/comparison/openness/repro/const_snap.fl"
+    ],
+    "exit": 1,
+    "check": "flux::E008\n\n  x control flow `snap()` is not allowed in a derived expression\n   ,-[<repo>/comparison/openness/repro/const_snap.fl:2:11]\n 1 | let mut x = 1\n 2 | const X = snap(x)\n   :           ^^^|^^^\n   :              `-- not allowed here\n   `----\n  help: use `watch`, `on`, `track fn`, or `act fn` for statements with side effects or loops\n"
+  },
+  "closure_write": {
+    "source": "fn main() { let mut x = 0; let f = |n: Int| match n { _ => { x = n; x } }; f(1) }\n",
+    "command": [
+      "flux",
+      "check",
+      "<repo>/comparison/openness/repro/closure_write.fl"
+    ],
+    "exit": 1,
+    "check": "flux::E009\n\n  x cannot assign to immutable local `x`\n   ,-[<repo>/comparison/openness/repro/closure_write.fl:1:62]\n 1 | fn main() { let mut x = 0; let f = |n: Int| match n { _ => { x = n; x } }; f(1) }\n   :                                                              ^^|^^\n   :                                                                `-- immutable local\n   `----\n  help: use `let mut x = ...` to declare a mutable local, or assign to a `let mut` source binding\n"
+  },
+  "closure_return": {
+    "source": "fn main() { let f = |n: Int| match n { _ => return n }; f(1) }\n",
+    "command": [
+      "flux",
+      "check",
+      "<repo>/comparison/openness/repro/closure_return.fl"
+    ],
+    "exit": 1,
+    "check": "flux::E000\n\n  x parse error: `return` inside a closure is not supported inside a match arm block\n   ,-[<repo>/comparison/openness/repro/closure_return.fl:1:40]\n 1 | fn main() { let f = |n: Int| match n { _ => return n }; f(1) }\n   :                                        ^^^^^^^|^^^^^^\n   :                                               `-- here\n   `----\n  help: check syntax near the highlighted token\n"
+  },
+  "function_eq": {
+    "source": "fn id(x: Int) -> Int { x }\nfn main() { id == id }\n",
+    "command": [
+      "flux",
+      "check",
+      "<repo>/comparison/openness/repro/function_eq.fl"
+    ],
+    "exit": 1,
+    "check": "flux::E005\n\n  x type mismatch: expected `compatible equality types`, found `fn(Int64) -> Int64 and fn(Int64) -> Int64`\n   ,-[<repo>/comparison/openness/repro/function_eq.fl:2:13]\n 1 | fn id(x: Int) -> Int { x }\n 2 | fn main() { id == id }\n   :             ^^^^|^^^\n   :                 `-- expected `compatible equality types`\n   `----\n"
+  },
+  "function_display": {
+    "source": "import io { println }\nfn id(x: Int) -> Int { x }\nfn main() { println(\"{id}\") }\n",
+    "command": [
+      "flux",
+      "check",
+      "<repo>/comparison/openness/repro/function_display.fl"
+    ],
+    "exit": 1,
+    "check": "flux::E005\n\n  x type mismatch: expected `a value with a text form inside `{\u2026}` (not a function)`, found `fn(Int64) -> Int64`\n   ,-[<repo>/comparison/openness/repro/function_display.fl:3:23]\n 2 | fn id(x: Int) -> Int { x }\n 3 | fn main() { println(\"{id}\") }\n   :                       ^|\n   :                        `-- expected `a value with a text form inside `{\u2026}` (not a function)`\n   `----\n"
+  },
+  "mut_expression": {
+    "source": "fn grow(mut x: Int) -> Int { x += 1; x }\nfn main() { let mut x = 0; 1 + grow(mut x) }\n",
+    "command": [
+      "flux",
+      "check",
+      "<repo>/comparison/openness/repro/mut_expression.fl"
+    ],
+    "exit": 1,
+    "check": "flux::E000\n\n  x parse error: a call with `mut` arguments must be a statement, or the value of a `let`\n   ,-[<repo>/comparison/openness/repro/mut_expression.fl:2:32]\n 1 | fn grow(mut x: Int) -> Int { x += 1; x }\n 2 | fn main() { let mut x = 0; 1 + grow(mut x) }\n   :                                ^^^^^|^^^^^\n   :                                     `-- here\n   `----\n  help: check syntax near the highlighted token\n"
+  },
+  "mut_value": {
+    "source": "fn grow(mut x: Int) { x += 1 }\nfn main() { let f = grow; let done = 0 }\n",
+    "command": [
+      "flux",
+      "check",
+      "<repo>/comparison/openness/repro/mut_value.fl"
+    ],
+    "exit": 1,
+    "check": "flux::E000\n\n  x parse error: `grow` has `mut` parameters and cannot be used as a value\n   ,-[<repo>/comparison/openness/repro/mut_value.fl:2:21]\n 1 | fn grow(mut x: Int) { x += 1 }\n 2 | fn main() { let f = grow; let done = 0 }\n   :                     ^^|^\n   :                       `-- here\n   `----\n  help: check syntax near the highlighted token\n"
+  },
+  "mut_missing": {
+    "source": "fn grow(mut x: Int) { x += 1 }\nfn main() { let mut x = 0; grow(x) }\n",
+    "command": [
+      "flux",
+      "check",
+      "<repo>/comparison/openness/repro/mut_missing.fl"
+    ],
+    "exit": 1,
+    "check": "flux::E000\n\n  x parse error: this function has `mut` parameters: call it on its own line or as a `let` value, with `mut` before each of those arguments\n   ,-[<repo>/comparison/openness/repro/mut_missing.fl:2:28]\n 1 | fn grow(mut x: Int) { x += 1 }\n 2 | fn main() { let mut x = 0; grow(x) }\n   :                            ^^^|^^^\n   :                               `-- here\n   `----\n  help: check syntax near the highlighted token\n"
+  },
+  "mut_method_result": {
+    "source": "struct P { x: Int }\nimpl P { fn grow(mut self) -> Int { self.x += 1; self.x } }\n",
+    "command": [
+      "flux",
+      "check",
+      "<repo>/comparison/openness/repro/mut_method_result.fl"
+    ],
+    "exit": 1,
+    "check": "flux::E020\n\n  x `grow` changes its receiver (`mut self`) and cannot also return a value\n   ,-[<repo>/comparison/openness/repro/mut_method_result.fl:2:31]\n 1 | struct P { x: Int }\n 2 | impl P { fn grow(mut self) -> Int { self.x += 1; self.x } }\n   :                               ^|^\n   :                                `-- in this impl\n   `----\n"
+  },
+  "mut_method_generic": {
+    "source": "struct P { x: Int }\nimpl P { fn grow[T](mut self, n: T) { } }\n",
+    "command": [
+      "flux",
+      "check",
+      "<repo>/comparison/openness/repro/mut_method_generic.fl"
+    ],
+    "exit": 1,
+    "check": "flux::E020\n\n  x method `grow` has type parameters and cannot be `mut self`\n   ,-[<repo>/comparison/openness/repro/mut_method_generic.fl:2:13]\n 1 | struct P { x: Int }\n 2 | impl P { fn grow[T](mut self, n: T) { } }\n   :             ^^|^\n   :               `-- in this impl\n   `----\n"
+  },
+  "method_mut_arg": {
+    "source": "struct P { x: Int }\nimpl P { fn grow(self, mut n: Int) { n += 1 } }\n",
+    "command": [
+      "flux",
+      "check",
+      "<repo>/comparison/openness/repro/method_mut_arg.fl"
+    ],
+    "exit": 1,
+    "check": "flux::E020\n\n  x method `grow` cannot have `mut` parameters; only `mut self` changes what it is called on\n   ,-[<repo>/comparison/openness/repro/method_mut_arg.fl:2:13]\n 1 | struct P { x: Int }\n 2 | impl P { fn grow(self, mut n: Int) { n += 1 } }\n   :             ^^|^\n   :               `-- in this impl\n   `----\n"
+  },
+  "generic_specialized_impl": {
+    "source": "struct P[T] { x: T }\nimpl P[Int] { fn get(self) -> Int { self.x } }\n",
+    "command": [
+      "flux",
+      "check",
+      "<repo>/comparison/openness/repro/generic_specialized_impl.fl"
+    ],
+    "exit": 1,
+    "check": "flux::E020\n\n  x an impl for one instance of a generic type is not supported; write `impl[T] P[T]` for all of them\n   ,-[<repo>/comparison/openness/repro/generic_specialized_impl.fl:2:6]\n 1 | struct P[T] { x: T }\n 2 | impl P[Int] { fn get(self) -> Int { self.x } }\n   :      ^^^|^^\n   :         `-- in this impl\n   `----\n"
+  },
+  "eq_impl": {
+    "source": "struct P { x: Int }\nimpl Eq for P { }\n",
+    "command": [
+      "flux",
+      "check",
+      "<repo>/comparison/openness/repro/eq_impl.fl"
+    ],
+    "exit": 1,
+    "check": "flux::E020\n\n  x `Eq` is built in: a type has it when the language can compare its values; it cannot be implemented\n   ,-[<repo>/comparison/openness/repro/eq_impl.fl:2:6]\n 1 | struct P { x: Int }\n 2 | impl Eq for P { }\n   :      ^|\n   :       `-- in this impl\n   `----\n"
+  },
+  "empty_array": {
+    "source": "fn main() { let xs = []; let done = 0 }\n",
+    "command": [
+      "flux",
+      "check",
+      "<repo>/comparison/openness/repro/empty_array.fl"
+    ],
+    "exit": 1,
+    "check": "flux::E005\n\n  x type mismatch: expected `an element type annotation, e.g. `let xs: [String] = []``, found `empty array `[]` with no element type`\n   ,-[<repo>/comparison/openness/repro/empty_array.fl:1:13]\n 1 | fn main() { let xs = []; let done = 0 }\n   :             ^^^^^|^^^^^\n   :                  `-- expected `an element type annotation, e.g. `let xs: [String] = []``\n   `----\n"
+  },
+  "singleton_tuple": {
+    "source": "fn main() { let x = (1,); let done = 0 }\n",
+    "command": [
+      "flux",
+      "check",
+      "<repo>/comparison/openness/repro/singleton_tuple.fl"
+    ],
+    "exit": 1,
+    "check": "flux::E000\n\n  x parse error: a tuple has two or more values; write `(x)` to group one value\n   ,-[<repo>/comparison/openness/repro/singleton_tuple.fl:1:21]\n 1 | fn main() { let x = (1,); let done = 0 }\n   :                     ^^|^\n   :                       `-- here\n   `----\n  help: check syntax near the highlighted token\n"
+  },
+  "float_pattern": {
+    "source": "fn f(x: Float) -> Int { match x { 1.0 => 1, _ => 0 } }\n",
+    "command": [
+      "flux",
+      "check",
+      "<repo>/comparison/openness/repro/float_pattern.fl"
+    ],
+    "exit": 1,
+    "check": "flux::E000\n\n  x parse error: a literal pattern must be an Int, a String without `{\u2026}` interpolation, or a Bool\n   ,-[<repo>/comparison/openness/repro/float_pattern.fl:1:35]\n 1 | fn f(x: Float) -> Int { match x { 1.0 => 1, _ => 0 } }\n   :                                   ^|^\n   :                                    `-- here\n   `----\n  help: check syntax near the highlighted token\n"
+  },
+  "match_exhaustive": {
+    "source": "fn f(x: Int) -> Int { match x { 0 => 1 } }\n",
+    "command": [
+      "flux",
+      "check",
+      "<repo>/comparison/openness/repro/match_exhaustive.fl"
+    ],
+    "exit": 1,
+    "check": "flux::E005\n\n  x type mismatch: expected `catch-all pattern`, found `Int64`\n   ,-[<repo>/comparison/openness/repro/match_exhaustive.fl:1:23]\n 1 | fn f(x: Int) -> Int { match x { 0 => 1 } }\n   :                       ^^^^^^^^^|^^^^^^^^\n   :                                `-- expected `catch-all pattern`\n   `----\n"
+  },
+  "branch_widen": {
+    "source": "fn f(x: Bool) { if x { 1 } else { 2.0 } }\n",
+    "command": [
+      "flux",
+      "check",
+      "<repo>/comparison/openness/repro/branch_widen.fl"
+    ],
+    "exit": 0,
+    "check": "ok\n",
+    "run_exit": 0,
+    "run": ""
+  },
+  "semicolon": {
+    "source": "fn f() { 1; }\nfn main() { let x: Unit = f(); let done = 0 }\n",
+    "command": [
+      "flux",
+      "check",
+      "<repo>/comparison/openness/repro/semicolon.fl"
+    ],
+    "exit": 1,
+    "check": "flux::E005\n\n  x type mismatch: expected `Unit`, found `Int64`\n   ,-[<repo>/comparison/openness/repro/semicolon.fl:2:13]\n 1 | fn f() { 1; }\n 2 | fn main() { let x: Unit = f(); let done = 0 }\n   :             ^^^^^^^^|^^^^^^^^\n   :                     `-- expected `Unit`\n   `----\n"
+  },
+  "break": {
+    "source": "fn main() { break }\n",
+    "command": [
+      "flux",
+      "check",
+      "<repo>/comparison/openness/repro/break.fl"
+    ],
+    "exit": 1,
+    "check": "flux::E000\n\n  x parse error: `break` outside a loop: it must be inside a `while` or `for` body\n   ,-[<repo>/comparison/openness/repro/break.fl:1:13]\n 1 | fn main() { break }\n   :             ^^|^^\n   :               `-- here\n   `----\n  help: check syntax near the highlighted token\n"
+  },
+  "match_watch_control": {
+    "source": "let x = 1\nwatch x { match x { _ => { while false { }; let done = 0 } } }\n",
+    "command": [
+      "flux",
+      "check",
+      "<repo>/comparison/openness/repro/match_watch_control.fl"
+    ],
+    "exit": 1,
+    "check": "flux::E000\n\n  x parse error: `while` outside a function is not supported inside a match arm block\n   ,-[<repo>/comparison/openness/repro/match_watch_control.fl:2:21]\n 1 | let x = 1\n 2 | watch x { match x { _ => { while false { }; let done = 0 } } }\n   :                     ^^^^^^^^^^^^^^^^^^^|^^^^^^^^^^^^^^^^^^\n   :                                        `-- here\n   `----\n  help: check syntax near the highlighted token\n"
+  },
+  "module_cycle": {
+    "source": "import cycle\n",
+    "command": [
+      "flux",
+      "check",
+      "<repo>/comparison/openness/repro/module_cycle.fl"
+    ],
+    "exit": 1,
+    "check": "flux::E013\n\n  x cyclic import: <repo>/comparison/openness/repro/module_cycle.fl -> <repo>/comparison/openness/repro/cycle.fl -> <home>/\n  | Desktop/Project/Flux/comparison/openness/repro/module_cycle.fl\n   ,-[<repo>/comparison/openness/repro/cycle.fl:1:1]\n 1 | import module_cycle\n   : ^^^^^^^^^^|^^^^^^^^^\n   :           `-- import cycle\n   `----\n  help: remove the circular import dependency\n"
+  },
+  "private_import": {
+    "source": "import owner { secret }\n",
+    "command": [
+      "flux",
+      "check",
+      "<repo>/comparison/openness/repro/private_import.fl"
+    ],
+    "exit": 1,
+    "check": "flux::E022\n\n  x `secret` in module `owner` is private\n   ,-[<repo>/comparison/openness/repro/private_import.fl:1:1]\n 1 | import owner { secret }\n   : ^^^^^^^^^^^|^^^^^^^^^^^\n   :            `-- not public\n   `----\n  help: mark it `pub` in `owner` to import it\n"
+  },
+  "missing_import": {
+    "source": "import owner { missing }\n",
+    "command": [
+      "flux",
+      "check",
+      "<repo>/comparison/openness/repro/missing_import.fl"
+    ],
+    "exit": 1,
+    "check": "flux::E014\n\n  x unknown export `missing` in module `owner`\n   ,-[<repo>/comparison/openness/repro/missing_import.fl:1:1]\n 1 | import owner { missing }\n   : ^^^^^^^^^^^^|^^^^^^^^^^^\n   :             `-- not exported\n   `----\n  help: check the module's public exports\n"
+  },
+  "alias_cycle": {
+    "source": "type A = A\n",
+    "command": [
+      "flux",
+      "check",
+      "<repo>/comparison/openness/repro/alias_cycle.fl"
+    ],
+    "exit": 1,
+    "check": "flux::E024\n\n  x type alias `A` refers to itself\n   ,-[<repo>/comparison/openness/repro/alias_cycle.fl:1:6]\n 1 | type A = A\n   :      |\n   :      `-- part of the cycle\n   `----\n  help: an alias is another name for a type; use a struct or enum for a recursive type\n"
+  },
+  "unicode_name": {
+    "source": "fn main() { let caf\u00e9 = 1; let done = 0 }\n",
+    "command": [
+      "flux",
+      "check",
+      "<repo>/comparison/openness/repro/unicode_name.fl"
+    ],
+    "exit": 1,
+    "check": "flux::E000\n\n  x parse error: unexpected `\u00e9`: outside strings and comments, Flux code is ASCII only\n   ,-[<repo>/comparison/openness/repro/unicode_name.fl:1:20]\n 1 | fn main() { let caf\u00e9 = 1; let done = 0 }\n   :                    |\n   :                    `-- here\n   `----\n  help: check syntax near the highlighted token\n"
+  },
+  "main_args": {
+    "source": "fn main(x: Int) -> Int { x }\n",
+    "command": [
+      "flux",
+      "check",
+      "<repo>/comparison/openness/repro/main_args.fl"
+    ],
+    "exit": 1,
+    "check": "flux::E005\n\n  x type mismatch: expected ``fn main()` or `fn main() -> Int` (no parameters)`, found ``main` with 1 parameter(s)`\n   ,-[<repo>/comparison/openness/repro/main_args.fl:1:1]\n 1 | fn main(x: Int) -> Int { x }\n   : ^^^^^^^^^^^^^^|^^^^^^^^^^^^^\n   :               `-- expected ``fn main()` or `fn main() -> Int` (no parameters)`\n   `----\n"
+  },
+  "extern_mut": {
+    "source": "extern fn host(mut x: Int)\n",
+    "command": [
+      "flux",
+      "check",
+      "<repo>/comparison/openness/repro/extern_mut.fl"
+    ],
+    "exit": 1,
+    "check": "flux::E000\n\n  x parse error: parameter `x` of an `extern fn` cannot be `mut`: the host receives values\n   ,-[<repo>/comparison/openness/repro/extern_mut.fl:1:16]\n 1 | extern fn host(mut x: Int)\n   :                ^^^^^|^^^^\n   :                     `-- here\n   `----\n  help: check syntax near the highlighted token\n"
+  },
+  "live_nested_type": {
+    "source": "live fn C() { struct P { x: Int } }\n",
+    "command": [
+      "flux",
+      "check",
+      "<repo>/comparison/openness/repro/live_nested_type.fl"
+    ],
+    "exit": 1,
+    "check": "flux::E000\n\n  x parse error: expected live_item\n   ,-[<repo>/comparison/openness/repro/live_nested_type.fl:1:15]\n 1 | live fn C() { struct P { x: Int } }\n   :               |\n   :               `-- here\n   `----\n  help: check syntax near the highlighted token\n"
+  },
+  "extern_run": {
+    "source": "extern fn host() -> Int\nfn main() { }\n",
+    "command": [
+      "flux",
+      "check",
+      "<repo>/comparison/openness/repro/extern_run.fl"
+    ],
+    "exit": 0,
+    "check": "ok\n",
+    "run_exit": 1,
+    "run": "flux::E018\n\n  x this host does not provide `host`, declared with `extern fn`\n   ,-[<repo>/comparison/openness/repro/extern_run.fl:1:1]\n 1 | extern fn host() -> Int\n   : ^\n   : `-- while evaluating this\n 2 | fn main() { }\n   `----\n"
+  },
+  "runtime_overflow": {
+    "source": "fn main() { 9223372036854775807 + 1 }\n",
+    "command": [
+      "flux",
+      "check",
+      "<repo>/comparison/openness/repro/runtime_overflow.fl"
+    ],
+    "exit": 0,
+    "check": "ok\n",
+    "run_exit": 1,
+    "run": "error: runtime error: integer overflow in `main`\n  at main (<repo>/comparison/openness/repro/runtime_overflow.fl:1:13)\n"
+  },
+  "runtime_index": {
+    "source": "fn main() { [1][2] }\n",
+    "command": [
+      "flux",
+      "check",
+      "<repo>/comparison/openness/repro/runtime_index.fl"
+    ],
+    "exit": 0,
+    "check": "ok\n",
+    "run_exit": 1,
+    "run": "error: runtime error: index out of bounds in `main`\n  at main (<repo>/comparison/openness/repro/runtime_index.fl:1:13)\n"
+  },
+  "runtime_map_missing": {
+    "source": "import collections { map_new }\nfn main() { let m: Map[String, Int] = map_new(); m[\"x\"] }\n",
+    "command": [
+      "flux",
+      "check",
+      "<repo>/comparison/openness/repro/runtime_map_missing.fl"
+    ],
+    "exit": 0,
+    "check": "ok\n",
+    "run_exit": 1,
+    "run": "error: runtime error: key not found in `main`\n  at main (<repo>/comparison/openness/repro/runtime_map_missing.fl:2:50)\n"
+  },
+  "import_escape": {
+    "source": "import ../../../../SPEC\n",
+    "command": [
+      "flux",
+      "check",
+      "<repo>/comparison/openness/repro/import_escape.fl"
+    ],
+    "exit": 1,
+    "check": "flux::E012\n\n  x import path escapes project root: `../../../../SPEC`\n   ,-[<repo>/comparison/openness/repro/import_escape.fl:1:1]\n 1 | import ../../../../SPEC\n   : ^^^^^^^^^^^^|^^^^^^^^^^^\n   :             `-- invalid import\n   `----\n  help: use a relative import within the project directory\n"
+  },
+  "duplicate": {
+    "source": "const X = 1\nconst X = 2\n",
+    "command": [
+      "flux",
+      "check",
+      "<repo>/comparison/openness/repro/duplicate.fl"
+    ],
+    "exit": 1,
+    "check": "flux::E004\n\n  x duplicate definition of `X`\n   ,-[<repo>/comparison/openness/repro/duplicate.fl:1:7]\n 1 | const X = 1\n   :       |\n   :       `-- previous definition\n 2 | const X = 2\n   : ^^^^^^|^^^^^\n   :       `-- duplicate\n   `----\n"
+  },
+  "unknown_type": {
+    "source": "fn f(x: Mystery) { }\n",
+    "command": [
+      "flux",
+      "check",
+      "<repo>/comparison/openness/repro/unknown_type.fl"
+    ],
+    "exit": 1,
+    "check": "flux::E007\n\n  x unknown type `Mystery`\n   ,-[<repo>/comparison/openness/repro/unknown_type.fl:1:9]\n 1 | fn f(x: Mystery) { }\n   :         ^^^|^^^\n   :            `-- unknown type\n   `----\n"
+  },
+  "not_callable": {
+    "source": "fn main() { let n = 1; n() }\n",
+    "command": [
+      "flux",
+      "check",
+      "<repo>/comparison/openness/repro/not_callable.fl"
+    ],
+    "exit": 1,
+    "check": "flux::E023\n\n  x `n` is not a function\n   ,-[<repo>/comparison/openness/repro/not_callable.fl:1:24]\n 1 | fn main() { let n = 1; n() }\n   :                        ^|^\n   :                         `-- called here\n   `----\n  help: only functions, closures, and values of a function type such as `fn(Int) -> Int` can be called\n"
+  },
+  "method_missing": {
+    "source": "fn main() { 1.missing() }\n",
+    "command": [
+      "flux",
+      "check",
+      "<repo>/comparison/openness/repro/method_missing.fl"
+    ],
+    "exit": 1,
+    "check": "flux::E019\n\n  x no method `missing` for type `Int`\n   ,-[<repo>/comparison/openness/repro/method_missing.fl:1:13]\n 1 | fn main() { 1.missing() }\n   :             ^^^^^|^^^^^\n   :                  `-- method not found\n   `----\n  help: methods come from `impl Trait for Int`; add one that defines `missing`\n"
+  },
+  "trait_mismatch": {
+    "source": "trait T { fn f(self) -> Int; }\nstruct P { x: Int }\nimpl T for P { fn f(self) -> String { \"x\" } }\n",
+    "command": [
+      "flux",
+      "check",
+      "<repo>/comparison/openness/repro/trait_mismatch.fl"
+    ],
+    "exit": 1,
+    "check": "flux::E020\n\n  x `f` returns `String`, but trait `T` declares `Int`\n   ,-[<repo>/comparison/openness/repro/trait_mismatch.fl:3:19]\n 2 | struct P { x: Int }\n 3 | impl T for P { fn f(self) -> String { \"x\" } }\n   :                   |\n   :                   `-- in this impl\n   `----\n"
+  },
+  "live_write_immutable": {
+    "source": "live fn C() { pub let mut n = 1 }\nlet c = C()\nact fn main() { c.n = 2 }\n",
+    "command": [
+      "flux",
+      "check",
+      "<repo>/comparison/openness/repro/live_write_immutable.fl"
+    ],
+    "exit": 1,
+    "check": "flux::E016\n\n  x binding `c` is assigned; declare it with `let mut`\n   ,-[<repo>/comparison/openness/repro/live_write_immutable.fl:2:1]\n 1 | live fn C() { pub let mut n = 1 }\n 2 | let c = C()\n   : ^^^^^^|^^^^^\n   :       `-- binding declared here\n 3 | act fn main() { c.n = 2 }\n   `----\n  help: use `derived` for computed values, or `let mut` for reassignable sources\n"
+  },
+  "loop_tracked": {
+    "source": "import io { println }\nlet mut x = 2\ntrack fn sum() -> Int { let mut n = 0; for k in [x, x] { n += k }; n }\nderived y = sum()\nact fn main() { x = 3; println(\"{y}\") }\n",
+    "command": [
+      "flux",
+      "check",
+      "<repo>/comparison/openness/repro/loop_tracked.fl"
+    ],
+    "exit": 0,
+    "check": "ok\n",
+    "run_exit": 0,
+    "run": "6\n"
+  },
+  "source_if_loop": {
+    "source": "let mut x = 0\nif true { while false { x = 1 } }\n",
+    "command": [
+      "flux",
+      "check",
+      "<repo>/comparison/openness/repro/source_if_loop.fl"
+    ],
+    "exit": 0,
+    "check": "ok\n"
+  },
+  "if_stmt_derived": {
+    "source": "fn f(x: Bool) -> Int { if x { 1 } else { 2 } }\nderived y = f(true)\n",
+    "command": [
+      "flux",
+      "check",
+      "<repo>/comparison/openness/repro/if_stmt_derived.fl"
+    ],
+    "exit": 0,
+    "check": "ok\nflux::E015\n\n  x unused binding `y`\n   ,-[<repo>/comparison/openness/repro/if_stmt_derived.fl:2:1]\n 1 | fn f(x: Bool) -> Int { if x { 1 } else { 2 } }\n 2 | derived y = f(true)\n   : ^^^^^^^^^^|^^^^^^^^^\n   :           `-- never read\n   `----\n  help: remove the binding or reference it from a derived value, watch, or handler\n"
+  },
+  "ignore_effect": {
+    "source": "import io { println }\nfn noisy() -> Int { println(\"x\"); 1 }\nfn ignore(f: fn() -> Int) -> Int { 1 }\nderived x = ignore(noisy)\n",
+    "command": [
+      "flux",
+      "check",
+      "<repo>/comparison/openness/repro/ignore_effect.fl"
+    ],
+    "exit": 1,
+    "check": "flux::E015\n\n  x unused binding `x`\n   ,-[<repo>/comparison/openness/repro/ignore_effect.fl:4:1]\n 3 | fn ignore(f: fn() -> Int) -> Int { 1 }\n 4 | derived x = ignore(noisy)\n   : ^^^^^^^^^^^^^|^^^^^^^^^^^^\n   :              `-- never read\n   `----\n  help: remove the binding or reference it from a derived value, watch, or handler\nflux::E017\n\n  x side effect `noisy` is not allowed in a derived expression\n   ,-[<repo>/comparison/openness/repro/ignore_effect.fl:4:20]\n 3 | fn ignore(f: fn() -> Int) -> Int { 1 }\n 4 | derived x = ignore(noisy)\n   :                    ^^|^^\n   :                      `-- side effect\n   `----\n  help: move I/O and printing into `watch`, `on`, or a function body such as `main`\n"
+  },
+  "unit_literal": {
+    "source": "fn main() { () }\n",
+    "command": [
+      "flux",
+      "check",
+      "<repo>/comparison/openness/repro/unit_literal.fl"
+    ],
+    "exit": 1,
+    "check": "flux::E000\n\n  x parse error: expected unary_expr\n   ,-[<repo>/comparison/openness/repro/unit_literal.fl:1:14]\n 1 | fn main() { () }\n   :              |\n   :              `-- here\n   `----\n  help: check syntax near the highlighted token\n"
+  },
+  "array_heterogeneous": {
+    "source": "fn main() { [1, \"x\"] }\n",
+    "command": [
+      "flux",
+      "check",
+      "<repo>/comparison/openness/repro/array_heterogeneous.fl"
+    ],
+    "exit": 1,
+    "check": "flux::E005\n\n  x type mismatch: expected `Int64`, found `String`\n   ,-[<repo>/comparison/openness/repro/array_heterogeneous.fl:1:17]\n 1 | fn main() { [1, \"x\"] }\n   :                 ^|^\n   :                  `-- expected `Int64`\n   `----\n"
+  },
+  "no_bit_assign": {
+    "source": "fn main() { let mut x = 1; x &= 2 }\n",
+    "command": [
+      "flux",
+      "check",
+      "<repo>/comparison/openness/repro/no_bit_assign.fl"
+    ],
+    "exit": 1,
+    "check": "flux::E000\n\n  x parse error: expected stmt, place_step, assign_op, eq_op, rel_op, add_op, bits_op, mul_op, kw_with, index_suffix, try_suffix, field_suffix, call_args, or kw_as\n   ,-[<repo>/comparison/openness/repro/no_bit_assign.fl:1:30]\n 1 | fn main() { let mut x = 1; x &= 2 }\n   :                              |\n   :                              `-- here\n   `----\n  help: check syntax near the highlighted token\n"
+  },
+  "numeric_literal": {
+    "source": "fn main() { 9223372036854775808 }\n",
+    "command": [
+      "flux",
+      "check",
+      "<repo>/comparison/openness/repro/numeric_literal.fl"
+    ],
+    "exit": 1,
+    "check": "flux::E000\n\n  x parse error: numeric literal `9223372036854775808` is outside the supported range for its type\n   ,-[<repo>/comparison/openness/repro/numeric_literal.fl:1:13]\n 1 | fn main() { 9223372036854775808 }\n   :             ^^^^^^^^^|^^^^^^^^^\n   :                      `-- here\n   `----\n  help: check syntax near the highlighted token\n"
+  },
+  "leading_minus": {
+    "source": "fn main() {\n 1\n -1\n}\n",
+    "command": [
+      "flux",
+      "check",
+      "<repo>/comparison/openness/repro/leading_minus.fl"
+    ],
+    "exit": 1,
+    "check": "flux::E000\n\n  x parse error: this line starts with `-`, which would continue the expression on the line above as a subtraction; to subtract, end the previous line with `-`; for a new negative value, write `0 -\n  | \u2026` or bind it with `let`\n   ,-[<repo>/comparison/openness/repro/leading_minus.fl:3:2]\n 2 |  1\n 3 |  -1\n   :  |\n   :  `-- here\n 4 | }\n   `----\n  help: check syntax near the highlighted token\n"
+  },
+  "string_escape": {
+    "source": "fn main() { \"\\q\" }\n",
+    "command": [
+      "flux",
+      "check",
+      "<repo>/comparison/openness/repro/string_escape.fl"
+    ],
+    "exit": 1,
+    "check": "flux::E000\n\n  x parse error: unknown escape sequence `\\q` in string literal (supported: \\n \\t \\r \\0 \\\\ \\\" \\{ \\})\n   ,-[<repo>/comparison/openness/repro/string_escape.fl:1:14]\n 1 | fn main() { \"\\q\" }\n   :              ^|\n   :               `-- here\n   `----\n  help: check syntax near the highlighted token\n"
+  },
+  "match_watch_control2": {
+    "source": "let x = 1\nwatch x { match x { _ => { while false { }; 1 } } }\n",
+    "command": [
+      "flux",
+      "check",
+      "<repo>/comparison/openness/repro/match_watch_control2.fl"
+    ],
+    "exit": 1,
+    "check": "flux::E000\n\n  x parse error: `while` outside a function is not supported inside a match arm block\n   ,-[<repo>/comparison/openness/repro/match_watch_control2.fl:2:21]\n 1 | let x = 1\n 2 | watch x { match x { _ => { while false { }; 1 } } }\n   :                     ^^^^^^^^^^^^^|^^^^^^^^^^^^^\n   :                                  `-- here\n   `----\n  help: check syntax near the highlighted token\n"
+  },
+  "branch_widen_check": {
+    "source": "fn f(x: Bool) -> Int { if x { 1 } else { 2.0 } }\n",
+    "command": [
+      "flux",
+      "check",
+      "<repo>/comparison/openness/repro/branch_widen_check.fl"
+    ],
+    "exit": 1,
+    "check": "flux::E005\n\n  x type mismatch: expected `Int64`, found `Float64`\n   ,-[<repo>/comparison/openness/repro/branch_widen_check.fl:1:24]\n 1 | fn f(x: Bool) -> Int { if x { 1 } else { 2.0 } }\n   :                        ^^^^^^^^^^^|^^^^^^^^^^^\n   :                                   `-- expected `Int64`\n   `----\n"
+  },
+  "closure_default": {
+    "source": "fn main() { let f = |i| i.price; f(1) }\n",
+    "command": [
+      "flux",
+      "check",
+      "<repo>/comparison/openness/repro/closure_default.fl"
+    ],
+    "exit": 1,
+    "check": "flux::E005\n\n  x type mismatch: expected `field `price``, found `Int64`\n   ,-[<repo>/comparison/openness/repro/closure_default.fl:1:25]\n 1 | fn main() { let f = |i| i.price; f(1) }\n   :                         ^^^|^^^\n   :                            `-- expected `field `price``\n   `----\n  help: closure parameter `i` defaulted to `Int` because it had no type annotation or call-site hint; add an explicit annotation, e.g. `|i: YourType| ...`\n"
+  },
+  "live_dynamic_read_cycle": {
+    "source": "live fn C() { pub derived d: Int = 1 + others.map(|c| c.d).reduce(0, |a, b| a + b) }\nlet mut others: [C] = []\nlet first = C()\nact fn main() { others = [first] }\n",
+    "command": [
+      "flux",
+      "check",
+      "<repo>/comparison/openness/repro/live_dynamic_read_cycle.fl"
+    ],
+    "exit": 0,
+    "check": "ok\n",
+    "run_exit": 1,
+    "run": "error: runtime error: a derived value depends on itself in `C.d`\n  at <closure> (<repo>/comparison/openness/repro/live_dynamic_read_cycle.fl:1:55)\n  at C.d (<repo>/comparison/openness/repro/live_dynamic_read_cycle.fl:1:15)\n"
+  },
+  "live_uninit": {
+    "source": "live fn C() { pub derived d: Int = total + 1 }\nlet all = [C()]\nfn sum(xs: [C]) -> Int { xs.map(|c| c.d).reduce(0, |a, b| a + b) }\nderived total: Int = sum(all)\nfn main() { }\n",
+    "command": [
+      "flux",
+      "check",
+      "<repo>/comparison/openness/repro/live_uninit.fl"
+    ],
+    "exit": 0,
+    "check": "ok\n",
+    "run_exit": 1,
+    "run": "flux::E018\n\n  x runtime error: a binding was read before its initial value was set in `total`\n  |   at total (<repo>/comparison/openness/repro/live_uninit.fl:4:1)\n  |   at C.d (<repo>/comparison/openness/repro/live_uninit.fl:1:15)\n  |   at C\n  |   at module initialization (<repo>/comparison/openness/repro/live_uninit.fl:2:1)\n   ,-[<repo>/comparison/openness/repro/live_uninit.fl:4:1]\n 3 | fn sum(xs: [C]) -> Int { xs.map(|c| c.d).reduce(0, |a, b| a + b) }\n 4 | derived total: Int = sum(all)\n   : ^^^^^^^^^^^^^^^|^^^^^^^^^^^^^^\n   :                `-- while evaluating this\n 5 | fn main() { }\n   `----\n"
+  },
+  "e026": {
+    "source": "rfn f() -> Int { 1 }\nact fn main() { f() }\n",
+    "command": [
+      "flux",
+      "check",
+      "<repo>/comparison/openness/repro/e026.fl"
+    ],
+    "exit": 0,
+    "check": "ok\nflux::E026\n\n  x `rfn` is now written `track fn`\n   ,-[<repo>/comparison/openness/repro/e026.fl:1:1]\n 1 | rfn f() -> Int { 1 }\n   : ^|^\n   :  `-- replace with `track fn`\n 2 | act fn main() { f() }\n   `----\n"
+  },
+  "reserved": {
+    "source": "const __mod_mine = 1\n",
+    "command": [
+      "flux",
+      "check",
+      "<repo>/comparison/openness/repro/reserved.fl"
+    ],
+    "exit": 0,
+    "check": "ok\n"
+  },
+  "runtime_cast": {
+    "source": "fn main() { -1 as UInt8 }\n",
+    "command": [
+      "flux",
+      "check",
+      "<repo>/comparison/openness/repro/runtime_cast.fl"
+    ],
+    "exit": 0,
+    "check": "ok\n",
+    "run_exit": 1,
+    "run": "error: runtime error: numeric cast out of range in `main`\n  at main (<repo>/comparison/openness/repro/runtime_cast.fl:1:13)\n"
+  },
+  "runtime_divide": {
+    "source": "fn main() { 1 / 0 }\n",
+    "command": [
+      "flux",
+      "check",
+      "<repo>/comparison/openness/repro/runtime_divide.fl"
+    ],
+    "exit": 0,
+    "check": "ok\n",
+    "run_exit": 1,
+    "run": "error: runtime error: integer division by zero in `main`\n  at main (<repo>/comparison/openness/repro/runtime_divide.fl:1:13)\n"
+  },
+  "event_arity": {
+    "source": "event Tick(n: Int)\nfn main() { emit Tick() }\n",
+    "command": [
+      "flux",
+      "check",
+      "<repo>/comparison/openness/repro/event_arity.fl"
+    ],
+    "exit": 1,
+    "check": "flux::E005\n\n  x type mismatch: expected `1 value`, found `0 values`\n   ,-[<repo>/comparison/openness/repro/event_arity.fl:2:13]\n 1 | event Tick(n: Int)\n 2 | fn main() { emit Tick() }\n   :             ^^^^^|^^^^^\n   :                  `-- expected `1 value`\n   `----\n"
+  },
+  "live_alias": {
+    "source": "import io { println }\nlive fn C() { pub let mut n = 0; pub act fn inc() { n += 1 } }\nlet a = C()\nlet b = a\nact fn main() { b.inc(); println(\"{a.n} {a == b}\") }\n",
+    "command": [
+      "flux",
+      "check",
+      "<repo>/comparison/openness/repro/live_alias.fl"
+    ],
+    "exit": 1,
+    "check": "flux::E019\n\n  x no method `inc` for type `Cell<C>`\n   ,-[<repo>/comparison/openness/repro/live_alias.fl:5:17]\n 4 | let b = a\n 5 | act fn main() { b.inc(); println(\"{a.n} {a == b}\") }\n   :                 ^^^|^^^\n   :                    `-- method not found\n   `----\n  help: methods come from `impl Trait for Cell<C>`; add one that defines `inc`\n",
+    "run_exit": 1,
+    "run": "flux::E019\n\n  x no method `inc` for type `Cell<C>`\n   ,-[<repo>/comparison/openness/repro/live_alias.fl:5:17]\n 4 | let b = a\n 5 | act fn main() { b.inc(); println(\"{a.n} {a == b}\") }\n   :                 ^^^|^^^\n   :                    `-- method not found\n   `----\n  help: methods come from `impl Trait for Cell<C>`; add one that defines `inc`\n"
+  },
+  "live_constructor_input": {
+    "source": "import io { println }\nlive fn C(x: Int) { pub let n = x }\nlet mut x = 1\nlet c = C(x)\nact fn main() { x = 2; println(\"{c.n}\") }\n",
+    "command": [
+      "flux",
+      "check",
+      "<repo>/comparison/openness/repro/live_constructor_input.fl"
+    ],
+    "exit": 0,
+    "check": "ok\n",
+    "run_exit": 0,
+    "run": "1\n"
+  },
+  "changing_method_expression": {
+    "source": "fn main() { let mut xs = [1]; let x = xs.push(2); x }\n",
+    "command": [
+      "flux",
+      "check",
+      "<repo>/comparison/openness/repro/changing_method_expression.fl"
+    ],
+    "exit": 1,
+    "check": "flux::E005\n\n  x type mismatch: expected ``push` called on its own line, on a variable or a part of one: `xs.push(\u2026)``, found ``push`, which changes its receiver, inside an expression`\n   ,-[<repo>/comparison/openness/repro/changing_method_expression.fl:1:39]\n 1 | fn main() { let mut xs = [1]; let x = xs.push(2); x }\n   :                                       ^^^^^|^^^^\n   :                                            `-- expected ``push` called on its own line, on a variable or a part of one: `xs.push(\u2026)``\n   `----\n"
+  },
+  "method_import_control": {
+    "source": "import collections { map_new }\nfn main() { let m: Map[String, Int] = map_new(); m.len() }\n",
+    "command": [
+      "flux",
+      "check",
+      "<repo>/comparison/openness/repro/method_import_control.fl"
+    ],
+    "exit": 0,
+    "check": "ok\n"
+  },
+  "generic_type_args": {
+    "source": "struct P[T] { x: T }\nfn f(x: P) { }\n",
+    "command": [
+      "flux",
+      "check",
+      "<repo>/comparison/openness/repro/generic_type_args.fl"
+    ],
+    "exit": 1,
+    "check": "flux::E005\n\n  x type mismatch: expected `P[T]`, found `P without type arguments`\n   ,-[<repo>/comparison/openness/repro/generic_type_args.fl:2:9]\n 1 | struct P[T] { x: T }\n 2 | fn f(x: P) { }\n   :         |\n   :         `-- expected `P[T]`\n   `----\n"
+  },
+  "string_empty_interp": {
+    "source": "fn main() { \"{}\" }\n",
+    "command": [
+      "flux",
+      "check",
+      "<repo>/comparison/openness/repro/string_empty_interp.fl"
+    ],
+    "exit": 1,
+    "check": "flux::E000\n\n  x parse error: expected unary_expr\n   ,-[<repo>/comparison/openness/repro/string_empty_interp.fl:1:15]\n 1 | fn main() { \"{}\" }\n   :               |\n   :               `-- here\n   `----\n  help: check syntax near the highlighted token\n"
+  },
+  "live_alias_local": {
+    "source": "import io { println }\nlive fn C() { pub let mut n = 0; pub act fn inc() { n += 1 } }\nfn main() { let a = C(); let b = a; b.inc(); println(\"{a.n} {a == b}\") }\n",
+    "command": [
+      "flux",
+      "check",
+      "<repo>/comparison/openness/repro/live_alias_local.fl"
+    ],
+    "exit": 0,
+    "check": "ok\n",
+    "run_exit": 0,
+    "run": "1 true\n"
+  },
+  "enum_tuple_fix": {
+    "source": "enum Tree { Leaf, Node((Tree, Tree)) }\n",
+    "command": [
+      "flux",
+      "check",
+      "<repo>/comparison/openness/repro/enum_tuple_fix.fl"
+    ],
+    "exit": 0,
+    "check": "ok\n"
+  },
+  "if_operand_fix": {
+    "source": "fn f(x: Int) -> Int { let y = if x > 0 { 1 } else { if x == 0 { 0 } else { -1 } }; y }\n",
+    "command": [
+      "flux",
+      "check",
+      "<repo>/comparison/openness/repro/if_operand_fix.fl"
+    ],
+    "exit": 0,
+    "check": "ok\n"
+  },
+  "nesting_limit": {
+    "source": "fn main() { (((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((1))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))) }\n",
+    "command": [
+      "flux",
+      "check",
+      "<repo>/comparison/openness/repro/nesting_limit.fl"
+    ],
+    "exit": 1,
+    "check": "flux::E000\n\n  x parse error: brackets nest more than 256 levels deep; split the code into smaller functions or bindings\n   ,-[<repo>/comparison/openness/repro/nesting_limit.fl:1:268]\n 1 | fn main() { (((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((1))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))) }\n   :                                                                                                                                                                                                                                                                            |\n   :                                                                                                                                                                                                                                                                            `-- here\n   `----\n  help: check syntax near the highlighted token\n"
+  },
+  "unary_limit": {
+    "source": "fn main() { !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!true }\n",
+    "command": [
+      "flux",
+      "check",
+      "<repo>/comparison/openness/repro/unary_limit.fl"
+    ],
+    "exit": 1,
+    "check": "flux::E000\n\n  x parse error: more than 256 `-`/`!` in a row; simplify the expression\n   ,-[<repo>/comparison/openness/repro/unary_limit.fl:1:269]\n 1 | fn main() { !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!true }\n   :                                                                                                                                                                                                                                                                             |\n   :                                                                                                                                                                                                                                                                             `-- here\n   `----\n  help: check syntax near the highlighted token\n"
+  },
+  "tree_limit": {
+    "source": "fn main() { 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 }\n",
+    "command": [
+      "flux",
+      "check",
+      "<repo>/comparison/openness/repro/tree_limit.fl"
+    ],
+    "exit": 1,
+    "check": "flux::E000\n\n  x parse error: expression nested more than 1000 levels deep (for example, a very long chain of operators); split it with `let` bindings\n  help: check syntax near the highlighted token\n  at <repo>/comparison/openness/repro/tree_limit.fl:1:29 (line too long to show)\n"
+  },
+  "e008_extern_const": {
+    "source": "extern fn read() -> Int\nconst X = read()\n",
+    "command": [
+      "flux",
+      "check",
+      "<repo>/comparison/openness/repro/e008_extern_const.fl"
+    ],
+    "exit": 1,
+    "check": "flux::E015\n\n  x unused binding `X`\n   ,-[<repo>/comparison/openness/repro/e008_extern_const.fl:2:1]\n 1 | extern fn read() -> Int\n 2 | const X = read()\n   : ^^^^^^^^|^^^^^^^^\n   :         `-- never read\n   `----\n  help: remove the binding or reference it from a derived value, watch, or handler\nflux::E008\n\n  x a `const` initializer cannot call the `act fn` `read`\n   ,-[<repo>/comparison/openness/repro/e008_extern_const.fl:2:11]\n 1 | extern fn read() -> Int\n 2 | const X = read()\n   :           ^^^|^^\n   :              `-- runs `read`\n   `----\n  help: an `act fn` is an action, and a derived value does not follow what it reads; write `track fn read` for a function that computes from sources\n"
+  },
+  "e008_function_value": {
+    "source": "act fn read() -> Int { 1 }\nfn apply(f: fn() -> Int) -> Int { f() }\nderived y = apply(read)\n",
+    "command": [
+      "flux",
+      "check",
+      "<repo>/comparison/openness/repro/e008_function_value.fl"
+    ],
+    "exit": 1,
+    "check": "flux::E015\n\n  x unused binding `y`\n   ,-[<repo>/comparison/openness/repro/e008_function_value.fl:3:1]\n 2 | fn apply(f: fn() -> Int) -> Int { f() }\n 3 | derived y = apply(read)\n   : ^^^^^^^^^^^^|^^^^^^^^^^^\n   :             `-- never read\n   `----\n  help: remove the binding or reference it from a derived value, watch, or handler\nflux::E008\n\n  x a derived value cannot call the `act fn` `read`\n   ,-[<repo>/comparison/openness/repro/e008_function_value.fl:3:19]\n 2 | fn apply(f: fn() -> Int) -> Int { f() }\n 3 | derived y = apply(read)\n   :                   ^^|^\n   :                     `-- runs `read`\n   `----\n  help: an `act fn` is an action, and a derived value does not follow what it reads; write `track fn read` for a function that computes from sources\n"
+  },
+  "live_param_stale": {
+    "source": "import io { println }\nlive fn C(x: Int) { pub derived double = x * 2; pub act fn reset() { x = 2 } }\nlet mut c = C(1)\nact fn main() { c.reset(); println(\"{c.double}\") }\n",
+    "command": [
+      "flux",
+      "check",
+      "<repo>/comparison/openness/repro/live_param_stale.fl"
+    ],
+    "exit": 0,
+    "check": "ok\n",
+    "run_exit": 0,
+    "run": "4\n"
+  },
+  "library_value": {
+    "source": "import math { sqrt }\nfn main() { let f = sqrt; f(4.0) }\n",
+    "command": [
+      "flux",
+      "check",
+      "<repo>/comparison/openness/repro/library_value.fl"
+    ],
+    "exit": 1,
+    "check": "flux::E005\n\n  x type mismatch: expected `a function value: wrap it, as in `|x| sqrt(x)``, found ``sqrt`, a library function that can only be called`\n   ,-[<repo>/comparison/openness/repro/library_value.fl:2:21]\n 1 | import math { sqrt }\n 2 | fn main() { let f = sqrt; f(4.0) }\n   :                     ^^|^\n   :                       `-- expected `a function value: wrap it, as in `|x| sqrt(x)``\n   `----\n"
+  },
+  "mut_no_result": {
+    "source": "fn grow(mut x: Int) { x += 1 }\nfn main() { let mut x = 0; let y = grow(mut x); y }\n",
+    "command": [
+      "flux",
+      "check",
+      "<repo>/comparison/openness/repro/mut_no_result.fl"
+    ],
+    "exit": 1,
+    "check": "flux::E000\n\n  x parse error: this function has `mut` parameters and declares no result, so it has no value to bind\n   ,-[<repo>/comparison/openness/repro/mut_no_result.fl:2:36]\n 1 | fn grow(mut x: Int) { x += 1 }\n 2 | fn main() { let mut x = 0; let y = grow(mut x); y }\n   :                                    ^^^^^|^^^^^\n   :                                         `-- here\n   `----\n  help: check syntax near the highlighted token\n"
+  },
+  "private_literal": {
+    "source": "import owner { P }\nfn main() { P { hidden: 1 } }\n",
+    "command": [
+      "flux",
+      "check",
+      "<repo>/comparison/openness/repro/private_literal.fl"
+    ],
+    "exit": 1,
+    "check": "flux::E033\n\n  x field `hidden` of `P` is private to its module\n   ,-[<repo>/comparison/openness/repro/private_literal.fl:2:13]\n 1 | import owner { P }\n 2 | fn main() { P { hidden: 1 } }\n   :             ^^^^^^^|^^^^^^^\n   :                    `-- not visible here\n   `----\n  help: only `P`'s module can name it; use the functions or methods that module provides, or mark the field `pub` there\n"
+  },
+  "ord_impl": {
+    "source": "struct P { x: Int }\nimpl Ord for P { }\n",
+    "command": [
+      "flux",
+      "check",
+      "<repo>/comparison/openness/repro/ord_impl.fl"
+    ],
+    "exit": 1,
+    "check": "flux::E020\n\n  x `Ord` is built in: a type has it when the language can compare its values; it cannot be implemented\n   ,-[<repo>/comparison/openness/repro/ord_impl.fl:2:6]\n 1 | struct P { x: Int }\n 2 | impl Ord for P { }\n   :      ^|^\n   :       `-- in this impl\n   `----\n"
+  }
+}

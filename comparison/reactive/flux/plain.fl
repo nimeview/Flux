@@ -1,0 +1,132 @@
+// The four scenarios without the reactive graph, the Elm way: plain
+// functions recompute every derived value from the whole state after each
+// change. Separates the interpreter's cost from the graph's.
+// Usage: flux run plain.fl -- <scenario>; prints "<checksum> <ms>".
+import io { println, args }
+import time { now }
+
+struct Todo {
+    id: Int,
+    done: Bool,
+}
+
+struct Watch {
+    last: Int,
+    seen: Int,
+}
+
+fn observe(w: Watch, v: Int) -> Watch {
+    if v == w.last { w } else { Watch { last: v, seen: w.seen + v } }
+}
+
+fn chain_value(s: Int) -> Int {
+    let mut d = s + 1
+    let mut i = 1
+    while i < 1000 {
+        d = d + 1
+        i += 1
+    }
+    d
+}
+
+fn fan_value(s: Int) -> Int {
+    let mut total = 0
+    let mut i = 0
+    while i < 1000 {
+        total = total + (s + i)
+        i += 1
+    }
+    total
+}
+
+fn chain() -> Int {
+    let mut w = observe(Watch { last: -1, seen: 0 }, chain_value(0))
+    let mut v = 1
+    while v <= 1000 {
+        w = observe(w, chain_value(v))
+        v += 1
+    }
+    w.seen
+}
+
+fn fan() -> Int {
+    let mut w = observe(Watch { last: -1, seen: 0 }, fan_value(0))
+    let mut v = 1
+    while v <= 1000 {
+        w = observe(w, fan_value(v))
+        v += 1
+    }
+    w.seen
+}
+
+fn total(xs: [Int]) -> Int {
+    xs.map(|c| c * 2).reduce(0, |x, y| x + y)
+}
+
+fn counters() -> Int {
+    let mut xs: [Int] = []
+    let mut w = observe(Watch { last: -1, seen: 0 }, total(xs))
+    let mut i = 0
+    while i < 1000 {
+        xs.push(i)
+        i += 1
+    }
+    w = observe(w, total(xs))
+    let mut k = 0
+    while k < 100 {
+        xs = xs.map(|c| c + 1)
+        w = observe(w, total(xs))
+        k += 1
+    }
+    w.seen
+}
+
+fn remaining(xs: [Todo]) -> Int {
+    xs.filter(|t| !t.done).len()
+}
+
+fn todos() -> Int {
+    let mut xs: [Todo] = []
+    let mut w = observe(Watch { last: -1, seen: 0 }, 0)
+    let mut i = 0
+    while i < 1000 {
+        xs.push(Todo { id: i, done: false })
+        w = observe(w, remaining(xs))
+        i += 1
+    }
+    i = 0
+    while i < 1000 {
+        let id = i
+        xs = xs.map(|t| if t.id == id { t with { done: !t.done } } else { t })
+        w = observe(w, remaining(xs))
+        i += 2
+    }
+    i = 0
+    while i < 500 {
+        let id = i
+        xs = xs.filter(|t| t.id != id)
+        w = observe(w, remaining(xs))
+        i += 1
+    }
+    w.seen
+}
+
+fn run(which: String) -> Int {
+    if which == "chain" {
+        chain()
+    } else if which == "fan" {
+        fan()
+    } else if which == "counters" {
+        counters()
+    } else {
+        todos()
+    }
+}
+
+fn main() {
+    let which = args()[0]
+    let t0 = now()
+    let seen = run(which)
+    let t1 = now()
+    println("{seen} {t1 - t0}")
+}

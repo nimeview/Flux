@@ -1,0 +1,18 @@
+{
+ "mutants": 5000,
+ "seed": 1,
+ "corpus": 203,
+ "checked_ok": 1683,
+ "ran": 1510,
+ "failures": [
+  {
+   "signature": "run-vm:hang:",
+   "kind": "hang",
+   "stage": "run-vm",
+   "count": 2,
+   "example": 2708,
+   "err": "",
+   "file": "results/raw/fuzz/d74bd9e38a.fl"
+  }
+ ]
+}

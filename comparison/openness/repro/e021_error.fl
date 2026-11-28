@@ -1,0 +1,1 @@
+fn f() -> Result[Int, String] { let x: Result[Int, Int] = Err(2); Ok(x?) }

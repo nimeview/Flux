@@ -1,0 +1,3 @@
+struct P { x: Int }
+fn f[T: Ord](x: T) -> T { x }
+fn main() { f(P { x: 1 }) }

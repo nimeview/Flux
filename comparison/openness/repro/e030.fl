@@ -1,0 +1,2 @@
+import collections { push }
+fn main() { let xs = [1]; push(xs, 2); let done = 0 }

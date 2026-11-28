@@ -1,0 +1,1 @@
+fn main() { let mut xs = [1]; let x = xs.push(2); x }

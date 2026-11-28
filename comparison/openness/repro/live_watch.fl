@@ -1,0 +1,4 @@
+import io { println }
+live fn C() { pub let n = 1 }
+let c = C()
+watch { println("{c.n}") }

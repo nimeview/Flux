@@ -1,0 +1,4 @@
+import io { println }
+let mut x = 0
+watch x { x += 1; println("seen={x}") }
+act fn main() { x = 5; println("main={x}") }

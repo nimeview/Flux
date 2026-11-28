@@ -1,0 +1,5 @@
+import io { println }
+let mut x = 2
+track fn sum() -> Int { let mut n = 0; for k in [x, x] { n += k }; n }
+derived y = sum()
+act fn main() { x = 3; println("{y}") }

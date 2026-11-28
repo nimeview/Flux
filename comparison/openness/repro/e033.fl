@@ -1,0 +1,2 @@
+import owner { P, make }
+fn main() -> Int { make().hidden }

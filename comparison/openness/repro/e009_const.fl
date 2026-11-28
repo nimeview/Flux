@@ -1,0 +1,2 @@
+const X = 1
+act fn main() { X = 2 }

@@ -1,0 +1,2 @@
+event Tick
+fn main() { on Tick { } }

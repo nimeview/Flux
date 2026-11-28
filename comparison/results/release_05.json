@@ -1,0 +1,7 @@
+{
+ "note": "Instructions retired for the whole `flux run --vm --no-cache` of each reactive scenario (comparison/reactive/flux), best of 3, v0.4.0 release build vs the 0.5 build, same machine, 2026-11-27.",
+ "chain": [45442661493, 1748560003],
+ "fan": [2233288945, 2239044897],
+ "counters": [775843043, 719659032],
+ "todos": [5279092225, 4432830197]
+}

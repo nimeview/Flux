@@ -1,0 +1,2 @@
+let mut x = 0
+fn main() { x = 1 }

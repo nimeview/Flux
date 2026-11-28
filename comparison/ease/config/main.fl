@@ -1,0 +1,57 @@
+import io { println, eprintln, args, read_file }
+
+import config { Config, ConfigError, parse, message }
+
+struct Settings {
+    name: String,
+    port: Int,
+    debug: Bool,
+    ratio: Float,
+    extra: [String]
+}
+
+const KNOWN = ["name", "port", "debug", "ratio"]
+
+fn load(path: String) -> Result[Settings, ConfigError] {
+    let text = match read_file(path) {
+        Ok(t) => t,
+        Err(e) => return Err(Io(e))
+    }
+    let cfg = parse(text)?
+    let name = cfg.text("name")?
+    let port = cfg.int("port")?
+    if port < 1 || port > 65535 {
+        return Err(OutOfRange { key: "port", detail: "must be between 1 and 65535, got {port}" })
+    }
+    let ratio = cfg.float_or("ratio", 1.0)?
+    if ratio < 0.0 || ratio > 1.0 {
+        return Err(OutOfRange { key: "ratio", detail: "must be between 0 and 1, got {ratio}" })
+    }
+    let debug = cfg.flag_or("debug", false)?
+    let extra = cfg.keys().filter(|k| !KNOWN.contains(k))
+    Ok(Settings { name: name, port: port, debug: debug, ratio: ratio, extra: extra })
+}
+
+fn main() -> Int {
+    let argv = args()
+    if argv.len() != 1 {
+        eprintln("usage: config FILE")
+        return 1
+    }
+    match load(argv[0]) {
+        Ok(s) => {
+            println("service {s.name}")
+            println("  listens on port {s.port}")
+            println("  debug {if s.debug { "on" } else { "off" }}")
+            println("  sampling ratio {s.ratio}")
+            if s.extra.len() > 0 {
+                println("  ignored keys: {s.extra.join(", ")}")
+            }
+            0
+        },
+        Err(e) => {
+            eprintln("config error: {message(e)}")
+            1
+        }
+    }
+}

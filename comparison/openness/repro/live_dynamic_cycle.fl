@@ -1,0 +1,3 @@
+live fn C() { pub let mut children: [C] = []; pub derived size: Int = 1 + children.map(|c| c.size).reduce(0, |a, b| a + b); pub event Adopt(x: C); on Adopt(x) { children.push(x) } }
+let c = C()
+act fn main() { emit c.Adopt(c) }

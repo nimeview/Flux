@@ -1,0 +1,5 @@
+import io { println }
+live fn C(x: Int) { pub let n = x }
+let mut x = 1
+let c = C(x)
+act fn main() { x = 2; println("{c.n}") }

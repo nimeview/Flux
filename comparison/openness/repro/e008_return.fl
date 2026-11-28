@@ -1,0 +1,2 @@
+fn count() -> Int { return 3 }
+derived y = count()

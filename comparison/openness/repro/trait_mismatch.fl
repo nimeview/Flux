@@ -1,0 +1,3 @@
+trait T { fn f(self) -> Int; }
+struct P { x: Int }
+impl T for P { fn f(self) -> String { "x" } }

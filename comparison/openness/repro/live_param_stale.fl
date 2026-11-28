@@ -1,0 +1,4 @@
+import io { println }
+live fn C(x: Int) { pub derived double = x * 2; pub act fn reset() { x = 2 } }
+let mut c = C(1)
+act fn main() { c.reset(); println("{c.double}") }

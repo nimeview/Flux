@@ -1,0 +1,3 @@
+import io { println }
+fn noisy() -> Int { println("again"); 1 }
+derived x = noisy()

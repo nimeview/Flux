@@ -1,0 +1,4 @@
+live fn C() { pub let n = 1 }
+let c = C()
+fn f(c: C) -> Int { c.n }
+fn main() -> Int { f(snap(c)) }

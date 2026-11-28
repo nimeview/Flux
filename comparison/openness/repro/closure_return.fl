@@ -1,0 +1,1 @@
+fn main() { let f = |n: Int| match n { _ => return n }; f(1) }

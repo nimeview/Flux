@@ -1,0 +1,1 @@
+pub const LOCAL_ONLY = 1

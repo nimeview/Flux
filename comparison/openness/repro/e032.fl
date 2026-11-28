@@ -1,0 +1,2 @@
+import owner { x }
+act fn main() { x = 2 }

@@ -1,0 +1,17 @@
+{
+  "name": "flux-comparison-reactive",
+  "private": true,
+  "type": "module",
+  "description": "Reactive libraries Flux is compared with (installed locally, not committed).",
+  "dependencies": {
+    "@preact/signals-core": "^1.14.5",
+    "@vue/reactivity": "^3.5.46",
+    "mobx": "^7.1.8",
+    "solid-js": "^2.0.4",
+    "svelte": "^5.59.2"
+  },
+  "devDependencies": {
+    "elm": "^0.19.1-6",
+    "typescript": "^5.9.3"
+  }
+}

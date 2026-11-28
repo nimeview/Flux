@@ -1,0 +1,1 @@
+fn f(x: Bool) { if x { 1 } else { 2.0 } }

@@ -1,0 +1,17 @@
+import io { println }
+import collections { map_new }
+
+fn main() {
+    let mut counts: Map[String, Int] = map_new()
+    let mut i = 0
+    while i < 200000 {
+        let key = "k{i % 5000}"
+        counts[key] = counts.get_or(key, 0) + i % 7
+        i += 1
+    }
+    let mut total = 0
+    for k in counts.keys() {
+        total += counts[k]
+    }
+    println("{counts.len()} {total}")
+}

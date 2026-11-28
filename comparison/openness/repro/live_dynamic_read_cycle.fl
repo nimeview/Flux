@@ -1,0 +1,4 @@
+live fn C() { pub derived d: Int = 1 + others.map(|c| c.d).reduce(0, |a, b| a + b) }
+let mut others: [C] = []
+let first = C()
+act fn main() { others = [first] }

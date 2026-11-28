@@ -1,0 +1,2 @@
+live fn C() { derived a: Int = b + 1; derived b: Int = a + 1 }
+let c = C()

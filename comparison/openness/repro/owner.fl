@@ -1,0 +1,4 @@
+pub let mut x = 0
+pub struct P { hidden: Int }
+pub fn make() -> P { P { hidden: 1 } }
+fn secret() { }

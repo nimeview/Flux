@@ -1,0 +1,646 @@
+{
+ "fib": {
+  "Flux VM": {
+   "out": "832040",
+   "ok": true,
+   "wall": 0.8060885879967827,
+   "cpu": 0.79,
+   "instructions": 7833935288,
+   "rss": 3670016,
+   "matches": true
+  },
+  "Flux JIT": {
+   "out": "832040",
+   "ok": true,
+   "wall": 0.0252646179869771,
+   "cpu": 0.01,
+   "instructions": 221053373,
+   "rss": 5668864,
+   "matches": true
+  },
+  "Python": {
+   "out": "832040",
+   "ok": true,
+   "wall": 0.14657163500669412,
+   "cpu": 0.13,
+   "instructions": 1625442909,
+   "rss": 8036352,
+   "matches": true
+  },
+  "Ruby (YJIT)": {
+   "out": "832040",
+   "ok": true,
+   "wall": 0.08216731998254545,
+   "cpu": 0.06999999999999999,
+   "instructions": 582862157,
+   "rss": 12398592,
+   "matches": true
+  },
+  "Lua": {
+   "out": "832040",
+   "ok": true,
+   "wall": 0.06217380799353123,
+   "cpu": 0.05,
+   "instructions": 759593644,
+   "rss": 745472,
+   "matches": true
+  },
+  "LuaJIT": {
+   "out": "832040",
+   "ok": true,
+   "wall": 0.011837174009997398,
+   "cpu": 0.0,
+   "instructions": 97917140,
+   "rss": 897024,
+   "matches": true
+  },
+  "Node": {
+   "out": "832040",
+   "ok": true,
+   "wall": 0.05796378498780541,
+   "cpu": 0.04,
+   "instructions": 394153602,
+   "rss": 32382976,
+   "matches": true
+  },
+  "Bun": {
+   "out": "832040",
+   "ok": true,
+   "wall": 0.027450538997072726,
+   "cpu": 0.01,
+   "instructions": 207588680,
+   "rss": 13344768,
+   "matches": true
+  },
+  "Go": {
+   "out": "832040",
+   "ok": true,
+   "wall": 0.010547073994530365,
+   "cpu": 0.0,
+   "instructions": 51374062,
+   "rss": 2408448,
+   "matches": true
+  },
+  "Rust": {
+   "out": "832040",
+   "ok": true,
+   "wall": 0.00711482300539501,
+   "cpu": 0.0,
+   "instructions": 35337948,
+   "rss": 606208,
+   "matches": true
+  }
+ },
+ "binary_trees": {
+  "Flux VM": {
+   "out": "14985902",
+   "ok": true,
+   "wall": 45.19853288400918,
+   "cpu": 45.019999999999996,
+   "instructions": 372339701125,
+   "rss": 201166848,
+   "matches": true
+  },
+  "Flux JIT": {
+   "out": "14985902",
+   "ok": true,
+   "wall": 52.793994684994686,
+   "cpu": 52.75,
+   "instructions": 450121571174,
+   "rss": 200077312,
+   "matches": true
+  },
+  "Python": {
+   "out": "14985902",
+   "ok": true,
+   "wall": 2.5277021559886634,
+   "cpu": 2.5100000000000002,
+   "instructions": 27198535088,
+   "rss": 16621568,
+   "matches": true
+  },
+  "Ruby (YJIT)": {
+   "out": "14985902",
+   "ok": true,
+   "wall": 1.266013037005905,
+   "cpu": 1.24,
+   "instructions": 11826151274,
+   "rss": 27516928,
+   "matches": true
+  },
+  "Lua": {
+   "out": "14985902",
+   "ok": true,
+   "wall": 6.588802320009563,
+   "cpu": 6.57,
+   "instructions": 61472333924,
+   "rss": 67854336,
+   "matches": true
+  },
+  "LuaJIT": {
+   "out": "14985902",
+   "ok": true,
+   "wall": 1.5833581660117488,
+   "cpu": 1.57,
+   "instructions": 9259705745,
+   "rss": 88813568,
+   "matches": true
+  },
+  "Node": {
+   "out": "14985902",
+   "ok": true,
+   "wall": 0.33975231400108896,
+   "cpu": 0.42000000000000004,
+   "instructions": 3913312465,
+   "rss": 87474176,
+   "matches": true
+  },
+  "Bun": {
+   "out": "14985902",
+   "ok": true,
+   "wall": 0.3319766689965036,
+   "cpu": 0.77,
+   "instructions": 3157913143,
+   "rss": 51245056,
+   "matches": true
+  },
+  "Go": {
+   "out": "14985902",
+   "ok": true,
+   "wall": 0.498405004007509,
+   "cpu": 1.06,
+   "instructions": 8683566319,
+   "rss": 14802944,
+   "matches": true
+  },
+  "Rust": {
+   "out": "14985902",
+   "ok": true,
+   "wall": 3.3823744730034377,
+   "cpu": 3.3699999999999997,
+   "instructions": 33428693127,
+   "rss": 17702912,
+   "matches": true
+  }
+ },
+ "spectral_norm": {
+  "Flux VM": {
+   "out": "1274223866",
+   "ok": true,
+   "wall": 1.5238126420008484,
+   "cpu": 1.51,
+   "instructions": 16122562338,
+   "rss": 4280320,
+   "matches": true
+  },
+  "Flux JIT": {
+   "out": "1274223866",
+   "ok": true,
+   "wall": 1.4917461190198082,
+   "cpu": 1.48,
+   "instructions": 15673885005,
+   "rss": 6549504,
+   "matches": true
+  },
+  "Python": {
+   "out": "1274223866",
+   "ok": true,
+   "wall": 0.4774431760015432,
+   "cpu": 0.46,
+   "instructions": 5271209943,
+   "rss": 8519680,
+   "matches": true
+  },
+  "Ruby (YJIT)": {
+   "out": "1274223866",
+   "ok": true,
+   "wall": 0.1824001340137329,
+   "cpu": 0.17,
+   "instructions": 1632756797,
+   "rss": 12554240,
+   "matches": true
+  },
+  "Lua": {
+   "out": "1274223866",
+   "ok": true,
+   "wall": 0.16451491598854773,
+   "cpu": 0.15,
+   "instructions": 2029635570,
+   "rss": 868352,
+   "matches": true
+  },
+  "LuaJIT": {
+   "out": "1274223866",
+   "ok": true,
+   "wall": 0.010131729999557137,
+   "cpu": 0.0,
+   "instructions": 65136524,
+   "rss": 942080,
+   "matches": true
+  },
+  "Node": {
+   "out": "1274223866",
+   "ok": true,
+   "wall": 0.05716664998908527,
+   "cpu": 0.05,
+   "instructions": 415461337,
+   "rss": 36147200,
+   "matches": true
+  },
+  "Bun": {
+   "out": "1274223866",
+   "ok": true,
+   "wall": 0.0314902969985269,
+   "cpu": 0.03,
+   "instructions": 235231605,
+   "rss": 16248832,
+   "matches": true
+  },
+  "Go": {
+   "out": "1274223866",
+   "ok": true,
+   "wall": 0.010400414001196623,
+   "cpu": 0.0,
+   "instructions": 58850973,
+   "rss": 2461696,
+   "matches": true
+  },
+  "Rust": {
+   "out": "1274223866",
+   "ok": true,
+   "wall": 0.008296203013742343,
+   "cpu": 0.0,
+   "instructions": 48419345,
+   "rss": 614400,
+   "matches": true
+  }
+ },
+ "nbody": {
+  "Flux VM": {
+   "out": "-169075163 -169079859",
+   "ok": true,
+   "wall": 5.728647423995426,
+   "cpu": 5.71,
+   "instructions": 56801019843,
+   "rss": 4497408,
+   "matches": true
+  },
+  "Flux JIT": {
+   "out": "-169075163 -169079859",
+   "ok": true,
+   "wall": 5.768219201010652,
+   "cpu": 5.75,
+   "instructions": 56791157575,
+   "rss": 4870144,
+   "matches": true
+  },
+  "Python": {
+   "out": "-169075163 -169079859",
+   "ok": true,
+   "wall": 0.7862171340093482,
+   "cpu": 0.77,
+   "instructions": 7945970098,
+   "rss": 8564736,
+   "matches": true
+  },
+  "Ruby (YJIT)": {
+   "out": "-169075163 -169079859",
+   "ok": true,
+   "wall": 0.512655207014177,
+   "cpu": 0.5,
+   "instructions": 5554076159,
+   "rss": 12464128,
+   "matches": true
+  },
+  "Lua": {
+   "out": "-169075163 -169079859",
+   "ok": true,
+   "wall": 0.40887885200208984,
+   "cpu": 0.4,
+   "instructions": 4066413019,
+   "rss": 765952,
+   "matches": true
+  },
+  "LuaJIT": {
+   "out": "-169075163 -169079859",
+   "ok": true,
+   "wall": 0.022145280003314838,
+   "cpu": 0.01,
+   "instructions": 196460381,
+   "rss": 937984,
+   "matches": true
+  },
+  "Node": {
+   "out": "-169075163 -169079859",
+   "ok": true,
+   "wall": 0.06334446801338345,
+   "cpu": 0.05,
+   "instructions": 454995003,
+   "rss": 36048896,
+   "matches": true
+  },
+  "Bun": {
+   "out": "-169075163 -169079859",
+   "ok": true,
+   "wall": 0.03670481301378459,
+   "cpu": 0.03,
+   "instructions": 306054997,
+   "rss": 18399232,
+   "matches": true
+  },
+  "Go": {
+   "out": "-169075163 -169079859",
+   "ok": true,
+   "wall": 0.013882524013752118,
+   "cpu": 0.0,
+   "instructions": 87915403,
+   "rss": 2424832,
+   "matches": true
+  },
+  "Rust": {
+   "out": "-169075163 -169079859",
+   "ok": true,
+   "wall": 0.00815598398912698,
+   "cpu": 0.0,
+   "instructions": 41960835,
+   "rss": 610304,
+   "matches": true
+  }
+ },
+ "fannkuch": {
+  "Flux VM": {
+   "out": "8629 30",
+   "ok": true,
+   "wall": 4.7049172859988175,
+   "cpu": 4.69,
+   "instructions": 49931016567,
+   "rss": 4182016,
+   "matches": true
+  },
+  "Flux JIT": {
+   "out": "8629 30",
+   "ok": true,
+   "wall": 4.6925002000061795,
+   "cpu": 4.67,
+   "instructions": 49931232357,
+   "rss": 4464640,
+   "matches": true
+  },
+  "Python": {
+   "out": "8629 30",
+   "ok": true,
+   "wall": 0.596253526979126,
+   "cpu": 0.58,
+   "instructions": 6086127449,
+   "rss": 8159232,
+   "matches": true
+  },
+  "Ruby (YJIT)": {
+   "out": "8629 30",
+   "ok": true,
+   "wall": 1.6025311219855212,
+   "cpu": 1.58,
+   "instructions": 14751911727,
+   "rss": 14299136,
+   "matches": true
+  },
+  "Lua": {
+   "out": "8629\t30",
+   "ok": true,
+   "wall": 0.29506887999014,
+   "cpu": 0.29,
+   "instructions": 3726382804,
+   "rss": 741376,
+   "matches": true
+  },
+  "LuaJIT": {
+   "out": "8629\t30",
+   "ok": true,
+   "wall": 0.049411874992074445,
+   "cpu": 0.04,
+   "instructions": 325899247,
+   "rss": 917504,
+   "matches": true
+  },
+  "Node": {
+   "out": "8629 30",
+   "ok": true,
+   "wall": 0.08434514401596971,
+   "cpu": 0.07,
+   "instructions": 599492836,
+   "rss": 35508224,
+   "matches": true
+  },
+  "Bun": {
+   "out": "8629 30",
+   "ok": true,
+   "wall": 0.051585398003226146,
+   "cpu": 0.060000000000000005,
+   "instructions": 421864479,
+   "rss": 28286976,
+   "matches": true
+  },
+  "Go": {
+   "out": "8629 30",
+   "ok": true,
+   "wall": 0.022290062013780698,
+   "cpu": 0.01,
+   "instructions": 138811779,
+   "rss": 2387968,
+   "matches": true
+  },
+  "Rust": {
+   "out": "8629 30",
+   "ok": true,
+   "wall": 0.019859099003951997,
+   "cpu": 0.01,
+   "instructions": 84638275,
+   "rss": 610304,
+   "matches": true
+  }
+ },
+ "strings": {
+  "Flux VM": {
+   "out": "200000 137800",
+   "ok": true,
+   "wall": 0.3618622369831428,
+   "cpu": 0.35000000000000003,
+   "instructions": 3261721375,
+   "rss": 35520512,
+   "matches": true
+  },
+  "Flux JIT": {
+   "out": "200000 137800",
+   "ok": true,
+   "wall": 0.3518098440254107,
+   "cpu": 0.34,
+   "instructions": 3275883659,
+   "rss": 35811328,
+   "matches": true
+  },
+  "Python": {
+   "out": "200000 137800",
+   "ok": true,
+   "wall": 0.09746399900177494,
+   "cpu": 0.08,
+   "instructions": 761666445,
+   "rss": 33955840,
+   "matches": true
+  },
+  "Ruby (YJIT)": {
+   "out": "200000 137800",
+   "ok": true,
+   "wall": 0.22983062401181087,
+   "cpu": 0.22,
+   "instructions": 1839372276,
+   "rss": 43343872,
+   "matches": true
+  },
+  "Lua": {
+   "out": "200000\t137800",
+   "ok": true,
+   "wall": 0.10515997098991647,
+   "cpu": 0.09,
+   "instructions": 1096963645,
+   "rss": 7675904,
+   "matches": true
+  },
+  "LuaJIT": {
+   "out": "200000\t137800",
+   "ok": true,
+   "wall": 0.04258579999441281,
+   "cpu": 0.03,
+   "instructions": 389412349,
+   "rss": 7335936,
+   "matches": true
+  },
+  "Node": {
+   "out": "200000 137800",
+   "ok": true,
+   "wall": 0.10797740297857672,
+   "cpu": 0.11,
+   "instructions": 816339429,
+   "rss": 71471104,
+   "matches": true
+  },
+  "Bun": {
+   "out": "200000 137800",
+   "ok": true,
+   "wall": 0.04936150400317274,
+   "cpu": 0.05,
+   "instructions": 351435160,
+   "rss": 41517056,
+   "matches": true
+  },
+  "Go": {
+   "out": "200000 137800",
+   "ok": true,
+   "wall": 0.034148242993978783,
+   "cpu": 0.03,
+   "instructions": 317410347,
+   "rss": 14282752,
+   "matches": true
+  },
+  "Rust": {
+   "out": "200000 137800",
+   "ok": true,
+   "wall": 0.04085963798570447,
+   "cpu": 0.03,
+   "instructions": 369497026,
+   "rss": 13770752,
+   "matches": true
+  }
+ },
+ "maps": {
+  "Flux VM": {
+   "out": "5000 599994",
+   "ok": true,
+   "wall": 0.4251643469906412,
+   "cpu": 0.41,
+   "instructions": 3886286998,
+   "rss": 5267456,
+   "matches": true
+  },
+  "Flux JIT": {
+   "out": "5000 599994",
+   "ok": true,
+   "wall": 0.42307654197793454,
+   "cpu": 0.41,
+   "instructions": 3892712013,
+   "rss": 5672960,
+   "matches": true
+  },
+  "Python": {
+   "out": "5000 599994",
+   "ok": true,
+   "wall": 0.12676160701084882,
+   "cpu": 0.11,
+   "instructions": 1222858637,
+   "rss": 8462336,
+   "matches": true
+  },
+  "Ruby (YJIT)": {
+   "out": "5000 599994",
+   "ok": true,
+   "wall": 0.150647716014646,
+   "cpu": 0.14,
+   "instructions": 1168234053,
+   "rss": 13172736,
+   "matches": true
+  },
+  "Lua": {
+   "out": "5000\t599994",
+   "ok": true,
+   "wall": 0.06711428199196234,
+   "cpu": 0.06,
+   "instructions": 613025860,
+   "rss": 1736704,
+   "matches": true
+  },
+  "LuaJIT": {
+   "out": "5000\t599994",
+   "ok": true,
+   "wall": 0.012318382010562345,
+   "cpu": 0.0,
+   "instructions": 72409298,
+   "rss": 1409024,
+   "matches": true
+  },
+  "Node": {
+   "out": "5000 599994",
+   "ok": true,
+   "wall": 0.06654538799193688,
+   "cpu": 0.05,
+   "instructions": 430884042,
+   "rss": 35635200,
+   "matches": true
+  },
+  "Bun": {
+   "out": "5000 599994",
+   "ok": true,
+   "wall": 0.050006077013676986,
+   "cpu": 0.05,
+   "instructions": 337093569,
+   "rss": 35463168,
+   "matches": true
+  },
+  "Go": {
+   "out": "5000 599994",
+   "ok": true,
+   "wall": 0.03025604400318116,
+   "cpu": 0.02,
+   "instructions": 246755368,
+   "rss": 6782976,
+   "matches": true
+  },
+  "Rust": {
+   "out": "5000 599994",
+   "ok": true,
+   "wall": 0.03514408299815841,
+   "cpu": 0.03,
+   "instructions": 328056869,
+   "rss": 1265664,
+   "matches": true
+  }
+ }
+}

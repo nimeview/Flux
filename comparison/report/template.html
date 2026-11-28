@@ -1,0 +1,418 @@
+<title>Flux 0.4 в сравнении</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Sans+Condensed:wght@500;600&display=swap">
+<style>
+/* Layout: one reading column (~70ch) for prose, wide figures break out to 1120px. */
+:root {
+  --bg: #f7f7f5; --surface: #ffffff; --fg: #141413; --muted: #5b5a55; --line: #e2e1dc;
+  --accent: #2a78d6; --bar: #a9a8a0; --fast: #2a78d6; --slow: #d03b3b; --mid: #f0efec; --on-strong: #ffffff;
+  --good: #0a7d0a; --warn: #a86f00; --bad: #c02f2f;
+  --v-need: #2a78d6; --v-relax: #eda100; --v-arb: #e34948;
+  --sans: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  --cond: "IBM Plex Sans Condensed", "IBM Plex Sans", "Arial Narrow", sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #151514; --surface: #1d1d1b; --fg: #efeee9; --muted: #b2b1a7; --line: #33332f;
+    --accent: #3987e5; --bar: #6c6b65; --fast: #3987e5; --slow: #e66767; --mid: #383835; --on-strong: #ffffff;
+    --good: #2fbf2f; --warn: #fab219; --bad: #f07070;
+    --v-need: #3987e5; --v-relax: #c98500; --v-arb: #e66767;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #151514; --surface: #1d1d1b; --fg: #efeee9; --muted: #b2b1a7; --line: #33332f;
+  --accent: #3987e5; --bar: #6c6b65; --fast: #3987e5; --slow: #e66767; --mid: #383835; --on-strong: #ffffff;
+  --good: #2fbf2f; --warn: #fab219; --bad: #f07070;
+  --v-need: #3987e5; --v-relax: #c98500; --v-arb: #e66767;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body { background: var(--bg); color: var(--fg); font: 16px/1.6 var(--sans); margin: 0;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+main { max-width: 1120px; margin: 0 auto; padding-block: 48px 96px; display: grid; gap: 56px; }
+.prose { max-width: 70ch; }
+h1, h2, h3 { font-family: var(--cond); font-weight: 600; text-wrap: balance; line-height: 1.15; margin: 0; }
+h1 { font-size: clamp(2rem, 5vw, 3rem); }
+h2 { font-size: 1.75rem; padding-top: 8px; border-top: 2px solid var(--fg); }
+h3 { font-size: 1.15rem; margin-top: 8px; }
+section { display: grid; gap: 18px; min-width: 0; }
+p { margin: 0; } ul, ol { margin: 0; padding-left: 1.2em; }
+.eyebrow { font: 500 0.8rem var(--mono); letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
+.lede { font-size: 1.15rem; color: var(--muted); max-width: 70ch; }
+code { font-family: var(--mono); font-size: 0.88em; }
+small { color: var(--muted); }
+a { color: var(--accent); }
+.scroll { overflow-x: auto; min-width: 0; }
+table { border-collapse: collapse; font-variant-numeric: tabular-nums; }
+th, td { text-align: left; vertical-align: top; }
+
+/* summary */
+.verdicts { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 12px; }
+.verdict { background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 14px 16px; display: grid; gap: 6px; align-content: start; }
+.verdict h3 { margin: 0; font-size: 1.05rem; }
+.pill { display: inline-flex; align-items: center; gap: 6px; font: 500 0.78rem var(--mono); letter-spacing: 0.04em; text-transform: uppercase; }
+.pill::before { content: ""; width: 9px; height: 9px; border-radius: 50%; background: currentColor; }
+.pill.good { color: var(--good); } .pill.good::after { content: "▲"; font-size: 0.7em; }
+.pill.mixed { color: var(--warn); } .pill.mixed::after { content: "◆"; font-size: 0.7em; }
+.pill.weak { color: var(--bad); } .pill.weak::after { content: "▼"; font-size: 0.7em; }
+.verdict p { font-size: 0.95rem; }
+
+/* heatmap */
+table.heatmap { min-width: 860px; width: 100%; }
+.heatmap th { font-weight: 500; padding: 6px 8px; font-size: 0.85rem; }
+.heatmap thead th { vertical-align: bottom; }
+.heatmap thead th span { display: block; font-family: var(--mono); font-size: 0.8rem; }
+.heatmap thead th small { display: block; font-size: 0.72rem; line-height: 1.3; }
+.heatmap tbody th { white-space: nowrap; }
+.heatmap tr.flux th { color: var(--accent); font-weight: 600; }
+td.heat { font: 500 0.85rem var(--mono); text-align: center; padding: 8px 4px; border: 2px solid var(--bg); min-width: 70px; }
+.legend-heat { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 0.85rem; color: var(--muted); }
+.legend-heat .ramp { width: 220px; height: 10px; border-radius: 3px; background: linear-gradient(90deg, var(--fast), var(--mid), var(--slow)); }
+
+/* bars */
+svg.bars { width: 100%; height: auto; display: block; font-family: var(--sans); }
+svg .grid { stroke: var(--line); stroke-width: 1; }
+svg .tick { fill: var(--muted); font-size: 11px; font-family: var(--mono); }
+svg .lbl { fill: var(--fg); font-size: 13px; }
+svg .lbl.flux { fill: var(--accent); font-weight: 600; }
+svg .val { fill: var(--muted); font-size: 12px; font-family: var(--mono); }
+svg .val.err { fill: var(--bad); }
+svg .bar { fill: var(--bar); }
+svg .bar.flux { fill: var(--accent); }
+svg .hit:hover .bar { opacity: 0.8; }
+.chart-box { background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 16px; max-width: 760px; }
+.panels { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 480px), 1fr)); gap: 16px; }
+.panel { margin: 0; background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 14px 16px; display: grid; gap: 8px; min-width: 0; }
+.panel figcaption { display: grid; gap: 2px; } .panel figcaption span { font-size: 0.85rem; color: var(--muted); }
+
+/* tables */
+table.plain, table.matrix, table.errors { width: 100%; font-size: 0.88rem; }
+.plain th, .plain td { padding: 6px 10px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+.plain tr.flux th { color: var(--accent); }
+td.num { font-family: var(--mono); }
+td.bad { color: var(--bad); }
+details summary { cursor: pointer; color: var(--muted); font-size: 0.92rem; padding: 6px 0; }
+details[open] summary { margin-bottom: 8px; }
+
+table.matrix { min-width: 980px; }
+.matrix th, .matrix td { padding: 6px 8px; border-bottom: 1px solid var(--line); }
+.matrix thead th { font: 600 0.8rem var(--cond); }
+.matrix thead th.flux, .matrix td.flux { background: color-mix(in oklab, var(--accent) 8%, transparent); }
+.matrix tr.area th { font: 500 0.75rem var(--mono); text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); padding-top: 16px; }
+.matrix tbody th { font-weight: 500; min-width: 190px; }
+.matrix td small { display: block; font-size: 0.76rem; line-height: 1.35; margin-top: 2px; max-width: 22ch; }
+.lv { display: inline-flex; align-items: center; gap: 5px; font-size: 0.82rem; }
+.lv::before { content: ""; width: 10px; height: 10px; border-radius: 2px; flex: none; }
+.lv-y .lv::before { background: var(--good); }
+.lv-p .lv::before { background: transparent; border: 2px solid var(--warn); }
+.lv-n .lv::before { background: transparent; border: 2px dashed var(--bad); }
+
+/* restrictions */
+.stack { display: flex; height: 34px; border-radius: 4px; overflow: hidden; gap: 2px; max-width: 760px; }
+.stack div { display: flex; align-items: center; justify-content: center; color: #fff; font: 500 0.85rem var(--mono); min-width: 28px; }
+.v-need { background: var(--v-need); } .v-relax { background: var(--v-relax); } .v-arb { background: var(--v-arb); }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 0.88rem; color: var(--muted); }
+.legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; }
+ul.arb { columns: 2 320px; column-gap: 32px; list-style: none; padding: 0; font-size: 0.92rem; }
+ul.arb li { break-inside: avoid; padding: 4px 0; border-bottom: 1px solid var(--line); }
+.score { font: 0.75rem var(--mono); color: var(--muted); margin-left: 4px; white-space: nowrap; }
+.two { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 420px), 1fr)); gap: 24px; }
+.two > div { display: grid; gap: 10px; align-content: start; min-width: 0; }
+.keep li, .bugs li { padding: 3px 0; }
+
+/* errors */
+table.errors { min-width: 1000px; }
+.errors th, .errors td { padding: 8px; border-bottom: 1px solid var(--line); }
+.errors thead th { font: 600 0.85rem var(--cond); }
+.errors tbody th { font-weight: 500; min-width: 150px; }
+.errors td.msg code { display: block; font-size: 0.76rem; line-height: 1.4; word-break: break-word; }
+.errors td.msg small { font-size: 0.72rem; }
+.errors td.flux { background: color-mix(in oklab, var(--accent) 8%, transparent); }
+.dot { float: right; font: 600 0.75rem var(--mono); width: 20px; height: 20px; border-radius: 50%; display: grid; place-items: center; margin-left: 6px; border: 1.5px solid currentColor; }
+.s3 .dot { color: var(--good); } .s2 .dot { color: var(--accent); } .s1 .dot { color: var(--warn); } .s0 .dot { color: var(--bad); }
+.errors tr.total td { font-family: var(--mono); }
+.msgs td code { font-size: 0.76rem; white-space: normal; word-break: break-word; }
+.msgs td { white-space: normal !important; }
+
+/* newcomer */
+.stats { display: flex; flex-wrap: wrap; gap: 28px; }
+.stat b { display: block; font: 600 2rem var(--cond); }
+.stat span { color: var(--muted); font-size: 0.9rem; }
+
+/* changes */
+ol.changes { list-style: none; padding: 0; display: grid; gap: 10px; counter-reset: c; }
+ol.changes li { background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 12px 16px; display: grid; grid-template-columns: 56px 1fr; gap: 4px 12px; }
+ol.changes .id { font: 600 1rem var(--mono); color: var(--accent); grid-row: span 3; }
+ol.changes h3 { margin: 0; font-size: 1.05rem; }
+ol.changes p { font-size: 0.93rem; }
+ol.changes .meta { display: flex; flex-wrap: wrap; gap: 6px 16px; font: 0.78rem var(--mono); color: var(--muted); }
+.kind { font: 500 0.72rem var(--mono); text-transform: uppercase; letter-spacing: 0.05em; padding: 1px 6px; border-radius: 3px; border: 1px solid var(--line); margin-left: 8px; vertical-align: 2px; color: var(--muted); }
+.kind.lang { border-color: var(--v-relax); color: var(--warn); }
+.kind.fix { border-color: var(--accent); color: var(--accent); }
+
+pre { background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 12px 14px; overflow-x: auto; font: 0.85rem/1.5 var(--mono); margin: 0; }
+#tip { position: fixed; pointer-events: none; background: var(--fg); color: var(--bg); font: 0.8rem/1.4 var(--sans); padding: 6px 9px; border-radius: 4px; max-width: 320px; z-index: 20; }
+@media (max-width: 600px) { main { padding-block: 28px 64px; gap: 40px; } h2 { font-size: 1.45rem; } ol.changes li { grid-template-columns: 1fr; } ol.changes .id { grid-row: auto; } }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+
+<main>
+<header class="prose" style="display:grid; gap:14px">
+  <div class="eyebrow">Сравнительное исследование · 27 ноября 2026 · macOS 13, x86_64</div>
+  <h1>Flux 0.4 в сравнении</h1>
+  <p class="lede">Flux против Python, TypeScript/Node и Bun, Go, Rust, Lua и LuaJIT, Ruby, Elm и пяти реактивных библиотек JavaScript: скорость, возможности, стабильность, безопасность, насколько обоснованы ограничения и насколько легко писать. В конце — список предлагаемых изменений для 0.5, из которого нужно выбрать.</p>
+  <p>Скорость и стабильность измерены. Ограничения разобрал Codex, независимо от автора языка. Удобство проверял отдельный агент: он писал программы только по книге. Все программы, скрипты и сырые результаты лежат в <code>comparison/</code>, внизу страницы — как всё перезапустить.</p>
+</header>
+
+<section>
+  <h2>Коротко</h2>
+  <div class="verdicts">
+    <div class="verdict"><span class="pill weak">слабо</span><h3>Скорость вычислений</h3><p>VM в среднем в {{GM_VM}} медленнее Python. Хуже всего — структуры и enum: на binary-trees {{BT_VM}} против {{BT_PY}}, в {{BT_RATIO}} раз медленнее. JIT ускоряет fib в {{FIB_GAIN}} раз, но любая функция с массивом или структурой уходит на VM, поэтому в остальных шести задачах выигрыша нет.</p></div>
+    <div class="verdict"><span class="pill mixed">средне</span><h3>Скорость реактивности</h3><p>Распространение по графу — на уровне Vue и быстрее Solid, MobX и Svelte. Сам граф почти ничего не стоит: та же работа без графа занимает столько же. Списки структур в 7–17 раз медленнее JS по той же причине, что и binary-trees.</p></div>
+    <div class="verdict"><span class="pill good">сильно</span><h3>Запуск и память</h3><p>Hello world за {{START_FLUX}} мс (Python {{START_PY}}, Node {{START_NODE}}). Реактивные сценарии занимают 5–20 МБ против 50–100 МБ у Node. Роста памяти в стресс-тесте нет. Исключение — медленная проверка длинной цепочки derived с watch (это дефект, см. ниже).</p></div>
+    <div class="verdict"><span class="pill good">сильно</span><h3>Стабильность</h3><p>{{MUTANTS}} мутантов программ: ни одной паники, ни одного падения, ни одного расхождения VM и JIT. Нашлось несколько дефектов в компонентах и в согласованности check/run.</p></div>
+    <div class="verdict"><span class="pill mixed">средне</span><h3>Безопасность</h3><p>Ядро без <code>unsafe</code> (7 мест в JIT), целые числа с проверкой, лимиты на рекурсию и выделение памяти. Но у CLI-программы полный доступ к файлам и процессам, а ограничения прав есть только как набор модулей цели.</p></div>
+    <div class="verdict"><span class="pill mixed">средне</span><h3>Обоснованность ограничений</h3><p>Реактивное ядро обосновано. Из {{V_TOTAL}} ограничений {{V_NEED}} необходимы, {{V_RELAX}} можно ослабить, {{V_ARB}} произвольны — в основном это грамматика и пробелы реализации, а не реактивность. Объясняются они хуже, чем в Rust: сообщение {{MSG_MEAN}}/3, книга {{BOOK_MEAN}}/3.</p></div>
+    <div class="verdict"><span class="pill mixed">средне</span><h3>Удобство</h3><p>Новичок дописал 6 из 6 программ, но код получился в 1.7 раза длиннее TypeScript. Ошибки Flux набрали {{ERR_FLUX}} из {{ERR_MAX}} баллов (Rust {{ERR_RUST}}, Elm {{ERR_ELM}}): нет «did you mean», а ошибки разбора — это список токенов грамматики.</p></div>
+    <div class="verdict"><span class="pill weak">слабо</span><h3>Экосистема</h3><p>Нет веба, отладчика, профилировщика, реестра пакетов и параллельности. Это ожидаемо для 0.4, но для «общего назначения» это главный разрыв.</p></div>
+  </div>
+</section>
+
+<section>
+  <h2>Что изменилось в 0.5</h2>
+  <p class="prose">Вы выбрали из списка ниже F1, F2, L1, L2 и F3. Они сделаны, и те же замеры и те же ошибки перепроверены на 0.5. Остальная страница описывает исследование 0.4, по которому эти изменения выбирались.</p>
+  {{RELEASE_05}}
+  <p class="prose"><small>Реактивные сценарии сравниваются по числу инструкций (сборки v0.4.0 и 0.5 на одной машине): время обновлений на занятой машине колеблется на ±20%, и по нему не видно разницы меньше этой. В цепочке 0.4 почти всё время уходило на квадратичную проверку E029 при компиляции.</small></p>
+  <div class="prose">
+    <ul>
+      <li><b>F1</b>: все найденные дефекты исправлены, плюс ещё два, найденные по ходу: гонка в цикле событий, из-за которой терялись события хоста, и ветки <code>if</code>/<code>match</code> с <code>Int</code> и <code>Float</code>, которые во время выполнения оставались <code>Int</code> (теперь преобразуются, как вы решили).</li>
+      <li><b>L1</b>: один <code>if</code> и один <code>match</code> везде — <code>else if</code> и операторы в ветках-выражениях, ветки без запятой после блока, <code>emit</code> и присваивание как ветка.</li>
+      <li><b>F2</b>: «did you mean», нужный <code>import</code> для библиотечного имени, E036 для неполного <code>match</code>, ошибки разбора словами, <code>flux explain</code>, предупреждения отличимы от ошибок, нет каскадов.</li>
+      <li><b>L2</b>: <code>s.slice</code> по символам, <code>pad_start</code>/<code>pad_end</code>, ключ-кортеж в <code>sorted_by</code>, <code>Map::new()</code>, таблица методов в книге.</li>
+      <li><b>F3</b>: имена типов, вариантов и полей общие, поля хранятся отсортированными внутри значения. binary-trees быстрее на ~40%; интерпретатор (вызовы, обход дерева) остаётся главным расходом — это следующий шаг, если скорость VM важна до веба.</li>
+    </ul>
+  </div>
+</section>
+
+<section>
+  <h2>Скорость вычислений</h2>
+  <p class="prose">Семь классических задач, один и тот же алгоритм на каждом языке, вывод сверен. В каждой клетке — время относительно Python: лучшее из трёх прогонов, время всего процесса. В него входят запуск и холодный JIT у Node, Bun и LuaJIT. Go и Rust собраны заранее, компиляция не входит. Синий — быстрее Python, красный — медленнее. При наведении видно абсолютное время.</p>
+  {{COMPUTE_TABLE}}
+  <div class="legend-heat"><span>в 100 раз быстрее</span><span class="ramp"></span><span>в 100 раз медленнее</span></div>
+  <div class="two">
+    <div>
+      <h3>Среднее по семи задачам</h3>
+      <div class="chart-box">{{GEOMEAN_CHART}}</div>
+    </div>
+    <div class="prose">
+      <h3>Что это значит</h3>
+      <ul>
+        <li>VM — классический интерпретатор по дереву с проверками на каждой операции. Он в {{GM_VM}} медленнее Python, а Lua и Ruby быстрее Python.</li>
+        <li><b>binary-trees</b>: около 55% времени уходит на malloc/free. Каждое значение enum — это <code>Arc</code> с собственными строками имени типа и варианта, а полезная нагрузка-структура — ещё один <code>Arc</code> с <code>HashMap&lt;String, Value&gt;</code> полей. Это самый крупный и самый понятный резерв.</li>
+        <li><b>JIT</b>: fib ускоряется в {{FIB_GAIN}} раз ({{FIB_VM}} → {{FIB_JIT}}), это уровень Bun. JIT умеет целые и float, но функция, которая принимает или строит массив или структуру, выполняется на VM. В spectral-norm и n-body горячие функции именно такие, поэтому «Flux JIT» в среднем быстрее VM только за счёт fib. <code>--jit --verbose</code> перечисляет такие функции и причину: <code>non_numeric_fn_body</code>.</li>
+        <li>Rust на binary-trees медленнее Go — вероятно, из-за системного malloc macOS (у Go свой аллокатор и сборщик мусора). С другим аллокатором это не сравнивали.</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<section>
+  <h2>Скорость реактивности</h2>
+  <p class="prose">Четыре сценария, одинаковых по смыслу для всех. Контрольная сумма значений, которые увидел наблюдатель (watch / effect), совпадает у всех. Время — только фаза обновлений, на Node 22; Bun — в таблице ниже. «Без графа» — та же работа обычными функциями: после каждого изменения всё пересчитывается заново, как это делает Elm. Это результаты конкретных сценариев, а не рейтинг скорости графов. Каждая библиотека сбрасывает эффекты своим способом (у Svelte — <code>flushSync</code>), а Elm делает всю работу одной свёрткой при старте: замерено время от <code>init</code> до ответа через порт, без цикла сообщений.</p>
+  {{REACTIVE_CHARTS}}
+  {{REACTIVE_TABLE}}
+  <div class="prose">
+    <ul>
+      <li><b>Граф Flux дешёвый.</b> Цепочка: {{CHAIN_FLUX}} мс с графом и {{CHAIN_PLAIN}} мс без него. Время уходит на интерпретатор, а не на реактивность. Для сравнения: Vue {{CHAIN_VUE}} мс, Preact {{CHAIN_PREACT}}, Solid {{CHAIN_SOLID}}, MobX {{CHAIN_MOBX}}.</li>
+      <li><b>Списки структур медленные</b>: todos {{TODOS_FLUX}} мс против {{TODOS_PREACT}}–{{TODOS_SVELTE}} мс у JS. Причина та же, что у binary-trees: <code>map</code>/<code>filter</code> по структурам выделяют память на каждое поле.</li>
+      <li><b>Svelte 5 падает на цепочке глубиной 1000</b> в нашем адаптере на Node (Maximum call stack size exceeded), на Bun не падает. Flux ту же глубину проходит.</li>
+      <li><b>Пересчитать всё заново — не хуже графа на таких размерах.</b> Elm без графа быстрее всех библиотек на цепочке, веере и счётчиках. Мелкозернистый граф окупается, когда пересчёт дорог или когда меняется DOM. Продавать реактивность Flux как ускорение не стоит; её польза — в корректности: статическая проверка чистоты и циклов и обновления пачками без «глитчей».</li>
+    </ul>
+  </div>
+</section>
+
+<section>
+  <h2>Запуск, проверка и память</h2>
+  <div class="two">
+    <div><h3>Запуск hello world, медиана из 10</h3><div class="chart-box">{{STARTUP_CHART}}</div></div>
+    <div class="prose">
+      <ul>
+        <li>Запуск Flux на уровне собранных бинарников Go и Rust. Кэш компиляции на hello world почти ничего не даёт: там нечего кэшировать.</li>
+        <li>Проверка самой большой программы из <code>programs/</code> ({{CHECK_LINES}} строк) — {{CHECK_MS}} мс. Ориентир, а не прямое сравнение (работа разная): <code>tsc</code> на файле из одной строки — около 850 мс, <code>rustc -O</code> на hello world — 200 мс.</li>
+        <li><b>Дефект</b>: если на конце цепочки из 1000 derived стоит <code>watch</code>, проверка занимает 9.5 с (500 узлов — 0.84 с, рост примерно n<sup>2.5</sup>). Без <code>watch</code> — 0.02 с. Причина — наивная неподвижная точка в проверке циклов watch (E029, <code>flux_hir/src/cycles.rs</code>).</li>
+        <li>Память: Flux 4–20 МБ на реактивных сценариях, процессы Node — 50–105 МБ, Bun — 36–73 МБ.</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<section>
+  <h2>Возможности</h2>
+  <p class="prose">Сводка по документации и спецификациям, без замеров. Клетка «частично» означает, что возможность есть с заметными оговорками. При наведении видно пояснение.</p>
+  {{MATRIX}}
+</section>
+
+<section>
+  <h2>Стабильность</h2>
+  <div class="stats">
+    <div class="stat"><b>{{MUTANTS}}</b><span>мутантов программ проверено</span></div>
+    <div class="stat"><b>{{FUZZ_RAN}}</b><span>из них запущено на VM и JIT</span></div>
+    <div class="stat"><b>0</b><span>паник и падений</span></div>
+    <div class="stat"><b>0</b><span>расхождений VM и JIT</span></div>
+    <div class="stat"><b>{{STRESS_FIRST}} → {{STRESS_LAST}} МБ</b><span>память при 25 → 200 раундах по 1000 компонентов</span></div>
+  </div>
+  <div class="prose" style="display:grid; gap:10px">
+    <p>Фаззер мутирует 203 исходные программы (все <code>.fl</code> из репозитория и все примеры из книги): удаляет и переставляет строки, вставляет токены и крайние числа, обрезает файлы. Каждый мутант проходит <code>flux check</code>, а если проверка пройдена — запускается на VM и на JIT, и вывод сравнивается. {{HANGS}} «зависаний» оказались честными бесконечными циклами мутантов (например, 2<sup>63</sup> итераций). cargo-fuzz не использовался: его установку нужно отдельно разрешить.</p>
+    <p>Роста памяти не замечено: 800 раундов создания и удаления 1000 компонентов дают тот же пик, что и 200 раундов. Это конечный стресс-тест, а не доказательство отсутствия утечек.</p>
+    <h3>Найденные дефекты (проверены вручную)</h3>
+    <ul class="bugs">
+      <li>Параметру компонента можно присвоить значение (<code>x = 2</code> в <code>act fn</code>), хотя по SPEC параметры неизменны всё время жизни экземпляра.</li>
+      <li>Псевдоним экземпляра на уровне модуля (<code>let b = a</code>) теряет методы: «no method `inc` for type `Cell&lt;C&gt;`» — наружу просачивается внутренний тип.</li>
+      <li><code>flux check</code> пропускает цикл между шаблонами (<code>C.d → total → C.d</code>), а <code>flux run</code> отвергает его как E010.</li>
+      <li><code>emit</code> в ветке <code>match</code> внутри <code>on</code> — ошибка разбора, в <code>fn</code> — работает.</li>
+      <li><code>flux fmt</code> отказывается форматировать файл с комментарием <code>//</code> внутри функции.</li>
+      <li>Нет предупреждения о неиспользуемой локальной переменной, хотя E015 существует.</li>
+      <li>Квадратичная проверка циклов watch (см. выше).</li>
+    </ul>
+    <p>Зрелость не измерить фаззером: Flux 0.4 — проект нескольких месяцев, у остальных языков за плечами годы и миллионы пользователей.</p>
+  </div>
+</section>
+
+<section>
+  <h2>Безопасность</h2>
+  <div class="two">
+    <div class="prose">
+      <h3>Что хорошо</h3>
+      <ul>
+        <li><code>unsafe</code> есть только в JIT: 7 мест, вызов скомпилированного кода и чтение слотов аргументов. Парсер, проверка типов, VM, стандартная библиотека — безопасный Rust.</li>
+        <li>Целые числа проверяются: переполнение — это ошибка, а не тихий перенос, как в Go, Lua или в Rust в релизной сборке.</li>
+        <li>Лимиты: 10 000 вложенных вызовов, вложенность скобок 256, коллекции до 10 млн элементов, строки до 100 МБ. Всё это — ошибка языка, а не аварийное завершение.</li>
+        <li>Значения неизменяемые и со счётчиком ссылок, циклов быть не может. Экземпляр компонента не может держать сам себя.</li>
+        <li><code>--target web</code> на этапе компиляции убирает модули, которых нет у цели (E034). Хост сам решает, какие <code>extern fn</code> дать программе.</li>
+      </ul>
+    </div>
+    <div class="prose">
+      <h3>Чего нет</h3>
+      <ul>
+        <li>CLI-программа может читать и удалять файлы, запускать процессы (<code>process.run</code>) и читать переменные окружения без каких-либо разрешений. У Deno для этого есть флаги прав, у встроенного Lua — набор библиотек, который выбирает встраивающая программа.</li>
+        <li>Нет ограничения времени: бесконечный цикл в derived при старте не прервать иначе как Ctrl-C (у хоста нет «топлива» или тайм-аута).</li>
+        <li>Цепочка поставок: реестра пакетов нет, есть только зависимости по пути и lock-файл, так что и риска реестра пока нет. В CI запускается <code>cargo audit</code>.</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<section>
+  <h2>Насколько обоснованы ограничения</h2>
+  <p class="prose">Codex перебрал {{V_TOTAL}} правил и ловушек, на которые натыкается программист. Для каждого он написал минимальную программу, снял реальное сообщение, нашёл причину в SPEC и книге и сравнил с Rust, TypeScript, Elm, Haskell, Solid, Vue, MobX и Svelte. Затем дал вердикт и оценил объяснение: 0–3 отдельно для сообщения и для книги, где 3 — уровень Rust: что, почему и как исправить. Полный разбор — <code>comparison/openness/restrictions.md</code>, воспроизведения — <code>openness/repro/</code>.</p>
+  {{VERDICT_BAR}}
+  <div class="two">
+    <div>
+      <h3>Произвольные: связи с гарантиями нет</h3>
+      {{ARBITRARY}}
+    </div>
+    <div class="prose">
+      <h3>Что оставить как есть</h3>
+      <ul class="keep">
+        <li>derived не делает ввод-вывод, <code>emit</code> и записи, даже косвенно: пересчёт формулы не должен иметь видимых эффектов.</li>
+        <li>derived не читает реактивное значение «тайком» (<code>snap</code>), иначе он устареет без следа.</li>
+        <li>Настоящий цикл derived — ошибка: у <code>a = b + 1, b = a + 1</code> нет решения.</li>
+        <li>derived нельзя присвоить: присваивание не может тихо заменить формулу.</li>
+        <li>Неизменяемые <code>let</code>, <code>const</code> и параметры компонента (последнее сейчас не соблюдается — дефект).</li>
+        <li>Приватность полей и запись чужого источника только через модуль-владелец (E032).</li>
+        <li>Эффекты выполняются после того, как граф устоялся, в определённом порядке.</li>
+      </ul>
+      <h3>Главный вывод Codex</h3>
+      <p>У правил реактивного ядра (чистота derived, циклы, только отслеживаемые чтения) есть настоящие причины. Но объяснены и выполняются они неровно: watch может писать источник с предупреждением E028, а правило «каждый watch раз за пачку» может проглотить уведомление после такой записи, и книга этого не объясняет. Поверх ядра лежит слой ограничений грамматики и реализации, которые подаются как требования реактивности, хотя ими не являются. Rust объясняет, откуда берётся правило. Flux часто называет правило и не объясняет причину, а в нескольких местах предлагает неверное исправление: E008 для <code>snap</code>, E009 для захваченной переменной, E019 «добавьте impl» для опечатки.</p>
+    </div>
+  </div>
+</section>
+
+<section>
+  <h2>Удобство</h2>
+  <h3>Тест новичка</h3>
+  <p class="prose">Отдельный агент, который знает Rust, TypeScript и Python, но не видел Flux, написал шесть программ, читая только книгу. Он записывал каждую неудачную проверку и её причину и параллельно писал ту же программу на TypeScript. Журнал — <code>comparison/ease/LOG.md</code>.</p>
+  <div class="stats">
+    <div class="stat"><b>6 / 6</b><span>программ дописано, вывод совпал с TS</span></div>
+    <div class="stat"><b>10</b><span>неудачных проверок на шесть программ</span></div>
+    <div class="stat"><b>4 из 10</b><span>сообщений вводили в заблуждение или молчали</span></div>
+    <div class="stat"><b>510 / 303</b><span>непустых строк Flux / TypeScript</span></div>
+  </div>
+  <div class="scroll"><table class="plain">
+    <thead><tr><th>программа</th><th>сбоев</th><th>Flux / TS</th><th>главное препятствие</th></tr></thead>
+    <tbody>
+      <tr><th scope="row">wordfreq — частоты слов</th><td class="num">2</td><td class="num">51 / 25</td><td style="white-space:normal">у <code>sorted_by</code> ключ только число или строка: нет кортежа и компаратора</td></tr>
+      <tr><th scope="row">ledger — разбор CSV</th><td class="num">1</td><td class="num">123 / 79</td><td style="white-space:normal">у строк нет подстроки; E019 советует написать <code>impl Trait for String</code></td></tr>
+      <tr><th scope="row">thermostat — реактивное приложение</th><td class="num">2</td><td class="num">44 / 33</td><td style="white-space:normal"><code>else if</code> в <code>derived</code> — ошибка разбора со списком токенов</td></tr>
+      <tr><th scope="row">todos — компоненты</th><td class="num">2</td><td class="num">69 / 41</td><td style="white-space:normal">экземпляр в модульном <code>let</code> нельзя прочитать из <code>fn</code>; оба предложенных исправления неверны</td></tr>
+      <tr><th scope="row">game — таймеры</th><td class="num">3</td><td class="num">70 / 40</td><td style="white-space:normal"><code>emit</code> в ветке <code>match</code> внутри <code>on</code> запрещён, хотя книга говорит, что можно</td></tr>
+      <tr><th scope="row">config — два модуля</th><td class="num">0</td><td class="num">153 / 85</td><td style="white-space:normal">ничего не мешало; ошибки для <code>?</code> агент преобразовывал вручную: <code>map_err</code> есть в SPEC, но в книге его нет</td></tr>
+    </tbody>
+  </table></div>
+  <p class="prose">Вывод агента: обычный код на структурах, enum, <code>match</code>, <code>Result</code> и модулях читается как упрощённый Rust, а реактивная часть хорошо объяснена в книге. Почти все трения — от правил, которые действуют в одном месте и не действуют в другом, а не от сложных понятий. С исправлениями Flux был бы «примерно как Go» для такого программиста. Сейчас: «легко, но готовьтесь выяснять у компилятора, что вообще есть».</p>
+
+  <h3>Одни и те же ошибки на пяти языках</h3>
+  <p class="prose">Семь типичных ошибок. В клетке — главная строка сообщения и балл: 3 — что, где и верное исправление или подсказка; 2 — что и где; 1 — расплывчато; 0 — ошибки нет или совет неверный. Python находит ошибки только при запуске, а две не находит вовсе. Баллы ставил автор отчёта, Codex их перепроверил; в пяти клетках, где мнения разошлись, стоит оценка Codex.</p>
+  {{ERRORS_TABLE}}
+</section>
+
+<section>
+  <h2>Предлагаемые изменения для 0.5</h2>
+  <p class="prose">Ранжированы по соотношению пользы и цены. <span class="kind fix">исправление</span> — язык не меняется, это дефекты, скорость, сообщения. <span class="kind lang">язык</span> — меняется поверхность языка или SPEC, нужно ваше решение. Ответьте номерами, например «берём F1–F4 и L1».</p>
+  <ol class="changes">
+    <li><span class="id">F1</span><h3>Исправить найденные дефекты <span class="kind fix">исправление</span></h3><p>Изменяемый параметр компонента, псевдоним экземпляра на уровне модуля, расхождение check/run по E010, <code>emit</code> в ветке <code>match</code> внутри <code>on</code>, отсутствие E015 для локальных переменных, <code>fmt</code> с комментариями внутри функций, квадратичная проверка циклов watch.</p><div class="meta"><span>польза: доверие к модели</span><span>цена: малая–средняя (время жизни компонентов и согласование check/run — не мелочь)</span></div></li>
+    <li><span class="id">F2</span><h3>Сообщения об ошибках уровня Rust <span class="kind fix">исправление</span></h3><p>«Did you mean» для имён, методов и импортов (<code>map_new</code> → <code>import collections</code>). Ошибки разбора обычными словами вместо списка токенов. Отдельный код для неполного <code>match</code> со списком недостающих вариантов. Заметка «функция определена здесь» при неверном числе аргументов. Подсказка, как развернуть Option. Предупреждения визуально отличаются от ошибок. Исправить неверные подсказки E008, E009, E019. Типы называть так, как их пишет программист (<code>Int</code>, а не <code>Int64</code>). Не каскадировать ошибки с типом <code>&lt;error&gt;</code>. Команда <code>flux explain E0xx</code>.</p><div class="meta"><span>польза: высокая, касается каждого</span><span>цена: средняя</span></div></li>
+    <li><span class="id">L1</span><h3>Один <code>if</code> и один <code>match</code> везде <span class="kind lang">язык</span></h3><p><code>else if</code> и операторы в ветках там, где <code>if</code> стоит как выражение, в <code>derived</code> и в операнде. <code>emit</code> в ветках <code>match</code> в любом действии. Сейчас это самая частая «необъяснимая» ошибка.</p><div class="meta"><span>польза: высокая</span><span>цена: парсер и понижение</span><span>гарантии: не затрагивает</span></div></li>
+    <li><span class="id">L2</span><h3>Стандартная библиотека для CLI <span class="kind lang">язык</span></h3><p><code>s.slice(a, b)</code> / подстрока, выравнивание и заполнение. <code>sort_by</code> с компаратором или кортежным ключом. Пустой словарь без импорта (<code>Map::new()</code> или типизированный <code>{}</code>). В книгу — список методов с примерами: <code>map_err</code>, <code>ok_or</code> и стабильная сортировка уже есть в SPEC, но новичок их не нашёл.</p><div class="meta"><span>польза: высокая для обычных программ</span><span>цена: малая–средняя</span></div></li>
+    <li><span class="id">F3</span><h3>Представление значений без лишних аллокаций <span class="kind fix">исправление</span></h3><p>Интернированные имена типов и вариантов, поля структур как вектор в порядке объявления вместо <code>HashMap&lt;String, Value&gt;</code>. Сейчас binary-trees в 18 раз медленнее Python, а списки структур в 7–17 раз медленнее JS. Если убрать все измеренные 55% времени на аллокации, получится до ~2.2×. Больший выигрыш возможен только вместе с другими изменениями представления, это гипотеза.</p><div class="meta"><span>польза: высокая</span><span>цена: средняя–большая, затрагивает runtime и value</span></div></li>
+    <li><span class="id">L3</span><h3>Варианты enum с несколькими значениями <span class="kind lang">язык</span></h3><p><code>Node(Tree, Tree)</code> как в Rust, Swift, Elm и OCaml. Заодно выражение <code>()</code> и кортеж из одного элемента.</p><div class="meta"><span>польза: средняя</span><span>цена: парсер и образцы; механизм кортежей уже есть</span></div></li>
+    <li><span class="id">F4</span><h3>JIT для float, массивов и структур <span class="kind fix">исправление</span></h3><p>Сейчас любая функция, которая принимает или строит массив или структуру, уходит на VM. Плюс причина отката обычными словами: сейчас <code>--jit --verbose</code> пишет код вроде <code>non_numeric_fn_body</code>.</p><div class="meta"><span>польза: высокая для вычислений</span><span>цена: большая</span></div></li>
+    <li><span class="id">L4</span><h3>Явные аргументы типа <span class="kind lang">язык</span></h3><p><code>parse::[Int](s)</code> там, где вывести тип не из чего. Сейчас единственный выход — аннотация у переменной.</p><div class="meta"><span>польза: средняя</span><span>цена: синтаксис, специализация уже есть</span></div></li>
+    <li><span class="id">L5</span><h3>Узаконить чистые циклы в derived <span class="kind lang">язык</span></h3><p>Книга запрещает циклы в derived, а бинарник их пропускает, и вреда от этого нет: чистота определяется эффектами, а не синтаксисом. Привести SPEC и книгу к поведению, но вместе с бюджетом вычислений («топливом»): бесконечный пересчёт сейчас не прервать.</p><div class="meta"><span>польза: средняя</span><span>цена: в основном документация</span></div></li>
+    <li><span class="id">L6</span><h3>Достроить методы <span class="kind lang">язык</span></h3><p><code>act</code>-методы, обобщённые методы с <code>mut self</code>, <code>mut</code>-параметры у методов, возврат значения из <code>mut self</code>, составные <code>&amp;=</code> / <code>|=</code> / <code>^=</code> / <code>&lt;&lt;=</code>.</p><div class="meta"><span>польза: средняя</span><span>цена: средняя (порядок обратной записи)</span></div></li>
+    <li><span class="id">L7</span><h3>Снять мелкие запреты в компонентах <span class="kind lang">язык</span></h3><p>Деструктуризация в членах, обобщённые функции-члены, <code>emit items[i].Event</code>, понятный путь «передать экземпляр параметром» вместо E002 → <code>const</code> → E008.</p><div class="meta"><span>польза: средняя</span><span>цена: средняя</span></div></li>
+    <li><span class="id">F5</span><h3>SPEC и книга без расхождений <span class="kind fix">исправление</span></h3><p>E035 в таблице SPEC, E014/E022, правила видимости методов. Главное — объяснить обратную связь watch: запись из watch — это предупреждение E028, а не запрет, и после неё «каждый watch раз за пачку» может проглотить уведомление. Плюс время жизни экземпляров. Это прямо касается гарантий, которые обещает язык. Делает Codex.</p><div class="meta"><span>польза: средняя</span><span>цена: малая</span></div></li>
+    <li><span class="id">P1</span><h3>Профилировщик и отладка <span class="kind fix">исправление</span></h3><p>Хотя бы <code>flux run --profile</code>: время по функциям, обработчикам и derived. Затем трассировка пачек: какое событие что пересчитало.</p><div class="meta"><span>польза: средняя</span><span>цена: средняя</span></div></li>
+    <li><span class="id">P2</span><h3>Права программы <span class="kind lang">язык</span></h3><p>Флаги в духе Deno для CLI (<code>--allow-read</code>, <code>--allow-run</code>) или набор модулей в <code>flux.toml</code>. Механизм целей уже умеет убирать модули.</p><div class="meta"><span>польза: средняя; нужна до того, как запускать чужие CLI-пакеты</span><span>цена: средняя</span></div></li>
+    <li><span class="id">X1</span><h3>Не рекомендую сейчас: авто-отслеживание чтений в обычных fn <span class="kind lang">язык</span></h3><p>Codex считает E002 ослабляемым: чтения в <code>fn</code> можно отслеживать, если функцию вызвал derived. Но это меняет модель «что видно в сигнатуре». Ошибок новичка из-за E002 было меньше, чем из-за грамматики, но выборка маленькая: шесть программ. Предлагаю вернуться к этому после L1–L2, с отдельным небольшим исследованием отслеживаемых функций-помощников.</p><div class="meta"><span>польза: спорная</span><span>цена: большая, затрагивает решение 2026-11-22</span></div></li>
+  </ol>
+  <p class="prose">После выбора: веб-эксперимент (VM в wasm в браузере), как и договаривались. F3 и F4 лучше сделать до веба: в wasm VM, скорее всего, будет ещё медленнее.</p>
+</section>
+
+<section>
+  <h2>Как перезапустить</h2>
+<pre>python3 comparison/run_compute.py 3          # вычисления, ~10 мин
+python3 comparison/run_reactive.py 3         # реактивность (Flux, Elm, 5 библиотек на Node и Bun)
+python3 comparison/startup/run_startup.py    # запуск и проверка
+python3 comparison/stability/fuzz.py 20000 2 6
+python3 comparison/stability/stress.py
+python3 comparison/errors/run_errors.py
+python3 comparison/report/build.py           # эта страница</pre>
+  <p class="prose"><small>Node 22.16, Bun, Python 3.15, Ruby с YJIT, Lua 5.4, LuaJIT, Go, Rust 1.97, Elm 0.19.1, TypeScript 5.9. Библиотеки: SolidJS 2.0.4, Vue reactivity 3.5.46, MobX 7.1.8, Svelte 5.59.2, Preact signals 1.14.5 (локально в <code>comparison/reactive</code>). Flux — релизная сборка коммита ac12656. Замеры шли без тяжёлой фоновой нагрузки: начатую brew сборку GHC остановили до замеров, а тест новичка шёл параллельно реактивному прогону и запускал только короткие проверки.</small></p>
+</section>
+</main>
+<div id="tip" hidden></div>
+<script>
+(function () {
+  const tip = document.getElementById('tip');
+  document.addEventListener('pointerover', (ev) => {
+    const t = ev.target.closest('[data-tip]');
+    if (!t) { tip.hidden = true; return; }
+    tip.textContent = t.getAttribute('data-tip');
+    tip.hidden = false;
+  });
+  document.addEventListener('pointermove', (ev) => {
+    if (tip.hidden) return;
+    const x = Math.min(ev.clientX + 14, window.innerWidth - tip.offsetWidth - 8);
+    tip.style.left = x + 'px';
+    tip.style.top = (ev.clientY + 16) + 'px';
+  });
+  document.addEventListener('pointerout', (ev) => {
+    if (!ev.relatedTarget || !ev.relatedTarget.closest || !ev.relatedTarget.closest('[data-tip]')) tip.hidden = true;
+  });
+})();
+</script>

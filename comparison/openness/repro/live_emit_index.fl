@@ -1,0 +1,3 @@
+live fn C() { pub event Tick }
+let cs = [C()]
+act fn main() { emit cs[0].Tick() }

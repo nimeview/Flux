@@ -1,0 +1,1 @@
+live fn C() { fn set(mut x: Int) { x = 1 } }

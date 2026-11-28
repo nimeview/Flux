@@ -1,0 +1,1 @@
+live fn C() { struct P { x: Int } }

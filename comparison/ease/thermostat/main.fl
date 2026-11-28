@@ -1,0 +1,60 @@
+import io { println }
+
+enum Mode {
+    Heat,
+    Cool,
+    Idle
+}
+
+const BAND = 1
+
+event Reading(celsius: Int)
+
+event SetTarget(celsius: Int)
+
+event Adjust(delta: Int)
+
+let mut temp = 20
+
+let mut target = 20
+
+derived mode = if temp < target - BAND { Heat } else { if temp > target + BAND { Cool } else { Idle } }
+
+derived display = "now {temp}C, target {target}C, {label(mode)}"
+
+fn label(m: Mode) -> String {
+    match m { Heat => "heating", Cool => "cooling", Idle => "idle" }
+}
+
+on Reading(celsius) {
+    temp = celsius
+}
+
+on SetTarget(celsius) {
+    target = celsius
+}
+
+on Adjust(delta) {
+    target += delta
+}
+
+watch display {
+    println("[display] {display}")
+}
+
+watch mode(prev) {
+    if prev != mode {
+        println("[mode] {label(prev)} -> {label(mode)}")
+    }
+}
+
+fn main() {
+    emit Reading(17)
+    emit Reading(18)
+    emit SetTarget(18)
+    emit Reading(23)
+    emit Adjust(3)
+    emit Adjust(3)
+    emit Reading(25)
+    emit Reading(25)
+}

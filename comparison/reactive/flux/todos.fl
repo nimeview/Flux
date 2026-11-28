@@ -1,0 +1,62 @@
+import io { println }
+import time { now }
+
+event Seen(v: Int)
+
+on Seen(v) {
+    seen += v
+}
+
+struct Todo {
+    id: Int,
+    done: Bool,
+}
+
+event Add(id: Int)
+
+event Toggle(id: Int)
+
+event Remove(id: Int)
+
+let mut todos: [Todo] = []
+
+let mut seen = 0
+
+derived remaining = todos.filter(|t| !t.done).len()
+
+on Add(id) {
+    todos.push(Todo { id: id, done: false })
+}
+
+on Toggle(id) {
+    todos = todos.map(|t| if t.id == id { t with { done: !t.done } } else { t })
+}
+
+on Remove(id) {
+    todos = todos.filter(|t| t.id != id)
+}
+
+watch remaining {
+    emit Seen(remaining)
+}
+
+fn main() {
+    let t0 = now()
+    let mut i = 0
+    while i < 1000 {
+        emit Add(i)
+        i += 1
+    }
+    i = 0
+    while i < 1000 {
+        emit Toggle(i)
+        i += 2
+    }
+    i = 0
+    while i < 500 {
+        emit Remove(i)
+        i += 1
+    }
+    let t1 = now()
+    println("{snap(seen)} {t1 - t0}")
+}

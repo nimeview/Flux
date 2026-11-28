@@ -1,0 +1,2 @@
+import math { sqrt }
+fn main() { let f = sqrt; f(4.0) }

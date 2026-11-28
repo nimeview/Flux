@@ -1,0 +1,3 @@
+live fn C() { pub derived d: Int = total + 1 }
+let c = C()
+derived total: Int = c.d

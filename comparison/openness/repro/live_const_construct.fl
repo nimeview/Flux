@@ -1,0 +1,2 @@
+live fn C() { pub let n = 1 }
+const C1 = C()

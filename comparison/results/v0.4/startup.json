@@ -1,0 +1,24 @@
+{
+ "hello_start_ms": {
+  "Flux VM (run, no cache)": 6.718504984746687,
+  "Flux VM (run, cached)": 6.527992503833957,
+  "Python": 31.01262250856962,
+  "Ruby": 74.25853751192335,
+  "Lua": 3.775286488234997,
+  "LuaJIT": 3.563676989870146,
+  "Node": 46.97980600758456,
+  "Bun": 18.205645494163036,
+  "Go (built binary)": 5.749471500166692,
+  "Rust (built binary)": 3.604169498430565
+ },
+ "flux_check_largest_program": {
+  "file": "programs/demo/showcase.fl",
+  "lines": 134,
+  "ms": 9.908987500239164
+ },
+ "compile_ms": {
+  "go build hello": 91.99415799230337,
+  "rustc -O hello": 200.49938399461098,
+  "tsc hello": 849.7921509842854
+ }
+}

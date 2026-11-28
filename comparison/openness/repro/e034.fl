@@ -1,0 +1,2 @@
+import fs { read_file }
+fn main() { read_file("x") }

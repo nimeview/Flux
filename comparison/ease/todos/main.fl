@@ -1,0 +1,82 @@
+import io { println }
+
+enum Filter {
+    All,
+    Active,
+    Done
+}
+
+fn shows(f: Filter, done: Bool) -> Bool {
+    match f { All => true, Active => !done, Done => done }
+}
+
+live fn Item(text: String) {
+    pub let title = text
+    pub let mut done = false
+    pub event Toggle
+
+    on Toggle {
+        done = !done
+    }
+
+    pub derived line = if done { "[x] {title}" } else { "[ ] {title}" }
+}
+
+live fn TodoList() {
+    pub let mut items: [Item] = []
+    pub let mut filter = All
+    pub event Add(text: String)
+    pub event Remove(index: Int)
+    pub event Show(f: Filter)
+
+    on Add(text) {
+        items.push(Item(text))
+    }
+
+    on Remove(index) {
+        let gone = items[index]
+        items = items.filter(|x| x != gone)
+    }
+
+    on Show(f) {
+        filter = f
+    }
+
+    pub derived visible: [Item] = items.filter(|i| shows(filter, i.done))
+    pub derived left: Int = items.filter(|i| !i.done).len()
+}
+
+fn render(todos: TodoList, step: String) {
+    println("-- {step} (filter: {todos.filter})")
+    for item in todos.visible {
+        println("  {item.line}")
+    }
+    let s = if todos.left == 1 { "" } else { "s" }
+    println("  {todos.left} item{s} left")
+}
+
+fn toggle(todos: TodoList, index: Int) {
+    let item = todos.items[index]
+    emit item.Toggle()
+}
+
+fn main() {
+    let todos = TodoList()
+    emit todos.Add("write code")
+    emit todos.Add("write tests")
+    emit todos.Add("ship it")
+    render(todos, "added three")
+    toggle(todos, 0)
+    render(todos, "toggled #0")
+    emit todos.Show(Active)
+    render(todos, "show active")
+    toggle(todos, 1)
+    render(todos, "toggled #1")
+    emit todos.Show(Done)
+    render(todos, "show done")
+    emit todos.Remove(0)
+    render(todos, "removed #0")
+    emit todos.Show(All)
+    toggle(todos, 0)
+    render(todos, "show all, toggled #0 back")
+}

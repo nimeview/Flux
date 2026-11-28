@@ -1,0 +1,2 @@
+struct P { x: Int }
+impl P { fn grow(mut self) -> Int { self.x += 1; self.x } }

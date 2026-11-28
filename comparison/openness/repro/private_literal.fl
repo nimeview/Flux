@@ -1,0 +1,2 @@
+import owner { P }
+fn main() { P { hidden: 1 } }

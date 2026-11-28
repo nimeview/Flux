@@ -1,0 +1,2 @@
+event Tick(n: Int)
+fn main() { emit Tick() }

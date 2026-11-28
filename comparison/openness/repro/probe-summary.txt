@@ -1,0 +1,707 @@
+e002 exit=1 
+flux::E002
+x cannot read reactive `limit` in a pure function
+help: `limit` is a module `let` (a reactive source); if it is a fixed value, declare it `const limit = …` to read it here, or use `snap(limit)`
+e003 exit=1 
+flux::E003
+x cannot assign to derived binding `y`
+help: derived bindings are read-only; assign to a source binding instead
+e008_loop exit=0 
+flux::E015
+x unused binding `y`
+help: remove the binding or reference it from a derived value, watch, or handler
+e008_return exit=0 
+flux::E015
+x unused binding `y`
+help: remove the binding or reference it from a derived value, watch, or handler
+e008_snap exit=1 
+flux::E015
+x unused binding `y`
+help: remove the binding or reference it from a derived value, watch, or handler
+flux::E008
+x control flow `snap()` read inside `read` is not allowed in a derived expression
+help: use `watch`, `on`, `track fn`, or `act fn` for statements with side effects or loops
+e008_action exit=1 
+flux::E015
+x unused binding `y`
+help: remove the binding or reference it from a derived value, watch, or handler
+flux::E008
+x a derived value cannot call the `act fn` `read`
+help: an `act fn` is an action, and a derived value does not follow what it reads; write `track fn read` for a function that computes from sources
+e008_const exit=1 
+flux::E015
+x unused binding `Y`
+help: remove the binding or reference it from a derived value, watch, or handler
+flux::E008
+x a `const` initializer cannot call the `act fn` `read`
+help: an `act fn` is an action, and a derived value does not follow what it reads; write `track fn read` for a function that computes from sources
+e008_track exit=1 
+flux::E008
+x the `track fn` `read2` cannot call the `act fn` `read`
+help: an `act fn` is an action, and a derived value does not follow what it reads; write `track fn read` for a function that computes from sources
+e008_extern exit=1 
+flux::E015
+x unused binding `y`
+help: remove the binding or reference it from a derived value, watch, or handler
+flux::E008
+x a derived value cannot call the `act fn` `read`
+help: an `act fn` is an action, and a derived value does not follow what it reads; write `track fn read` for a function that computes from sources
+e008_track_extern exit=1 
+flux::E008
+x the `track fn` `read2` cannot call the `act fn` `read`
+help: an `act fn` is an action, and a derived value does not follow what it reads; write `track fn read` for a function that computes from sources
+e010 exit=1 
+flux::E010
+x cyclic dependency in reactive graph: a -> b -> a
+help: break the cycle by making one binding a source, or remove a dependency edge
+e010_branch exit=1 
+flux::E010
+x cyclic dependency in reactive graph: a -> b -> a
+help: break the cycle by making one binding a source, or remove a dependency edge
+e011_watch exit=1 
+flux::E011
+x `watch` is only allowed at module level
+help: move this `watch` out of the function body and declare it at the top level of the module
+e011_on exit=1 
+flux::E011
+x `on` is only allowed at module level
+help: move this `on` out of the function body and declare it at the top level of the module
+e016 exit=1 
+flux::E016
+x binding `x` is assigned; declare it with `let mut`
+help: use `derived` for computed values, or `let mut` for reassignable sources
+e009_local exit=1 
+flux::E009
+x cannot assign to immutable local `x`
+help: use `let mut x = ...` to declare a mutable local, or assign to a `let mut` source binding
+e009_const exit=1 
+flux::E009
+x cannot assign to immutable local `X`
+help: use `let mut X = ...` to declare a mutable local, or assign to a `let mut` source binding
+e017_derived exit=1 
+flux::E015
+x unused binding `x`
+help: remove the binding or reference it from a derived value, watch, or handler
+flux::E017
+x side effect `noisy` is not allowed in a derived expression
+help: move I/O and printing into `watch`, `on`, or a function body such as `main`
+e017_const exit=1 
+flux::E015
+x unused binding `X`
+help: remove the binding or reference it from a derived value, watch, or handler
+flux::E017
+x side effect `println` is not allowed in a `const` initializer
+help: move I/O and printing into `watch`, `on`, or a function body such as `main`
+e017_emit exit=1 
+flux::E015
+x unused binding `x`
+help: remove the binding or reference it from a derived value, watch, or handler
+flux::E017
+x side effect `noisy` is not allowed in a derived expression
+help: move I/O and printing into `watch`, `on`, or a function body such as `main`
+e027 exit=1 
+flux::E027
+x `main` changes `x`, but only `on` handlers and `act fn` change state
+help: write `act fn main` so that callers see one change; `flux migrate` does it
+e027_track exit=1 
+flux::E027
+x `f` changes `x`, but only `on` handlers and `act fn` change state
+help: a `track fn` is recomputed whenever what it reads changes; change state in an `act fn` or an `on` handler
+e027_method exit=1 
+flux::E027
+x `f` changes `x`, but only `on` handlers and `act fn` change state
+help: change state in an `act fn` or an `on` handler
+e028 exit=0 
+flux::E028
+x this watch changes `y`
+help: a watch reacts to changes; compute `y` with `let`, or `emit` an event whose `on` handler changes it
+RUN y=1
+y=3
+flux::E028
+
+  x this watch changes `y`
+   ,-[<repo>/comparison/openness/repro/e028.fl:4:11]
+ 3 | let mut y = 0
+ 4 | watch x { y = x + 1 }
+   :           |
+   :           `-- changes state
+ 5 | watch y { println("y={y}") }
+   `----
+  help: a watch reacts to changes; compute `y` with `let`, or `emit` an event whose `on` handler changes it
+
+e029 exit=0 
+flux::E028
+x this watch changes `x`
+help: a watch reacts to changes; compute `x` with `let`, or `emit` an event whose `on` handler changes it
+flux::E029
+x this watch wakes itself through `x`
+help: each watch runs at most once per batch, so the last change in the cycle does not wake the watch it reaches; compute the value with `let`, or change it in an `on` handler
+RUN seen=1
+main=5
+seen=6
+flux::E028
+
+  x this watch changes `x`
+   ,-[<repo>/comparison/openness/repro/e029.fl:3:11]
+ 2 | let mut x = 0
+ 3 | watch x { x += 1; println("seen={x}") }
+   :           |
+   :           `-- changes state
+ 4 | act fn main() { x = 5; println("main={x}") }
+   `----
+  help: a watch reacts to changes; compute `x` with `let`, or `emit` an event whose `on` handler changes it
+flux::E029
+
+  x this watch wakes itself through `x`
+   ,-[<repo>/comparison/openness/repro/e029.fl:3:1]
+ 2 | let mut x = 0
+ 3 | watch x { x += 1; println("seen={x}") }
+   : ^^|^^
+   :   `-- this watch
+ 4 | act fn main() { x = 5; println("main={x}") }
+   `----
+  help: each watch runs at most once per batch, so the last change in the cycle does not wake the watch it reaches; compute the value with `let`, or change it in an `on` handler
+
+e030 exit=0 
+flux::E030
+x the result of `push` is not used
+help: it returns a new array: write `xs = push(xs, v)`
+e031 exit=1 
+flux::E031
+x `P` does not have trait `Ord`, which `f` needs for `T`
+help: `Ord` holds for numbers and `String`
+e032 exit=1 
+flux::E032
+x `x` belongs to another module; only that module changes it
+help: emit one of its events, or call one of its `pub act fn`s
+e033 exit=1 
+flux::E033
+x field `hidden` of `P` is private to its module
+help: only `P`'s module can name it; use the functions or methods that module provides, or mark the field `pub` there
+e034 exit=1 
+flux::E034
+x `fs` is not available on target `web`
+help: a `web` program cannot use it; check another target, or leave it out
+e035 exit=0 
+flux::E035
+x `io.fl` is not imported: `io` is a library module
+help: rename the file to import it; `import io` always means the library
+e021_return exit=1 
+flux::E021
+x `?` needs the function to return `Result[…]` or `Option[…]`, but it returns `Int64`
+help: `?` works in a function declared `-> Result[T, E]` on a `Result[U, E]` with the same `E`, or in `-> Option[T]` on an `Option[U]`
+e021_infer exit=1 
+flux::E021
+x `?` is only allowed in a function with a declared `Result[…]` or `Option[…]` return type
+help: `?` works in a function declared `-> Result[T, E]` on a `Result[U, E]` with the same `E`, or in `-> Option[T]` on an `Option[U]`
+e021_kind exit=1 
+flux::E021
+x `?` on `Option<Int64>` in a function returning `Result<Int64, String>`; use `?` on a `Result`
+help: `?` works in a function declared `-> Result[T, E]` on a `Result[U, E]` with the same `E`, or in `-> Option[T]` on an `Option[U]`
+e021_error exit=1 
+flux::E021
+x `?` on a `Result` with error type `Int64` in a function returning error type `String`; the error types must match
+help: `?` works in a function declared `-> Result[T, E]` on a `Result[U, E]` with the same `E`, or in `-> Option[T]` on an `Option[U]`
+e021_top exit=1 
+flux::E015
+x unused binding `x`
+help: remove the binding or reference it from a derived value, watch, or handler
+flux::E021
+x `?` is only allowed in a function with a declared `Result[…]` or `Option[…]` return type
+help: `?` works in a function declared `-> Result[T, E]` on a `Result[U, E]` with the same `E`, or in `-> Option[T]` on an `Option[U]`
+e025 exit=1 
+flux::E025
+x no value of type `S` can exist
+help: it always contains itself; end the chain with an enum variant, `Option`, or an array
+local_derived exit=1 
+flux::E001
+x undefined name `derived`
+top_assignment exit=1 
+flux::E000
+x parse error: expected EOI, item, eq_op, rel_op, add_op, bits_op, mul_op, kw_with, index_suffix, try_suffix, field_suffix, call_args, or kw_as
+help: check syntax near the highlighted token
+local_source exit=0 
+ok
+RUN 
+generic_args exit=1 
+flux::E000
+x parse error: expected stmt, place_step, assign_op, eq_op, rel_op, add_op, bits_op, mul_op, kw_with, index_suffix, try_suffix, field_suffix, call_args, or kw_as
+help: check syntax near the highlighted token
+generic_unknown exit=1 
+flux::E005
+x type mismatch: expected `type arguments for `empty` from its arguments or from where the call is`, found `type arguments that nothing fixes`
+:                         `-- expected `type arguments for `empty` from its arguments or from where the call is`
+help: give the call's place a type, as in `let xs: [Int] = empty()`, or pass arguments of known types
+enum_payload exit=1 
+flux::E000
+x parse error: a tuple variant holds one type; use a struct for several, as in `Pair(Point)` or `Pair { x: Int, y: Int }`
+help: check syntax near the highlighted token
+if_operand_chain exit=1 
+flux::E000
+x parse error: expected eq_op, rel_op, add_op, bits_op, mul_op, kw_with, index_suffix, try_suffix, field_suffix, call_args, or kw_as
+help: check syntax near the highlighted token
+if_operand_stmts exit=1 
+flux::E000
+x parse error: expected eq_op, rel_op, add_op, bits_op, mul_op, kw_with, index_suffix, try_suffix, field_suffix, call_args, or kw_as
+help: check syntax near the highlighted token
+if_tail_ok exit=0 
+ok
+map_import exit=1 
+flux::E001
+x undefined name `map_new`
+map_empty exit=1 
+flux::E000
+x parse error: expected unary_expr
+help: check syntax near the highlighted token
+map_key exit=1 
+flux::E005
+x type mismatch: expected `a map key type (an integer type, String, Bool, or Char)`, found `Float64`
+:                           `-- expected `a map key type (an integer type, String, Bool, or Char)`
+live_mut_param exit=1 
+flux::E000
+x parse error: parameter `x` of a live fn cannot be `mut`: an instance keeps its own copy
+help: check syntax near the highlighted token
+live_destructure exit=1 
+flux::E000
+x parse error: a member of a live fn names one value; destructure it in a function
+help: check syntax near the highlighted token
+live_generic exit=1 
+flux::E000
+x parse error: function `id` of a live fn cannot have type parameters
+help: check syntax near the highlighted token
+live_mut_fn exit=1 
+flux::E000
+x parse error: function `set` of a live fn cannot take `mut` parameters
+help: check syntax near the highlighted token
+live_derived_construct exit=1 
+flux::E015
+x unused binding `c`
+help: remove the binding or reference it from a derived value, watch, or handler
+flux::E008
+x a derived value cannot call the `act fn` `C`
+help: an `act fn` is an action, and a derived value does not follow what it reads; write `track fn C` for a function that computes from sources
+live_const_construct exit=1 
+flux::E015
+x unused binding `C1`
+help: remove the binding or reference it from a derived value, watch, or handler
+flux::E008
+x a `const` initializer cannot call the `act fn` `C`
+help: an `act fn` is an action, and a derived value does not follow what it reads; write `track fn C` for a function that computes from sources
+live_track_construct exit=1 
+flux::E008
+x the `track fn` `make` cannot call the `act fn` `C`
+help: an `act fn` is an action, and a derived value does not follow what it reads; write `track fn C` for a function that computes from sources
+live_write exit=1 
+flux::E032
+x `c` belongs to an instance of `C`; only the instance's own code changes it
+help: emit one of its `pub` events, or call one of its `pub act fn`s
+live_private exit=1 
+flux::E033
+x field `n` of `C` is private to its module
+help: mark it `pub` in `live fn C` to use it outside
+live_function_value exit=1 
+flux::E005
+x type mismatch: expected `a call, `x.get(…)``, found ``get` read as a value`
+:                          `-- expected `a call, `x.get(…)``
+live_watch exit=1 
+flux::E005
+x type mismatch: expected `a name the watch can follow`, found ``.n` of an instance, in a `watch` without a target`
+:                    `-- expected `a name the watch can follow`
+help: give it a name and follow that: `derived n = x.n`, then `watch n { … }`
+live_emit_index exit=1 
+flux::E006
+x unknown event `event #SymbolId(4)`
+flux::E019
+x no method `Tick` for type `[Int64]`
+help: methods come from `impl Trait for [Int64]`; add one that defines `Tick`
+live_cycle exit=1 
+flux::E015
+x unused binding `c`
+help: remove the binding or reference it from a derived value, watch, or handler
+flux::E010
+x cyclic dependency in reactive graph: C.a -> C.b -> C.a
+help: break the cycle by making one binding a source, or remove a dependency edge
+live_template_cross exit=0 
+ok
+RUN flux::E010
+
+  x cyclic dependency in reactive graph: C.d → total → C.d
+   ,-[<repo>/comparison/openness/repro/live_template_cross.fl:1:15]
+ 1 | live fn C() { pub derived d: Int = total + 1 }
+   :               ^^^^^^^^^^^^^^^|^^^^^^^^^^^^^^^
+   :                              `-- part of cycle
+ 2 | let c = C()
+   `----
+  help: break the cycle by making one binding a source, or remove a dependency edge
+
+live_hold_cycle exit=0 
+ok
+RUN error: runtime error: an instance cannot hold itself, directly or through the instances it holds in `on Adopt`
+  at on Adopt (<repo>/comparison/openness/repro/live_hold_cycle.fl:1:84)
+  at main (<repo>/comparison/openness/repro/live_hold_cycle.fl:3:17)
+
+live_dynamic_cycle exit=0 
+ok
+RUN error: runtime error: an instance cannot hold itself, directly or through the instances it holds in `on Adopt`
+  at on Adopt (<repo>/comparison/openness/repro/live_dynamic_cycle.fl:1:162)
+  at main (<repo>/comparison/openness/repro/live_dynamic_cycle.fl:3:17)
+
+live_drop exit=0 
+flux::E030
+x the result of `C` is not used
+help: an instance lives while something holds it: write `let x = C(…)`
+live_fixed_param exit=0 
+ok
+RUN 2
+
+live_plain_read exit=0 
+ok
+RUN 
+const_reactive exit=1 
+flux::E008
+x control flow `reactive read in const` is not allowed in a derived expression
+help: use `watch`, `on`, `track fn`, or `act fn` for statements with side effects or loops
+const_snap exit=1 
+flux::E008
+x control flow `snap()` is not allowed in a derived expression
+help: use `watch`, `on`, `track fn`, or `act fn` for statements with side effects or loops
+closure_write exit=1 
+flux::E009
+x cannot assign to immutable local `x`
+help: use `let mut x = ...` to declare a mutable local, or assign to a `let mut` source binding
+closure_return exit=1 
+flux::E000
+x parse error: `return` inside a closure is not supported inside a match arm block
+help: check syntax near the highlighted token
+function_eq exit=1 
+flux::E005
+x type mismatch: expected `compatible equality types`, found `fn(Int64) -> Int64 and fn(Int64) -> Int64`
+:                 `-- expected `compatible equality types`
+function_display exit=1 
+flux::E005
+x type mismatch: expected `a value with a text form inside `{…}` (not a function)`, found `fn(Int64) -> Int64`
+:                        `-- expected `a value with a text form inside `{…}` (not a function)`
+mut_expression exit=1 
+flux::E000
+x parse error: a call with `mut` arguments must be a statement, or the value of a `let`
+help: check syntax near the highlighted token
+mut_value exit=1 
+flux::E000
+x parse error: `grow` has `mut` parameters and cannot be used as a value
+help: check syntax near the highlighted token
+mut_missing exit=1 
+flux::E000
+x parse error: this function has `mut` parameters: call it on its own line or as a `let` value, with `mut` before each of those arguments
+help: check syntax near the highlighted token
+mut_method_result exit=1 
+flux::E020
+x `grow` changes its receiver (`mut self`) and cannot also return a value
+mut_method_generic exit=1 
+flux::E020
+x method `grow` has type parameters and cannot be `mut self`
+method_mut_arg exit=1 
+flux::E020
+x method `grow` cannot have `mut` parameters; only `mut self` changes what it is called on
+generic_specialized_impl exit=1 
+flux::E020
+x an impl for one instance of a generic type is not supported; write `impl[T] P[T]` for all of them
+eq_impl exit=1 
+flux::E020
+x `Eq` is built in: a type has it when the language can compare its values; it cannot be implemented
+empty_array exit=1 
+flux::E005
+x type mismatch: expected `an element type annotation, e.g. `let xs: [String] = []``, found `empty array `[]` with no element type`
+:                  `-- expected `an element type annotation, e.g. `let xs: [String] = []``
+singleton_tuple exit=1 
+flux::E000
+x parse error: a tuple has two or more values; write `(x)` to group one value
+help: check syntax near the highlighted token
+float_pattern exit=1 
+flux::E000
+x parse error: a literal pattern must be an Int, a String without `{…}` interpolation, or a Bool
+help: check syntax near the highlighted token
+match_exhaustive exit=1 
+flux::E005
+x type mismatch: expected `catch-all pattern`, found `Int64`
+:                                `-- expected `catch-all pattern`
+branch_widen exit=0 
+ok
+RUN 
+semicolon exit=1 
+flux::E005
+x type mismatch: expected `Unit`, found `Int64`
+:                     `-- expected `Unit`
+break exit=1 
+flux::E000
+x parse error: `break` outside a loop: it must be inside a `while` or `for` body
+help: check syntax near the highlighted token
+match_watch_control exit=1 
+flux::E000
+x parse error: `while` outside a function is not supported inside a match arm block
+help: check syntax near the highlighted token
+module_cycle exit=1 
+flux::E013
+x cyclic import: <repo>/comparison/openness/repro/module_cycle.fl -> <repo>/comparison/openness/repro/cycle.fl -> <home>/
+help: remove the circular import dependency
+private_import exit=1 
+flux::E022
+x `secret` in module `owner` is private
+help: mark it `pub` in `owner` to import it
+missing_import exit=1 
+flux::E014
+x unknown export `missing` in module `owner`
+help: check the module's public exports
+alias_cycle exit=1 
+flux::E024
+x type alias `A` refers to itself
+help: an alias is another name for a type; use a struct or enum for a recursive type
+unicode_name exit=1 
+flux::E000
+x parse error: unexpected `é`: outside strings and comments, Flux code is ASCII only
+help: check syntax near the highlighted token
+main_args exit=1 
+flux::E005
+x type mismatch: expected ``fn main()` or `fn main() -> Int` (no parameters)`, found ``main` with 1 parameter(s)`
+:               `-- expected ``fn main()` or `fn main() -> Int` (no parameters)`
+extern_mut exit=1 
+flux::E000
+x parse error: parameter `x` of an `extern fn` cannot be `mut`: the host receives values
+help: check syntax near the highlighted token
+live_nested_type exit=1 
+flux::E000
+x parse error: expected live_item
+help: check syntax near the highlighted token
+extern_run exit=0 
+ok
+RUN flux::E018
+
+  x this host does not provide `host`, declared with `extern fn`
+   ,-[<repo>/comparison/openness/repro/extern_run.fl:1:1]
+ 1 | extern fn host() -> Int
+   : ^
+   : `-- while evaluating this
+ 2 | fn main() { }
+   `----
+
+runtime_overflow exit=0 
+ok
+RUN error: runtime error: integer overflow in `main`
+  at main (<repo>/comparison/openness/repro/runtime_overflow.fl:1:13)
+
+runtime_index exit=0 
+ok
+RUN error: runtime error: index out of bounds in `main`
+  at main (<repo>/comparison/openness/repro/runtime_index.fl:1:13)
+
+runtime_map_missing exit=0 
+ok
+RUN error: runtime error: key not found in `main`
+  at main (<repo>/comparison/openness/repro/runtime_map_missing.fl:2:50)
+
+import_escape exit=1 
+flux::E012
+x import path escapes project root: `../../../../SPEC`
+help: use a relative import within the project directory
+duplicate exit=1 
+flux::E004
+x duplicate definition of `X`
+unknown_type exit=1 
+flux::E007
+x unknown type `Mystery`
+not_callable exit=1 
+flux::E023
+x `n` is not a function
+help: only functions, closures, and values of a function type such as `fn(Int) -> Int` can be called
+method_missing exit=1 
+flux::E019
+x no method `missing` for type `Int`
+help: methods come from `impl Trait for Int`; add one that defines `missing`
+trait_mismatch exit=1 
+flux::E020
+x `f` returns `String`, but trait `T` declares `Int`
+live_write_immutable exit=1 
+flux::E016
+x binding `c` is assigned; declare it with `let mut`
+help: use `derived` for computed values, or `let mut` for reassignable sources
+loop_tracked exit=0 
+ok
+RUN 6
+
+source_if_loop exit=0 
+ok
+if_stmt_derived exit=0 
+flux::E015
+x unused binding `y`
+help: remove the binding or reference it from a derived value, watch, or handler
+ignore_effect exit=1 
+flux::E015
+x unused binding `x`
+help: remove the binding or reference it from a derived value, watch, or handler
+flux::E017
+x side effect `noisy` is not allowed in a derived expression
+help: move I/O and printing into `watch`, `on`, or a function body such as `main`
+unit_literal exit=1 
+flux::E000
+x parse error: expected unary_expr
+help: check syntax near the highlighted token
+array_heterogeneous exit=1 
+flux::E005
+x type mismatch: expected `Int64`, found `String`
+:                  `-- expected `Int64`
+no_bit_assign exit=1 
+flux::E000
+x parse error: expected stmt, place_step, assign_op, eq_op, rel_op, add_op, bits_op, mul_op, kw_with, index_suffix, try_suffix, field_suffix, call_args, or kw_as
+help: check syntax near the highlighted token
+numeric_literal exit=1 
+flux::E000
+x parse error: numeric literal `9223372036854775808` is outside the supported range for its type
+help: check syntax near the highlighted token
+leading_minus exit=1 
+flux::E000
+x parse error: this line starts with `-`, which would continue the expression on the line above as a subtraction; to subtract, end the previous line with `-`; for a new negative value, write `0 -
+help: check syntax near the highlighted token
+string_escape exit=1 
+flux::E000
+x parse error: unknown escape sequence `\q` in string literal (supported: \n \t \r \0 \\ \" \{ \})
+help: check syntax near the highlighted token
+match_watch_control2 exit=1 
+flux::E000
+x parse error: `while` outside a function is not supported inside a match arm block
+help: check syntax near the highlighted token
+branch_widen_check exit=1 
+flux::E005
+x type mismatch: expected `Int64`, found `Float64`
+:                                   `-- expected `Int64`
+closure_default exit=1 
+flux::E005
+x type mismatch: expected `field `price``, found `Int64`
+:                            `-- expected `field `price``
+help: closure parameter `i` defaulted to `Int` because it had no type annotation or call-site hint; add an explicit annotation, e.g. `|i: YourType| ...`
+live_dynamic_read_cycle exit=0 
+ok
+RUN error: runtime error: a derived value depends on itself in `C.d`
+  at <closure> (<repo>/comparison/openness/repro/live_dynamic_read_cycle.fl:1:55)
+  at C.d (<repo>/comparison/openness/repro/live_dynamic_read_cycle.fl:1:15)
+
+live_uninit exit=0 
+ok
+RUN flux::E018
+
+  x runtime error: a binding was read before its initial value was set in `total`
+  |   at total (<repo>/comparison/openness/repro/live_uninit.fl:4:1)
+  |   at C.d (<repo>/comparison/openness/repro/live_uninit.fl:1:15)
+  |   at C
+  |   at module initialization (<repo>/comparison/openness/repro/live_uninit.fl:2:1)
+   ,-[<repo>/comparison/openness/repro/live_uninit.fl:4:1]
+ 3 | fn sum(xs: [C]) -> Int { xs.map(|c| c.d).reduce(0, |a, b| a + b) }
+ 4 | derived total: Int = sum(all)
+   : ^^^^^^^^^^^^^^^|^^^^^^^^^^^^^^
+   :                `-- while evaluating this
+ 5 | fn main() { }
+   `----
+
+e026 exit=0 
+flux::E026
+x `rfn` is now written `track fn`
+reserved exit=0 
+ok
+runtime_cast exit=0 
+ok
+RUN error: runtime error: numeric cast out of range in `main`
+  at main (<repo>/comparison/openness/repro/runtime_cast.fl:1:13)
+
+runtime_divide exit=0 
+ok
+RUN error: runtime error: integer division by zero in `main`
+  at main (<repo>/comparison/openness/repro/runtime_divide.fl:1:13)
+
+event_arity exit=1 
+flux::E005
+x type mismatch: expected `1 value`, found `0 values`
+:                  `-- expected `1 value`
+live_alias exit=1 
+flux::E019
+x no method `inc` for type `Cell<C>`
+help: methods come from `impl Trait for Cell<C>`; add one that defines `inc`
+RUN flux::E019
+
+  x no method `inc` for type `Cell<C>`
+   ,-[<repo>/comparison/openness/repro/live_alias.fl:5:17]
+ 4 | let b = a
+ 5 | act fn main() { b.inc(); println("{a.n} {a == b}") }
+   :                 ^^^|^^^
+   :                    `-- method not found
+   `----
+  help: methods come from `impl Trait for Cell<C>`; add one that defines `inc`
+
+live_constructor_input exit=0 
+ok
+RUN 1
+
+changing_method_expression exit=1 
+flux::E005
+x type mismatch: expected ``push` called on its own line, on a variable or a part of one: `xs.push(…)``, found ``push`, which changes its receiver, inside an expression`
+:                                            `-- expected ``push` called on its own line, on a variable or a part of one: `xs.push(…)``
+method_import_control exit=0 
+ok
+generic_type_args exit=1 
+flux::E005
+x type mismatch: expected `P[T]`, found `P without type arguments`
+:         `-- expected `P[T]`
+string_empty_interp exit=1 
+flux::E000
+x parse error: expected unary_expr
+help: check syntax near the highlighted token
+live_alias_local exit=0 
+ok
+RUN 1 true
+
+enum_tuple_fix exit=0 
+ok
+if_operand_fix exit=0 
+ok
+nesting_limit exit=1 
+flux::E000
+x parse error: brackets nest more than 256 levels deep; split the code into smaller functions or bindings
+help: check syntax near the highlighted token
+unary_limit exit=1 
+flux::E000
+x parse error: more than 256 `-`/`!` in a row; simplify the expression
+help: check syntax near the highlighted token
+tree_limit exit=1 
+flux::E000
+x parse error: expression nested more than 1000 levels deep (for example, a very long chain of operators); split it with `let` bindings
+help: check syntax near the highlighted token
+e008_extern_const exit=1 
+flux::E015
+x unused binding `X`
+help: remove the binding or reference it from a derived value, watch, or handler
+flux::E008
+x a `const` initializer cannot call the `act fn` `read`
+help: an `act fn` is an action, and a derived value does not follow what it reads; write `track fn read` for a function that computes from sources
+e008_function_value exit=1 
+flux::E015
+x unused binding `y`
+help: remove the binding or reference it from a derived value, watch, or handler
+flux::E008
+x a derived value cannot call the `act fn` `read`
+help: an `act fn` is an action, and a derived value does not follow what it reads; write `track fn read` for a function that computes from sources
+live_param_stale exit=0 
+ok
+RUN 4
+
+library_value exit=1 
+flux::E005
+x type mismatch: expected `a function value: wrap it, as in `|x| sqrt(x)``, found ``sqrt`, a library function that can only be called`
+:                       `-- expected `a function value: wrap it, as in `|x| sqrt(x)``
+mut_no_result exit=1 
+flux::E000
+x parse error: this function has `mut` parameters and declares no result, so it has no value to bind
+help: check syntax near the highlighted token
+private_literal exit=1 
+flux::E033
+x field `hidden` of `P` is private to its module
+help: only `P`'s module can name it; use the functions or methods that module provides, or mark the field `pub` there
+ord_impl exit=1 
+flux::E020
+x `Ord` is built in: a type has it when the language can compare its values; it cannot be implemented

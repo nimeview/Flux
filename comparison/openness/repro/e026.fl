@@ -1,0 +1,2 @@
+rfn f() -> Int { 1 }
+act fn main() { f() }

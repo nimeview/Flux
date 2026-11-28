@@ -1,0 +1,3 @@
+let mut x = 1
+derived y = x * 2
+act fn main() { y = 4 }

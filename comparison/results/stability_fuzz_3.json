@@ -1,0 +1,27 @@
+{
+ "mutants": 5000,
+ "seed": 3,
+ "corpus": 248,
+ "checked_ok": 1480,
+ "ran": 1367,
+ "failures": [
+  {
+   "signature": "run-vm:hang:26dcf04644",
+   "kind": "hang",
+   "stage": "run-vm",
+   "count": 1,
+   "example": 2927,
+   "err": "",
+   "file": "results/raw/fuzz/c55f7cff94.fl"
+  },
+  {
+   "signature": "run-vm:hang:acc4b52377",
+   "kind": "hang",
+   "stage": "run-vm",
+   "count": 1,
+   "example": 3140,
+   "err": "",
+   "file": "results/raw/fuzz/6f28e50c1b.fl"
+  }
+ ]
+}

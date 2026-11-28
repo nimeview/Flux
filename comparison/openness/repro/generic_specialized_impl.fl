@@ -1,0 +1,2 @@
+struct P[T] { x: T }
+impl P[Int] { fn get(self) -> Int { self.x } }

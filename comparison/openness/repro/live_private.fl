@@ -1,0 +1,3 @@
+live fn C() { let n = 1 }
+let c = C()
+act fn main() { let x = c.n; let done = 0 }

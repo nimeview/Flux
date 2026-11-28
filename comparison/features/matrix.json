@@ -1,0 +1,1045 @@
+{
+ "columns": [
+  "Flux 0.4",
+  "Python 3",
+  "TypeScript",
+  "Go",
+  "Rust",
+  "Lua 5.4",
+  "Elm 0.19",
+  "Svelte 5 (+TS)"
+ ],
+ "levels": {
+  "y": "yes",
+  "p": "partial",
+  "n": "no"
+ },
+ "rows": [
+  {
+   "area": "Types",
+   "feature": "Static type checking",
+   "cells": [
+    [
+     "y",
+     "inferred locals, nominal structs/enums"
+    ],
+    [
+     "p",
+     "optional hints, external checkers"
+    ],
+    [
+     "p",
+     "gradual, unsound by design"
+    ],
+    [
+     "y",
+     ""
+    ],
+    [
+     "y",
+     ""
+    ],
+    [
+     "n",
+     ""
+    ],
+    [
+     "y",
+     "sound, full inference"
+    ],
+    [
+     "p",
+     "via TypeScript"
+    ]
+   ]
+  },
+  {
+   "area": "Types",
+   "feature": "No null / explicit absence",
+   "cells": [
+    [
+     "y",
+     "Option, no null"
+    ],
+    [
+     "n",
+     "None anywhere"
+    ],
+    [
+     "p",
+     "strictNullChecks"
+    ],
+    [
+     "n",
+     "nil pointers/maps"
+    ],
+    [
+     "y",
+     "Option"
+    ],
+    [
+     "n",
+     "nil"
+    ],
+    [
+     "y",
+     "Maybe"
+    ],
+    [
+     "p",
+     "via TS"
+    ]
+   ]
+  },
+  {
+   "area": "Types",
+   "feature": "Generics",
+   "cells": [
+    [
+     "p",
+     "bounded, monomorphized; no explicit type arguments"
+    ],
+    [
+     "p",
+     "hints only"
+    ],
+    [
+     "y",
+     ""
+    ],
+    [
+     "y",
+     "since 1.18"
+    ],
+    [
+     "y",
+     ""
+    ],
+    [
+     "n",
+     ""
+    ],
+    [
+     "y",
+     "parametric, no typeclasses"
+    ],
+    [
+     "p",
+     "via TS"
+    ]
+   ]
+  },
+  {
+   "area": "Types",
+   "feature": "Traits / interfaces",
+   "cells": [
+    [
+     "p",
+     "traits + bounds; no trait objects / dynamic dispatch"
+    ],
+    [
+     "p",
+     "duck typing, Protocols"
+    ],
+    [
+     "y",
+     "structural"
+    ],
+    [
+     "y",
+     "implicit interfaces"
+    ],
+    [
+     "y",
+     "traits + dyn"
+    ],
+    [
+     "p",
+     "metatables"
+    ],
+    [
+     "n",
+     "no user typeclasses"
+    ],
+    [
+     "p",
+     "via TS"
+    ]
+   ]
+  },
+  {
+   "area": "Types",
+   "feature": "Sum types + exhaustive match",
+   "cells": [
+    [
+     "y",
+     "exhaustive; a tuple variant holds one value"
+    ],
+    [
+     "p",
+     "match, not exhaustive"
+    ],
+    [
+     "p",
+     "unions + narrowing, exhaustiveness by idiom"
+    ],
+    [
+     "n",
+     ""
+    ],
+    [
+     "y",
+     ""
+    ],
+    [
+     "n",
+     ""
+    ],
+    [
+     "y",
+     ""
+    ],
+    [
+     "p",
+     "via TS"
+    ]
+   ]
+  },
+  {
+   "area": "Errors",
+   "feature": "Expected errors as values",
+   "cells": [
+    [
+     "y",
+     "Result/Option, ? with exact error type"
+    ],
+    [
+     "n",
+     "exceptions"
+    ],
+    [
+     "n",
+     "exceptions"
+    ],
+    [
+     "y",
+     "error values"
+    ],
+    [
+     "y",
+     "Result, ?, From"
+    ],
+    [
+     "p",
+     "pcall / multiple returns"
+    ],
+    [
+     "y",
+     "Result/Maybe"
+    ],
+    [
+     "n",
+     "exceptions"
+    ]
+   ]
+  },
+  {
+   "area": "Errors",
+   "feature": "Runtime faults recoverable",
+   "cells": [
+    [
+     "n",
+     "overflow, bounds, limits stop the batch/program"
+    ],
+    [
+     "y",
+     "try/except"
+    ],
+    [
+     "y",
+     "try/catch"
+    ],
+    [
+     "p",
+     "recover"
+    ],
+    [
+     "p",
+     "catch_unwind"
+    ],
+    [
+     "y",
+     "pcall"
+    ],
+    [
+     "n",
+     "almost no runtime faults, but none can be caught"
+    ],
+    [
+     "y",
+     "try/catch, error boundaries"
+    ]
+   ]
+  },
+  {
+   "area": "Data",
+   "feature": "No silent integer wrap",
+   "cells": [
+    [
+     "y",
+     "overflow is a runtime error; checked_* methods"
+    ],
+    [
+     "y",
+     "arbitrary-precision integers"
+    ],
+    [
+     "n",
+     "floats / BigInt"
+    ],
+    [
+     "n",
+     "wraps"
+    ],
+    [
+     "p",
+     "panics in debug, wraps in release"
+    ],
+    [
+     "n",
+     "wraps"
+    ],
+    [
+     "n",
+     "JS numbers"
+    ],
+    [
+     "n",
+     "JS numbers"
+    ]
+   ]
+  },
+  {
+   "area": "Data",
+   "feature": "Closures",
+   "cells": [
+    [
+     "p",
+     "capture locals by value; no mutable captures"
+    ],
+    [
+     "y",
+     ""
+    ],
+    [
+     "y",
+     ""
+    ],
+    [
+     "y",
+     ""
+    ],
+    [
+     "y",
+     "borrow/move rules"
+    ],
+    [
+     "y",
+     ""
+    ],
+    [
+     "y",
+     "immutable"
+    ],
+    [
+     "y",
+     ""
+    ]
+   ]
+  },
+  {
+   "area": "Data",
+   "feature": "Memory management",
+   "cells": [
+    [
+     "y",
+     "reference counting of immutable values; no cycles possible"
+    ],
+    [
+     "y",
+     "refcount + cycle GC"
+    ],
+    [
+     "y",
+     "GC"
+    ],
+    [
+     "y",
+     "GC"
+    ],
+    [
+     "y",
+     "ownership"
+    ],
+    [
+     "y",
+     "GC"
+    ],
+    [
+     "y",
+     "GC (JS)"
+    ],
+    [
+     "y",
+     "GC (JS)"
+    ]
+   ]
+  },
+  {
+   "area": "Modules",
+   "feature": "Modules and visibility",
+   "cells": [
+    [
+     "y",
+     "file modules, pub, private fields, source ownership (E032)"
+    ],
+    [
+     "p",
+     "convention (_name)"
+    ],
+    [
+     "y",
+     "ES modules"
+    ],
+    [
+     "y",
+     "packages, capitalised export"
+    ],
+    [
+     "y",
+     ""
+    ],
+    [
+     "p",
+     "tables returned by require"
+    ],
+    [
+     "y",
+     "exposing"
+    ],
+    [
+     "y",
+     "ES modules"
+    ]
+   ]
+  },
+  {
+   "area": "Modules",
+   "feature": "Package manager and registry",
+   "cells": [
+    [
+     "p",
+     "path dependencies + lockfile; no registry"
+    ],
+    [
+     "y",
+     "pip / PyPI"
+    ],
+    [
+     "y",
+     "npm"
+    ],
+    [
+     "y",
+     "modules, proxy"
+    ],
+    [
+     "y",
+     "cargo / crates.io"
+    ],
+    [
+     "p",
+     "LuaRocks"
+    ],
+    [
+     "y",
+     "curated registry"
+    ],
+    [
+     "y",
+     "npm"
+    ]
+   ]
+  },
+  {
+   "area": "Concurrency",
+   "feature": "Concurrency / parallelism",
+   "cells": [
+    [
+     "n",
+     "single-threaded; host may send events from threads"
+    ],
+    [
+     "p",
+     "threads (GIL), asyncio"
+    ],
+    [
+     "p",
+     "async/await, workers"
+    ],
+    [
+     "y",
+     "goroutines, channels"
+    ],
+    [
+     "y",
+     "threads, async, Send/Sync"
+    ],
+    [
+     "p",
+     "coroutines"
+    ],
+    [
+     "n",
+     "runtime-managed Cmd/Sub"
+    ],
+    [
+     "p",
+     "async/await"
+    ]
+   ]
+  },
+  {
+   "area": "Concurrency",
+   "feature": "Timers / event loop",
+   "cells": [
+    [
+     "y",
+     "after, every, now, stop"
+    ],
+    [
+     "y",
+     "asyncio"
+    ],
+    [
+     "y",
+     "from the runtime (Node, browser)"
+    ],
+    [
+     "y",
+     "time, select"
+    ],
+    [
+     "p",
+     "via tokio etc."
+    ],
+    [
+     "n",
+     ""
+    ],
+    [
+     "y",
+     "Time.every"
+    ],
+    [
+     "y",
+     "browser"
+    ]
+   ]
+  },
+  {
+   "area": "Reactivity",
+   "feature": "Reactive state in the language",
+   "cells": [
+    [
+     "y",
+     "sources, derived, events, watches, components; static purity and cycle checks"
+    ],
+    [
+     "n",
+     "libraries"
+    ],
+    [
+     "n",
+     "libraries"
+    ],
+    [
+     "n",
+     ""
+    ],
+    [
+     "n",
+     "libraries (signals in Leptos etc.)"
+    ],
+    [
+     "n",
+     ""
+    ],
+    [
+     "p",
+     "The Elm Architecture, no graph"
+    ],
+    [
+     "y",
+     "runes, compiler-assisted; runtime checks"
+    ]
+   ]
+  },
+  {
+   "area": "Reactivity",
+   "feature": "Glitch-free, batched dependency graph",
+   "cells": [
+    [
+     "y",
+     "specified batches; each watch once per batch"
+    ],
+    [
+     "n",
+     ""
+    ],
+    [
+     "n",
+     ""
+    ],
+    [
+     "n",
+     ""
+    ],
+    [
+     "n",
+     ""
+    ],
+    [
+     "n",
+     ""
+    ],
+    [
+     "n",
+     "no dependency graph: one update per message"
+    ],
+    [
+     "y",
+     "scheduled effects"
+    ]
+   ]
+  },
+  {
+   "area": "Host",
+   "feature": "FFI / embedding",
+   "cells": [
+    [
+     "p",
+     "extern fn supplied by a Rust host"
+    ],
+    [
+     "y",
+     "C API, ctypes"
+    ],
+    [
+     "y",
+     "N-API, wasm"
+    ],
+    [
+     "y",
+     "cgo"
+    ],
+    [
+     "y",
+     "C ABI"
+    ],
+    [
+     "y",
+     "C API, built for embedding"
+    ],
+    [
+     "p",
+     "ports only"
+    ],
+    [
+     "y",
+     "JS"
+    ]
+   ]
+  },
+  {
+   "area": "Host",
+   "feature": "Capability limits for programs",
+   "cells": [
+    [
+     "n",
+     "CLI has full file/process access; --target only removes modules at compile time"
+    ],
+    [
+     "n",
+     ""
+    ],
+    [
+     "n",
+     "language has none; the Deno runtime has permission flags"
+    ],
+    [
+     "n",
+     ""
+    ],
+    [
+     "n",
+     ""
+    ],
+    [
+     "y",
+     "embedder chooses the library set"
+    ],
+    [
+     "p",
+     "effects only through Cmd/ports; not a permission system"
+    ],
+    [
+     "p",
+     "browser sandbox"
+    ]
+   ]
+  },
+  {
+   "area": "Platforms",
+   "feature": "Web / browser",
+   "cells": [
+    [
+     "n",
+     "web target is a compile-time check; wasm is a stub"
+    ],
+    [
+     "p",
+     "Pyodide"
+    ],
+    [
+     "y",
+     ""
+    ],
+    [
+     "p",
+     "wasm"
+    ],
+    [
+     "y",
+     "wasm"
+    ],
+    [
+     "p",
+     "Fengari, wasm"
+    ],
+    [
+     "y",
+     "its purpose"
+    ],
+    [
+     "y",
+     "its purpose"
+    ]
+   ]
+  },
+  {
+   "area": "Platforms",
+   "feature": "Native executables",
+   "cells": [
+    [
+     "n",
+     "VM interpreter; Cranelift JIT experimental"
+    ],
+    [
+     "p",
+     "packagers"
+    ],
+    [
+     "p",
+     "Bun/Deno compile"
+    ],
+    [
+     "y",
+     ""
+    ],
+    [
+     "y",
+     ""
+    ],
+    [
+     "n",
+     ""
+    ],
+    [
+     "n",
+     ""
+    ],
+    [
+     "n",
+     ""
+    ]
+   ]
+  },
+  {
+   "area": "Tooling",
+   "feature": "Formatter",
+   "cells": [
+    [
+     "y",
+     "flux fmt"
+    ],
+    [
+     "y",
+     "black/ruff"
+    ],
+    [
+     "y",
+     "prettier"
+    ],
+    [
+     "y",
+     "gofmt"
+    ],
+    [
+     "y",
+     "rustfmt"
+    ],
+    [
+     "p",
+     "third party"
+    ],
+    [
+     "y",
+     "elm-format"
+    ],
+    [
+     "y",
+     "prettier"
+    ]
+   ]
+  },
+  {
+   "area": "Tooling",
+   "feature": "Language server",
+   "cells": [
+    [
+     "y",
+     "diagnostics, hover, completion, definition, rename, symbols"
+    ],
+    [
+     "y",
+     ""
+    ],
+    [
+     "y",
+     ""
+    ],
+    [
+     "y",
+     "gopls"
+    ],
+    [
+     "y",
+     "rust-analyzer"
+    ],
+    [
+     "y",
+     "lua-language-server"
+    ],
+    [
+     "y",
+     ""
+    ],
+    [
+     "y",
+     ""
+    ]
+   ]
+  },
+  {
+   "area": "Tooling",
+   "feature": "Test runner",
+   "cells": [
+    [
+     "y",
+     "flux test (fn test_*)"
+    ],
+    [
+     "y",
+     "pytest"
+    ],
+    [
+     "y",
+     "many"
+    ],
+    [
+     "y",
+     "go test"
+    ],
+    [
+     "y",
+     "cargo test"
+    ],
+    [
+     "p",
+     "busted"
+    ],
+    [
+     "y",
+     "elm-test"
+    ],
+    [
+     "y",
+     "vitest"
+    ]
+   ]
+  },
+  {
+   "area": "Tooling",
+   "feature": "REPL",
+   "cells": [
+    [
+     "y",
+     ""
+    ],
+    [
+     "y",
+     ""
+    ],
+    [
+     "y",
+     "node"
+    ],
+    [
+     "n",
+     ""
+    ],
+    [
+     "n",
+     ""
+    ],
+    [
+     "y",
+     ""
+    ],
+    [
+     "y",
+     "elm repl"
+    ],
+    [
+     "n",
+     ""
+    ]
+   ]
+  },
+  {
+   "area": "Tooling",
+   "feature": "Debugger / profiler",
+   "cells": [
+    [
+     "n",
+     "neither"
+    ],
+    [
+     "y",
+     ""
+    ],
+    [
+     "y",
+     ""
+    ],
+    [
+     "y",
+     "delve, pprof"
+    ],
+    [
+     "y",
+     "gdb/lldb, perf"
+    ],
+    [
+     "p",
+     ""
+    ],
+    [
+     "p",
+     "time-travel debugger (0.18), none in 0.19"
+    ],
+    [
+     "y",
+     "browser devtools"
+    ]
+   ]
+  },
+  {
+   "area": "Tooling",
+   "feature": "Doc generation",
+   "cells": [
+    [
+     "n",
+     ""
+    ],
+    [
+     "y",
+     ""
+    ],
+    [
+     "y",
+     "TypeDoc"
+    ],
+    [
+     "y",
+     "go doc"
+    ],
+    [
+     "y",
+     "rustdoc"
+    ],
+    [
+     "p",
+     "LDoc"
+    ],
+    [
+     "y",
+     "package docs"
+    ],
+    [
+     "p",
+     ""
+    ]
+   ]
+  },
+  {
+   "area": "Maturity",
+   "feature": "Age / users",
+   "cells": [
+    [
+     "n",
+     "0.4, months old, one team"
+    ],
+    [
+     "y",
+     "1991"
+    ],
+    [
+     "y",
+     "2012"
+    ],
+    [
+     "y",
+     "2009"
+    ],
+    [
+     "y",
+     "2015"
+    ],
+    [
+     "y",
+     "1993"
+    ],
+    [
+     "p",
+     "2012, slow releases"
+    ],
+    [
+     "y",
+     "2016"
+    ]
+   ]
+  }
+ ]
+}

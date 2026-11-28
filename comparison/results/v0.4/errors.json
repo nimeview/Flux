@@ -1,0 +1,233 @@
+{
+ "type_mismatch": {
+  "what": "Passing a string where a number is expected",
+  "fl": {
+   "stage": "check",
+   "exit": 1,
+   "message": "flux::E005\n\n  x type mismatch: expected `Int64`, found `String`\n   ,-[/private/var/folders/qt/q67bh8bs7jv2qs39ccqztn8r0000gn/T/tmpi162aqne/main.fl:8:22]\n 7 | fn main() {\n 8 |     println(\"{add(1, \"2\")}\")\n   :                      ^|^\n   :                       `-- expected `Int64`\n 9 | }\n   `----",
+   "source": "import io { println }\n\nfn add(a: Int, b: Int) -> Int {\n    a + b\n}\n\nfn main() {\n    println(\"{add(1, \"2\")}\")\n}\n"
+  },
+  "rs": {
+   "stage": "compile",
+   "exit": 1,
+   "message": "error[E0308]: mismatched types\n --> main.rs:6:27\n  |\n6 |     println!(\"{}\", add(1, \"2\"));\n  |                    ---    ^^^ expected `i64`, found `&str`\n  |                    |\n  |                    arguments to this function are incorrect\n  |\nnote: function defined here\n --> main.rs:1:4\n  |\n1 | fn add(a: i64, b: i64) -> i64 {\n  |    ^^^         ------\n\nerror: aborting due to 1 previous error\n\nFor more information about this error, try `rustc --explain E0308`.",
+   "source": "fn add(a: i64, b: i64) -> i64 {\n    a + b\n}\n\nfn main() {\n    println!(\"{}\", add(1, \"2\"));\n}\n"
+  },
+  "ts": {
+   "stage": "compile",
+   "exit": 2,
+   "message": "main.ts(5,20): error TS2345: Argument of type 'string' is not assignable to parameter of type 'number'.",
+   "source": "function add(a: number, b: number): number {\n    return a + b;\n}\n\nconsole.log(add(1, \"2\"));\n"
+  },
+  "py": {
+   "stage": "run",
+   "exit": 1,
+   "message": "Traceback (most recent call last):\n  File \"/private/var/folders/qt/q67bh8bs7jv2qs39ccqztn8r0000gn/T/tmpu70o1qcs/main.py\", line 4, in <module>\n    print(add(1, \"2\"))\n          ~~~^^^^^^^^\n  File \"/private/var/folders/qt/q67bh8bs7jv2qs39ccqztn8r0000gn/T/tmpu70o1qcs/main.py\", line 2, in add\n    return a + b\n           ~~^~~\nTypeError: unsupported operand type(s) for +: 'int' and 'str'",
+   "source": "def add(a: int, b: int) -> int:\n    return a + b\n\nprint(add(1, \"2\"))\n"
+  },
+  "elm": {
+   "stage": "compile",
+   "exit": 1,
+   "message": "Verifying dependencies (0/2)\nVerifying dependencies (1/2)\nVerifying dependencies (2/2)\n                            \nDependencies ready!\nCompiling ...\nDetected problems in 1 module.\n-- TYPE MISMATCH -------------------------------------------------- src/Main.elm\n\nThe 2nd argument to `add` is not what I expect:\n\n16|     add 1 \"2\"\n              ^^^\nThis argument is a string of type:\n\n    String\n\nBut `add` needs the 2nd argument to be:\n\n    Int\n\nHint: I always figure out the argument types from left to right. If an argument\nis acceptable, I assume it is “correct” and move on. So the problem may actually\nbe in one of the previous arguments!\n\nHint: Want to convert a String into an Int? Use the String.toInt function!",
+   "source": "port module Main exposing (main)\n\nimport Platform\n\n\nport out : Int -> Cmd msg\n\n\nadd : Int -> Int -> Int\nadd a b =\n    a + b\n\n\nrun : () -> Int\nrun _ =\n    add 1 \"2\"\n\n\nmain : Program () () ()\nmain =\n    Platform.worker { init = \\_ -> ( (), out (run ()) ), update = \\_ m -> ( m, Cmd.none ), subscriptions = \\_ -> Sub.none }\n"
+  }
+ },
+ "typo": {
+  "what": "A misspelled variable name",
+  "fl": {
+   "stage": "check",
+   "exit": 1,
+   "message": "flux::E001\n\n  x undefined name `totl`\n   ,-[/private/var/folders/qt/q67bh8bs7jv2qs39ccqztn8r0000gn/T/tmpc64su_vv/main.fl:5:15]\n 4 |     let total = 5\n 5 |     println(\"{totl}\")\n   :               ^^|^\n   :                 `-- not found\n 6 | }\n   `----",
+   "source": "import io { println }\n\nfn main() {\n    let total = 5\n    println(\"{totl}\")\n}\n"
+  },
+  "rs": {
+   "stage": "compile",
+   "exit": 1,
+   "message": "error[E0425]: cannot find value `totl` in this scope\n --> main.rs:3:20\n  |\n3 |     println!(\"{}\", totl);\n  |                    ^^^^\n  |\nhelp: a local variable with a similar name exists\n  |\n3 |     println!(\"{}\", total);\n  |                       +\n\nerror: aborting due to 1 previous error\n\nFor more information about this error, try `rustc --explain E0425`.",
+   "source": "fn main() {\n    let total = 5;\n    println!(\"{}\", totl);\n}\n"
+  },
+  "ts": {
+   "stage": "compile",
+   "exit": 2,
+   "message": "main.ts(2,13): error TS2552: Cannot find name 'totl'. Did you mean 'total'?",
+   "source": "const total = 5;\nconsole.log(totl);\n"
+  },
+  "py": {
+   "stage": "run",
+   "exit": 1,
+   "message": "Traceback (most recent call last):\n  File \"/private/var/folders/qt/q67bh8bs7jv2qs39ccqztn8r0000gn/T/tmpcd33_fxl/main.py\", line 2, in <module>\n    print(totl)\n          ^^^^\nNameError: name 'totl' is not defined. Did you mean: 'total'?",
+   "source": "total = 5\nprint(totl)\n"
+  },
+  "elm": {
+   "stage": "compile",
+   "exit": 1,
+   "message": "Verifying dependencies (0/2)\nVerifying dependencies (1/2)\nVerifying dependencies (2/2)\n                            \nDependencies ready!\nCompiling ...\nDetected problems in 1 module.\n-- NAMING ERROR --------------------------------------------------- src/Main.elm\n\nI cannot find a `totl` variable:\n\n15|     totl\n        ^^^^\nThese names seem close though:\n\n    total\n    not\n    cos\n    out\n\nHint: Read <https://elm-lang.org/0.19.1/imports> to see how `import`\ndeclarations work in Elm.",
+   "source": "port module Main exposing (main)\n\nimport Platform\n\n\nport out : Int -> Cmd msg\n\n\nrun : () -> Int\nrun _ =\n    let\n        total =\n            5\n    in\n    totl\n\n\nmain : Program () () ()\nmain =\n    Platform.worker { init = \\_ -> ( (), out (run ()) ), update = \\_ m -> ( m, Cmd.none ), subscriptions = \\_ -> Sub.none }\n"
+  }
+ },
+ "nonexhaustive": {
+  "what": "A match that forgets one case",
+  "fl": {
+   "stage": "check",
+   "exit": 1,
+   "message": "flux::E005\n\n  x type mismatch: expected `exhaustive match (Circle, Square, Triangle)`, found `missing Triangle`\n    ,-[/private/var/folders/qt/q67bh8bs7jv2qs39ccqztn8r0000gn/T/tmpbpoxff7h/main.fl:10:5]\n  9 |     fn sides(s: Shape) -> Int {\n 10 | ,->     match s {\n 11 | |           Shape::Circle => 0,\n 12 | |           Shape::Square => 4,\n 13 | |->     }\n    : `---- expected `exhaustive match (Circle, Square, Triangle)`\n 14 |     }\n    `----",
+   "source": "import io { println }\n\nenum Shape {\n    Circle,\n    Square,\n    Triangle,\n}\n\nfn sides(s: Shape) -> Int {\n    match s {\n        Shape::Circle => 0,\n        Shape::Square => 4,\n    }\n}\n\nfn main() {\n    println(\"{sides(Shape::Triangle)}\")\n}\n"
+  },
+  "rs": {
+   "stage": "compile",
+   "exit": 1,
+   "message": "error[E0004]: non-exhaustive patterns: `Shape::Triangle` not covered\n  --> main.rs:8:11\n   |\n 8 |     match s {\n   |           ^ pattern `Shape::Triangle` not covered\n   |\nnote: `Shape` defined here\n  --> main.rs:1:6\n   |\n 1 | enum Shape {\n   |      ^^^^^\n...\n 4 |     Triangle,\n   |     -------- not covered\n   = note: the matched value is of type `Shape`\nhelp: ensure that all possible cases are being handled by adding a match arm with a wildcard pattern or an explicit pattern as shown\n   |\n10 ~         Shape::Square => 4,\n11 ~         Shape::Triangle => todo!(),\n   |\n\nerror: aborting due to 1 previous error\n\nFor more information about this error, try `rustc --explain E0004`.",
+   "source": "enum Shape {\n    Circle,\n    Square,\n    Triangle,\n}\n\nfn sides(s: Shape) -> i64 {\n    match s {\n        Shape::Circle => 0,\n        Shape::Square => 4,\n    }\n}\n\nfn main() {\n    println!(\"{}\", sides(Shape::Triangle));\n}\n"
+  },
+  "ts": {
+   "stage": "compile",
+   "exit": 2,
+   "message": "main.ts(3,27): error TS2366: Function lacks ending return statement and return type does not include 'undefined'.",
+   "source": "type Shape = \"circle\" | \"square\" | \"triangle\";\n\nfunction sides(s: Shape): number {\n    switch (s) {\n        case \"circle\": return 0;\n        case \"square\": return 4;\n    }\n}\n\nconsole.log(sides(\"triangle\"));\n"
+  },
+  "py": {
+   "stage": "run",
+   "exit": 0,
+   "message": "None",
+   "source": "from enum import Enum\n\nclass Shape(Enum):\n    CIRCLE = 1\n    SQUARE = 2\n    TRIANGLE = 3\n\ndef sides(s: Shape) -> int:\n    match s:\n        case Shape.CIRCLE:\n            return 0\n        case Shape.SQUARE:\n            return 4\n\nprint(sides(Shape.TRIANGLE))\n"
+  },
+  "elm": {
+   "stage": "compile",
+   "exit": 1,
+   "message": "Verifying dependencies (0/2)\nVerifying dependencies (1/2)\nVerifying dependencies (2/2)\n                            \nDependencies ready!\nCompiling ...\nDetected problems in 1 module.\n-- MISSING PATTERNS ----------------------------------------------- src/Main.elm\n\nThis `case` does not have branches for all possibilities:\n\n17|>    case s of\n18|>        Circle ->\n19|>            0\n20|>\n21|>        Square ->\n22|>            4\n\nMissing possibilities include:\n\n    Triangle\n\nI would have to crash if I saw one of those. Add branches for them!\n\nHint: If you want to write the code for each branch later, use `Debug.todo` as a\nplaceholder. Read <https://elm-lang.org/0.19.1/missing-patterns> for more\nguidance on this workflow.",
+   "source": "port module Main exposing (main)\n\nimport Platform\n\n\nport out : Int -> Cmd msg\n\n\ntype Shape\n    = Circle\n    | Square\n    | Triangle\n\n\nsides : Shape -> Int\nsides s =\n    case s of\n        Circle ->\n            0\n\n        Square ->\n            4\n\n\nrun : () -> Int\nrun _ =\n    sides Triangle\n\n\nmain : Program () () ()\nmain =\n    Platform.worker { init = \\_ -> ( (), out (run ()) ), update = \\_ m -> ( m, Cmd.none ), subscriptions = \\_ -> Sub.none }\n"
+  }
+ },
+ "no_method": {
+  "what": "Calling a method that does not exist (typo in a method name)",
+  "fl": {
+   "stage": "check",
+   "exit": 1,
+   "message": "flux::E019\n\n  x no method `lenght` for type `[Int64]`\n   ,-[/private/var/folders/qt/q67bh8bs7jv2qs39ccqztn8r0000gn/T/tmpogd9hdfq/main.fl:5:15]\n 4 |     let xs = [1, 2, 3]\n 5 |     println(\"{xs.lenght()}\")\n   :               ^^^^^|^^^^^\n   :                    `-- method not found\n 6 | }\n   `----\n  help: methods come from `impl Trait for [Int64]`; add one that defines `lenght`",
+   "source": "import io { println }\n\nfn main() {\n    let xs = [1, 2, 3]\n    println(\"{xs.lenght()}\")\n}\n"
+  },
+  "rs": {
+   "stage": "compile",
+   "exit": 1,
+   "message": "error[E0599]: no method named `lenght` found for struct `Vec<{integer}>` in the current scope\n --> main.rs:3:23\n  |\n3 |     println!(\"{}\", xs.lenght());\n  |                       ^^^^^^\n  |\nhelp: there is a method `len` with a similar name\n  |\n3 -     println!(\"{}\", xs.lenght());\n3 +     println!(\"{}\", xs.len());\n  |\n\nerror: aborting due to 1 previous error\n\nFor more information about this error, try `rustc --explain E0599`.",
+   "source": "fn main() {\n    let xs = vec![1, 2, 3];\n    println!(\"{}\", xs.lenght());\n}\n"
+  },
+  "ts": {
+   "stage": "compile",
+   "exit": 2,
+   "message": "main.ts(2,16): error TS2551: Property 'lenght' does not exist on type 'number[]'. Did you mean 'length'?",
+   "source": "const xs = [1, 2, 3];\nconsole.log(xs.lenght);\n"
+  },
+  "py": {
+   "stage": "run",
+   "exit": 1,
+   "message": "Traceback (most recent call last):\n  File \"/private/var/folders/qt/q67bh8bs7jv2qs39ccqztn8r0000gn/T/tmp65v58og1/main.py\", line 2, in <module>\n    print(xs.lenght())\n          ^^^^^^^^^\nAttributeError: 'list' object has no attribute 'lenght'",
+   "source": "xs = [1, 2, 3]\nprint(xs.lenght())\n"
+  },
+  "elm": {
+   "stage": "compile",
+   "exit": 1,
+   "message": "Verifying dependencies (0/2)\nVerifying dependencies (1/2)\nVerifying dependencies (2/2)\n                            \nDependencies ready!\nCompiling ...\nDetected problems in 1 module.\n-- NAMING ERROR --------------------------------------------------- src/Main.elm\n\nI cannot find a `List.lenght` variable:\n\n11|     List.lenght [ 1, 2, 3 ]\n        ^^^^^^^^^^^\nThe `List` module does not expose a `lenght` variable. These names seem close\nthough:\n\n    List.length\n    List.concat\n    List.range\n    List.repeat\n\nHint: Read <https://elm-lang.org/0.19.1/imports> to see how `import`\ndeclarations work in Elm.",
+   "source": "port module Main exposing (main)\n\nimport Platform\n\n\nport out : Int -> Cmd msg\n\n\nrun : () -> Int\nrun _ =\n    List.lenght [ 1, 2, 3 ]\n\n\nmain : Program () () ()\nmain =\n    Platform.worker { init = \\_ -> ( (), out (run ()) ), update = \\_ m -> ( m, Cmd.none ), subscriptions = \\_ -> Sub.none }\n"
+  }
+ },
+ "immutable": {
+  "what": "Assigning to an immutable binding",
+  "fl": {
+   "stage": "check",
+   "exit": 1,
+   "message": "flux::E009\n\n  x cannot assign to immutable local `count`\n   ,-[/private/var/folders/qt/q67bh8bs7jv2qs39ccqztn8r0000gn/T/tmp1wgipccq/main.fl:5:5]\n 4 |         let count = 1\n 5 | ,->     count = 2\n 6 | |->     println(\"{count}\")\n   : `---- immutable local\n 7 |     }\n   `----\n  help: use `let mut count = ...` to declare a mutable local, or assign to a `let mut` source binding",
+   "source": "import io { println }\n\nfn main() {\n    let count = 1\n    count = 2\n    println(\"{count}\")\n}\n"
+  },
+  "rs": {
+   "stage": "compile",
+   "exit": 1,
+   "message": "error[E0384]: cannot assign twice to immutable variable `count`\n --> main.rs:3:5\n  |\n2 |     let count = 1;\n  |         ----- first assignment to `count`\n3 |     count = 2;\n  |     ^^^^^^^^^ cannot assign twice to immutable variable\n  |\nhelp: consider making this binding mutable\n  |\n2 |     let mut count = 1;\n  |         +++\n\nwarning: value assigned to `count` is never read\n --> main.rs:2:17\n  |\n2 |     let count = 1;\n  |                 ^ this value is reassigned later and never used\n3 |     count = 2;\n  |     --------- `count` is overwritten here before the previous value is read\n  |\n  = note: `#[warn(unused_assignments)]` (part of `#[warn(unused)]`) on by default\n\nerror: aborting due to 1 previous error; 1 warning emitted\n\nFor more information about this error, try `rustc --explain E0384`.",
+   "source": "fn main() {\n    let count = 1;\n    count = 2;\n    println!(\"{}\", count);\n}\n"
+  },
+  "ts": {
+   "stage": "compile",
+   "exit": 2,
+   "message": "main.ts(2,1): error TS2588: Cannot assign to 'count' because it is a constant.",
+   "source": "const count = 1;\ncount = 2;\nconsole.log(count);\n"
+  },
+  "py": {
+   "stage": "run",
+   "exit": 0,
+   "message": "2",
+   "source": "from typing import Final\ncount: Final = 1\ncount = 2\nprint(count)\n"
+  },
+  "elm": {
+   "stage": "compile",
+   "exit": 1,
+   "message": "Verifying dependencies (0/2)\nVerifying dependencies (1/2)\nVerifying dependencies (2/2)\n                            \nDependencies ready!\nCompiling ...\nDetected problems in 1 module.\n-- NAME CLASH ----------------------------------------------------- src/Main.elm\n\nThis `let` expression defines `count` more than once! One here:\n\n15|         count =\n            ^^^^^\nAnd another one here:\n\n12|         count =\n            ^^^^^\nHow can I know which one you want? Rename one of them!",
+   "source": "port module Main exposing (main)\n\nimport Platform\n\n\nport out : Int -> Cmd msg\n\n\nrun : () -> Int\nrun _ =\n    let\n        count =\n            1\n\n        count =\n            2\n    in\n    count\n\n\nmain : Program () () ()\nmain =\n    Platform.worker { init = \\_ -> ( (), out (run ()) ), update = \\_ m -> ( m, Cmd.none ), subscriptions = \\_ -> Sub.none }\n"
+  }
+ },
+ "arity": {
+  "what": "Calling a function with too few arguments",
+  "fl": {
+   "stage": "check",
+   "exit": 1,
+   "message": "flux::E005\n\n  x type mismatch: expected `2 arguments`, found `1 arguments`\n   ,-[/private/var/folders/qt/q67bh8bs7jv2qs39ccqztn8r0000gn/T/tmpck90yyft/main.fl:8:15]\n 7 | fn main() {\n 8 |     println(\"{area(3)}\")\n   :               ^^^|^^^\n   :                  `-- expected `2 arguments`\n 9 | }\n   `----",
+   "source": "import io { println }\n\nfn area(w: Int, h: Int) -> Int {\n    w * h\n}\n\nfn main() {\n    println(\"{area(3)}\")\n}\n"
+  },
+  "rs": {
+   "stage": "compile",
+   "exit": 1,
+   "message": "error[E0061]: this function takes 2 arguments but 1 argument was supplied\n --> main.rs:6:20\n  |\n6 |     println!(\"{}\", area(3));\n  |                    ^^^^--- argument #2 of type `i64` is missing\n  |\nnote: function defined here\n --> main.rs:1:4\n  |\n1 | fn area(w: i64, h: i64) -> i64 {\n  |    ^^^^         ------\nhelp: provide the argument\n  |\n6 |     println!(\"{}\", area(3, /* i64 */));\n  |                          +++++++++++\n\nerror: aborting due to 1 previous error\n\nFor more information about this error, try `rustc --explain E0061`.",
+   "source": "fn area(w: i64, h: i64) -> i64 {\n    w * h\n}\n\nfn main() {\n    println!(\"{}\", area(3));\n}\n"
+  },
+  "ts": {
+   "stage": "compile",
+   "exit": 2,
+   "message": "main.ts(5,13): error TS2554: Expected 2 arguments, but got 1.",
+   "source": "function area(w: number, h: number): number {\n    return w * h;\n}\n\nconsole.log(area(3));\n"
+  },
+  "py": {
+   "stage": "run",
+   "exit": 1,
+   "message": "Traceback (most recent call last):\n  File \"/private/var/folders/qt/q67bh8bs7jv2qs39ccqztn8r0000gn/T/tmp0507ha83/main.py\", line 4, in <module>\n    print(area(3))\n          ~~~~^^^\nTypeError: area() missing 1 required positional argument: 'h'",
+   "source": "def area(w: int, h: int) -> int:\n    return w * h\n\nprint(area(3))\n"
+  },
+  "elm": {
+   "stage": "compile",
+   "exit": 1,
+   "message": "Verifying dependencies (0/2)\nVerifying dependencies (1/2)\nVerifying dependencies (2/2)\n                            \nDependencies ready!\nCompiling ...\nDetected problems in 1 module.\n-- TYPE MISMATCH -------------------------------------------------- src/Main.elm\n\nSomething is off with the body of the `run` definition:\n\n16|     area 3\n        ^^^^^^\nThis `area` call produces:\n\n    Int -> Int\n\nBut the type annotation on `run` says it should be:\n\n    Int",
+   "source": "port module Main exposing (main)\n\nimport Platform\n\n\nport out : Int -> Cmd msg\n\n\narea : Int -> Int -> Int\narea w h =\n    w * h\n\n\nrun : () -> Int\nrun _ =\n    area 3\n\n\nmain : Program () () ()\nmain =\n    Platform.worker { init = \\_ -> ( (), out (run ()) ), update = \\_ m -> ( m, Cmd.none ), subscriptions = \\_ -> Sub.none }\n"
+  }
+ },
+ "optional": {
+  "what": "Using a value that may be missing as if it were there",
+  "fl": {
+   "stage": "check",
+   "exit": 1,
+   "message": "flux::E005\n\n  x type mismatch: expected `numeric or String type`, found `Option<Int64> and Int64`\n   ,-[/private/var/folders/qt/q67bh8bs7jv2qs39ccqztn8r0000gn/T/tmpacrnu7fe/main.fl:6:15]\n 5 |     let first_even = xs.find(|x| x % 2 == 0)\n 6 |     println(\"{first_even + 1}\")\n   :               ^^^^^^^|^^^^^^\n   :                      `-- expected `numeric or String type`\n 7 | }\n   `----",
+   "source": "import io { println }\n\nfn main() {\n    let xs = [3, 5, 8]\n    let first_even = xs.find(|x| x % 2 == 0)\n    println(\"{first_even + 1}\")\n}\n"
+  },
+  "rs": {
+   "stage": "compile",
+   "exit": 1,
+   "message": "error[E0369]: cannot add `{integer}` to `Option<&{integer}>`\n   --> main.rs:4:31\n    |\n  4 |     println!(\"{}\", first_even + 1);\n    |                    ---------- ^ - {integer}\n    |                    |\n    |                    Option<&{integer}>\n    |\nnote: `Option<&{integer}>` does not implement `Add<{integer}>`\n   --> /usr/local/Cellar/rust/1.97.1/lib/rustlib/src/rust/library/core/src/option.rs:597:1\n    |\n597 | pub enum Option<T> {\n    | ^^^^^^^^^^^^^^^^^^ `Option<&{integer}>` is defined in another crate\n\nerror: aborting due to 1 previous error\n\nFor more information about this error, try `rustc --explain E0369`.",
+   "source": "fn main() {\n    let xs = vec![3, 5, 8];\n    let first_even = xs.iter().find(|x| *x % 2 == 0);\n    println!(\"{}\", first_even + 1);\n}\n"
+  },
+  "ts": {
+   "stage": "compile",
+   "exit": 2,
+   "message": "main.ts(3,13): error TS18048: 'firstEven' is possibly 'undefined'.",
+   "source": "const xs = [3, 5, 8];\nconst firstEven = xs.find((x) => x % 2 === 0);\nconsole.log(firstEven + 1);\n"
+  },
+  "py": {
+   "stage": "run",
+   "exit": 1,
+   "message": "Traceback (most recent call last):\n  File \"/private/var/folders/qt/q67bh8bs7jv2qs39ccqztn8r0000gn/T/tmp1qq9std8/main.py\", line 3, in <module>\n    print(first_even + 1)\n          ~~~~~~~~~~~^~~\nTypeError: unsupported operand type(s) for +: 'NoneType' and 'int'",
+   "source": "xs = [3, 5, 7]\nfirst_even = next((x for x in xs if x % 2 == 0), None)\nprint(first_even + 1)\n"
+  },
+  "elm": {
+   "stage": "compile",
+   "exit": 1,
+   "message": "Verifying dependencies (0/2)\nVerifying dependencies (1/2)\nVerifying dependencies (2/2)\n                            \nDependencies ready!\nCompiling ...\nDetected problems in 1 module.\n-- TYPE MISMATCH -------------------------------------------------- src/Main.elm\n\nAddition does not work with this value:\n\n11|     List.head (List.filter (\\x -> modBy 2 x == 0) [ 3, 5, 8 ]) + 1\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nThis `head` call produces:\n\n    Maybe Int\n\nBut (+) only works with Int and Float values.\n\nHint: Use Maybe.withDefault to handle possible errors. Longer term, it is\nusually better to write out the full `case` though!",
+   "source": "port module Main exposing (main)\n\nimport Platform\n\n\nport out : Int -> Cmd msg\n\n\nrun : () -> Int\nrun _ =\n    List.head (List.filter (\\x -> modBy 2 x == 0) [ 3, 5, 8 ]) + 1\n\n\nmain : Program () () ()\nmain =\n    Platform.worker { init = \\_ -> ( (), out (run ()) ), update = \\_ m -> ( m, Cmd.none ), subscriptions = \\_ -> Sub.none }\n"
+  }
+ }
+}

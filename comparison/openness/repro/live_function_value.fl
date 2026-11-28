@@ -1,0 +1,3 @@
+live fn C() { pub fn get() -> Int { 1 } }
+let c = C()
+fn main() { let f = snap(c).get; let done = 0 }

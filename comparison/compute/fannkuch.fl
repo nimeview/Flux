@@ -1,0 +1,75 @@
+import io { println }
+
+fn fannkuch(n: Int) -> (Int, Int) {
+    let mut perm1: [Int] = []
+    let mut i = 0
+    while i < n {
+        perm1.push(i)
+        i += 1
+    }
+    let mut count: [Int] = perm1
+    let mut perm: [Int] = perm1
+    let mut max_flips = 0
+    let mut checksum = 0
+    let mut sign = 1
+    let mut r = n
+    let mut done = false
+    while !done {
+        while r != 1 {
+            count[r - 1] = r
+            r -= 1
+        }
+        let mut k = 0
+        while k < n {
+            perm[k] = perm1[k]
+            k += 1
+        }
+        let mut flips = 0
+        let mut first = perm[0]
+        while first != 0 {
+            let mut lo = 0
+            let mut hi = first
+            while lo < hi {
+                let t = perm[lo]
+                perm[lo] = perm[hi]
+                perm[hi] = t
+                lo += 1
+                hi -= 1
+            }
+            flips += 1
+            first = perm[0]
+        }
+        if flips > max_flips {
+            max_flips = flips
+        }
+        checksum += sign * flips
+        sign = 0 - sign
+        let mut rotating = true
+        while rotating {
+            if r == n {
+                done = true
+                rotating = false
+            } else {
+                let p0 = perm1[0]
+                let mut m = 0
+                while m < r {
+                    perm1[m] = perm1[m + 1]
+                    m += 1
+                }
+                perm1[r] = p0
+                count[r] = count[r] - 1
+                if count[r] > 0 {
+                    rotating = false
+                } else {
+                    r += 1
+                }
+            }
+        }
+    }
+    (checksum, max_flips)
+}
+
+fn main() {
+    let (checksum, flips) = fannkuch(9)
+    println("{checksum} {flips}")
+}

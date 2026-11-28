@@ -1,0 +1,1 @@
+live fn C(mut x: Int) { pub let n = x }

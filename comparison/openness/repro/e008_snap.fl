@@ -1,0 +1,3 @@
+let mut x = 1
+fn read() -> Int { snap(x) }
+derived y = read()

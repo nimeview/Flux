@@ -1,0 +1,2 @@
+import collections { map_new }
+fn main() { let m: Map[Float, Int] = map_new(); m.len() }

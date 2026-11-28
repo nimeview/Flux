@@ -1,0 +1,1 @@
+fn main() { let m: Map[String, Int] = map_new(); m.len() }

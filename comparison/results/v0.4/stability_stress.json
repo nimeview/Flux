@@ -1,0 +1,54 @@
+{
+ "components": [
+  {
+   "rounds": 25,
+   "rss_mb": 10.858496,
+   "exit": 0,
+   "err": ""
+  },
+  {
+   "rounds": 50,
+   "rss_mb": 10.031104,
+   "exit": 0,
+   "err": ""
+  },
+  {
+   "rounds": 100,
+   "rss_mb": 11.44832,
+   "exit": 0,
+   "err": ""
+  },
+  {
+   "rounds": 200,
+   "rss_mb": 12.63616,
+   "exit": 0,
+   "err": ""
+  }
+ ],
+ "data": [
+  {
+   "rounds": 25,
+   "rss_mb": 14.774272,
+   "exit": 0,
+   "err": ""
+  },
+  {
+   "rounds": 50,
+   "rss_mb": 14.921728,
+   "exit": 0,
+   "err": ""
+  },
+  {
+   "rounds": 100,
+   "rss_mb": 17.985536,
+   "exit": 0,
+   "err": ""
+  },
+  {
+   "rounds": 200,
+   "rss_mb": 17.047552,
+   "exit": 0,
+   "err": ""
+  }
+ ]
+}

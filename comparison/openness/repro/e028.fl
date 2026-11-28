@@ -1,0 +1,6 @@
+import io { println }
+let mut x = 0
+let mut y = 0
+watch x { y = x + 1 }
+watch y { println("y={y}") }
+act fn main() { x = 2 }

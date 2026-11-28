@@ -1,0 +1,2 @@
+fn grow(mut x: Int) { x += 1 }
+fn main() { let f = grow; let done = 0 }

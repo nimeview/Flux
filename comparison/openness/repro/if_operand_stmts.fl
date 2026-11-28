@@ -1,0 +1,1 @@
+fn f() -> Int { let y = if true { let x = 1; x } else { 2 }; y }

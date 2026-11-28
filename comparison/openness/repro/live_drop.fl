@@ -1,0 +1,2 @@
+live fn C() { let n = 1 }
+fn main() { C(); let done = 0 }

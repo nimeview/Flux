@@ -1,0 +1,5 @@
+import io { println }
+live fn C() { pub let mut n = 0; pub act fn inc() { n += 1 } }
+let a = C()
+let b = a
+act fn main() { b.inc(); println("{a.n} {a == b}") }

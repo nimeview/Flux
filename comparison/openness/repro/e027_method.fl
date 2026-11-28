@@ -1,0 +1,3 @@
+let mut x = 0
+struct P { n: Int }
+impl P { fn f(self) { x = 1 } }

@@ -1,0 +1,4 @@
+import io { println }
+live fn C(x: Int) { pub fn get() -> Int { x }; pub act fn reset() { x = 2 } }
+let mut c = C(1)
+act fn main() { c.reset(); println("{c.get()}") }

@@ -1,0 +1,4 @@
+let mut x = 1
+act fn read() -> Int { x }
+fn call() -> Int { read() }
+derived y = call()

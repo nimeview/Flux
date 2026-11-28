@@ -1,0 +1,7 @@
+compute/bin/
+node_modules/
+reactive/adapters/svelte.compiled.js
+reactive/elm/elm-stuff/
+reactive/elm/main.js
+results/raw/
+stability/_stress_*.fl

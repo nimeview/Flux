@@ -1,0 +1,3 @@
+live fn C() { pub let mut children: [C] = []; pub event Adopt(x: C); on Adopt(x) { children.push(x) } }
+let c = C()
+act fn main() { emit c.Adopt(c) }

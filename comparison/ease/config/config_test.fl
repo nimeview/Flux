@@ -1,0 +1,17 @@
+import testing { assert, assert_eq }
+
+import config { parse, message }
+
+fn test_duplicate_key() {
+    match parse("a = 1\na = 2") {
+        Ok(_) => assert(false),
+        Err(e) => assert_eq(message(e), "line 2: `a` is set twice")
+    }
+}
+
+fn test_reads_int() {
+    match parse("port = 80") {
+        Ok(c) => assert_eq(c.int("port"), Ok(80)),
+        Err(_) => assert(false)
+    }
+}

@@ -1,0 +1,3 @@
+event Tick
+fn noisy() -> Int { emit Tick(); 1 }
+derived x = noisy()

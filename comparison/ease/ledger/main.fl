@@ -1,0 +1,134 @@
+import io { println, eprintln, args, read_file }
+
+import str { parse_int }
+
+import collections { map_new }
+
+struct Txn {
+    line: Int,
+    date: String,
+    account: String,
+    cents: Int
+}
+
+enum LineError {
+    FieldCount(Int),
+    BadDate(String),
+    BadAmount(String),
+    NoAccount
+}
+
+fn describe(e: LineError) -> String {
+    match e {
+        FieldCount(n) => "expected 3 fields, found {n}",
+        BadDate(d) => "bad date `{d}` (want YYYY-MM-DD)",
+        BadAmount(a) => "bad amount `{a}`",
+        NoAccount => "empty account"
+    }
+}
+
+fn digits(s: String, err: LineError) -> Result[Int, LineError] {
+    match parse_int(s) { Ok(n) => Ok(n), Err(_) => Err(err) }
+}
+
+fn check_date(d: String) -> Result[String, LineError] {
+    let parts = d.split("-")
+    if parts.len() != 3 || parts[0].len() != 4 || parts[1].len() != 2 || parts[2].len() != 2 {
+        return Err(BadDate(d))
+    }
+    let month = digits(parts[1], BadDate(d))?
+    let day = digits(parts[2], BadDate(d))?
+    digits(parts[0], BadDate(d))?
+    if month < 1 || month > 12 || day < 1 || day > 31 {
+        return Err(BadDate(d))
+    }
+    Ok(d)
+}
+
+// "12.5" -> 1250, "-3" -> -300, "0.07" -> 7
+fn parse_cents(raw: String) -> Result[Int, LineError] {
+    let neg = raw.starts_with("-")
+    let body = if neg { raw.chars().slice(1, raw.len()).join("") } else { raw }
+    let cents = match body.split_once(".") {
+        Some((whole, frac)) => {
+            if frac.len() < 1 || frac.len() > 2 {
+                return Err(BadAmount(raw))
+            }
+            let f = digits(frac, BadAmount(raw))?
+            let scaled = if frac.len() == 1 { f * 10 } else { f }
+            digits(whole, BadAmount(raw))? * 100 + scaled
+        },
+        None => digits(body, BadAmount(raw))? * 100
+    }
+    if neg {
+        Ok(-cents)
+    } else {
+        Ok(cents)
+    }
+}
+
+fn parse_line(n: Int, text: String) -> Result[Txn, LineError] {
+    let fields = text.split(",").map(|f| f.trim())
+    if fields.len() != 3 {
+        return Err(FieldCount(fields.len()))
+    }
+    if fields[1] == "" {
+        return Err(NoAccount)
+    }
+    let date = check_date(fields[0])?
+    let cents = parse_cents(fields[2])?
+    Ok(Txn { line: n, date: date, account: fields[1], cents: cents })
+}
+
+fn money(c: Int) -> String {
+    let sign = if c < 0 { "-" } else { "" }
+    let a = if c < 0 { -c } else { c }
+    let frac = a % 100
+    let pad = if frac < 10 { "0" } else { "" }
+    "{sign}{a / 100}.{pad}{frac}"
+}
+
+fn main() -> Int {
+    let argv = args()
+    if argv.len() != 1 {
+        eprintln("usage: ledger FILE")
+        return 1
+    }
+    let text = match read_file(argv[0]) {
+        Ok(t) => t,
+        Err(e) => {
+            eprintln("ledger: {e}")
+            return 1
+        }
+    }
+    let mut totals: Map[String, Int] = map_new()
+    let mut largest: Option[Txn] = None
+    let mut bad = 0
+    for (i, line) in text.lines().enumerate() {
+        if i == 0 || line.trim() == "" {
+            continue
+        }
+        match parse_line(i + 1, line) {
+            Ok(t) => {
+                totals[t.account] = totals.get_or(t.account, 0) + t.cents
+                let bigger = match largest { Some(b) => t.cents > b.cents, None => true }
+                if bigger {
+                    largest = Some(t)
+                }
+            },
+            Err(e) => {
+                eprintln("line {i + 1}: {describe(e)}")
+                bad += 1
+            }
+        }
+    }
+    for (account, cents) in totals {
+        println("{account}: {money(cents)}")
+    }
+    match largest {
+        Some(t) => println("largest: {money(t.cents)} to {t.account} on {t.date} (line {t.line})"),
+        None => println("no transactions")
+    }
+    println("{bad} malformed line(s) skipped")
+    0
+}

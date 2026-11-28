@@ -1,0 +1,1 @@
+extern fn host(mut x: Int)

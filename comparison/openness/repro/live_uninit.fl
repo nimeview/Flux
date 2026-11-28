@@ -1,0 +1,5 @@
+live fn C() { pub derived d: Int = total + 1 }
+let all = [C()]
+fn sum(xs: [C]) -> Int { xs.map(|c| c.d).reduce(0, |a, b| a + b) }
+derived total: Int = sum(all)
+fn main() { }

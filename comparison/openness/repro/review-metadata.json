@@ -1,0 +1,9 @@
+{
+  "date": "2026-11-27",
+  "source_head": "ac1265624e29fc336a10013e493edcf0c7bd691a",
+  "binary_sha256": "c19aa46b92c6761ded72769a9521521846a5d62ce0ae127f43d31c6592f63dde",
+  "spec_sha256": "8f52dcf89dd87716ae643fd7e9e749574c28617a3b71268cdf34ed4717a9e76f",
+  "check_probes": 148,
+  "run_probes": 22,
+  "inventory_rows": 114
+}

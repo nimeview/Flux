@@ -1,0 +1,1028 @@
+[
+ {
+  "n": 1,
+  "title": "E002: a plain fn, including main, cannot directly read a module source/derived.",
+  "section": "Reactive reads, purity, and graph structure",
+  "verdict": "Justified but relaxable",
+  "msg": "2",
+  "book": "3",
+  "relax": "Track ordinary reads dynamically when a derivation is active; otherwise read the current value. Keep explicit snapshots for deliberately untracked reads. Cost: implicit context sensitivity and effect inference."
+ },
+ {
+  "n": 2,
+  "title": "E003: a derived binding cannot be assigned.",
+  "section": "Reactive reads, purity, and graph structure",
+  "verdict": "Necessary",
+  "msg": "2",
+  "book": "2",
+  "relax": "Keep ordinary derived bindings read-only; an explicit writable lens could route writes to sources without changing this rule."
+ },
+ {
+  "n": 3,
+  "title": "Claimed E008: derived computations cannot loop, including through callees.",
+  "section": "Reactive reads, purity, and graph structure",
+  "verdict": "Arbitrary",
+  "msg": "0",
+  "book": "1",
+  "relax": "Document pure loops as supported, retaining effect checks. Optional evaluation fuel addresses nontermination; recursion already has the same problem. Cost: documentation and, if desired, a fuel counter."
+ },
+ {
+  "n": 4,
+  "title": "Claimed E008: control flow reached through a derived callee.",
+  "section": "Reactive reads, purity, and graph structure",
+  "verdict": "Arbitrary",
+  "msg": "0",
+  "book": "1",
+  "relax": "Define purity by effects, not return/if syntax; retain lexical return targets. Cost: clarify the contract; these examples already pass."
+ },
+ {
+  "n": 5,
+  "title": "E008: derived values cannot use snap, even through a helper.",
+  "section": "Reactive reads, purity, and graph structure",
+  "verdict": "Necessary",
+  "msg": "1",
+  "book": "2",
+  "relax": "Keep the ban on genuinely untracked reactive inputs to a derivation. A separate frozen-at-construction value could be explicit input, rather than a hidden read."
+ },
+ {
+  "n": 6,
+  "title": "E008: derived values cannot reach an act fn, including through a plain wrapper.",
+  "section": "Reactive reads, purity, and graph structure",
+  "verdict": "Justified but relaxable",
+  "msg": "3",
+  "book": "3",
+  "relax": "Permit an action proven to read no reactive state and have no effects, or add effect-polymorphic function types. Cost: interprocedural summaries; do not simply allow untracked reads."
+ },
+ {
+  "n": 7,
+  "title": "E008: even an effect-free, literal-returning act fn is forbidden in const.",
+  "section": "Reactive reads, purity, and graph structure",
+  "verdict": "Justified but relaxable",
+  "msg": "1",
+  "book": "2",
+  "relax": "Accept callees proved pure and independent of reactive state, regardless of act annotation. Cost: effect summaries and less annotation-based predictability."
+ },
+ {
+  "n": 8,
+  "title": "E008: a track fn cannot reach an act fn, even if never called by a derived value.",
+  "section": "Reactive reads, purity, and graph structure",
+  "verdict": "Justified but relaxable",
+  "msg": "2",
+  "book": "3",
+  "relax": "Keep a tracked/pure signature by default, allow proven effect-free callees or context-sensitive checking. Cost: effect typing and possibly errors at use sites."
+ },
+ {
+  "n": 9,
+  "title": "E008: an extern fn cannot be reached from derived, const, or track fn.",
+  "section": "Reactive reads, purity, and graph structure",
+  "verdict": "Justified but relaxable",
+  "msg": "0",
+  "book": "1",
+  "relax": "Add a host-validated pure extern contract, forbidding reactive reads/writes and nondeterminism. Cost: a trusted host boundary, like other FFI promises."
+ },
+ {
+  "n": 10,
+  "title": "E010: cyclic equations in the reactive graph are rejected.",
+  "section": "Reactive reads, purity, and graph structure",
+  "verdict": "Necessary",
+  "msg": "2",
+  "book": "2",
+  "relax": "Keep rejection for ordinary derived values. A separate delayed stream/fixed-point feature would need different semantics and convergence rules."
+ },
+ {
+  "n": 11,
+  "title": "E010 also rejects a cycle in an unreachable if branch.",
+  "section": "Reactive reads, purity, and graph structure",
+  "verdict": "Justified but relaxable",
+  "msg": "1",
+  "book": "1",
+  "relax": "Constant-fold branches before cycle analysis; more general dynamic cycles can be checked during evaluation. Cost: optimization-aware diagnostics or runtime errors instead of an unconditional static guarantee."
+ },
+ {
+  "n": 12,
+  "title": "E017: derived evaluation cannot print or perform I/O through a callee.",
+  "section": "Reactive reads, purity, and graph structure",
+  "verdict": "Necessary",
+  "msg": "2",
+  "book": "2",
+  "relax": "Keep the transitive effect prohibition. Put effects in watches/handlers, and feed external input into sources."
+ },
+ {
+  "n": 13,
+  "title": "E017: a derived computation cannot emit an event.",
+  "section": "Reactive reads, purity, and graph structure",
+  "verdict": "Necessary",
+  "msg": "2",
+  "book": "2",
+  "relax": "Keep emit outside derived evaluation. No implicit deferred-event escape is compatible with ordinary pure equations."
+ },
+ {
+  "n": 14,
+  "title": "E017: const initializers must be pure, although they run once at startup.",
+  "section": "Reactive reads, purity, and graph structure",
+  "verdict": "Justified but relaxable",
+  "msg": "2",
+  "book": "2",
+  "relax": "Keep pure const; teach the existing one-shot source initializer (let with no reactive reads) for effectful configuration. Cost: clearer startup-order documentation; an explicit init spelling could improve discoverability."
+ },
+ {
+  "n": 15,
+  "title": "E008: const cannot read reactive state, even an immutable module let.",
+  "section": "Reactive reads, purity, and graph structure",
+  "verdict": "Justified but relaxable",
+  "msg": "0",
+  "book": "1",
+  "relax": "Allow immutable-source constants proven independent of mutable state, or a named startup snapshot form. Cost: constant propagation / a separate snapshot contract."
+ },
+ {
+  "n": 16,
+  "title": "E017 conservatively rejects passing an effectful function to a callee that never calls it.",
+  "section": "Reactive reads, purity, and graph structure",
+  "verdict": "Justified but relaxable",
+  "msg": "1",
+  "book": "0",
+  "relax": "Summarize which callback parameters a function invokes; permit unused/stored callbacks. Cost: higher-order effect analysis, especially for escaping values."
+ },
+ {
+  "n": 17,
+  "title": "E011: watch cannot be declared inside an ordinary function.",
+  "section": "State writes, watches, and declaration placement",
+  "verdict": "Justified but relaxable",
+  "msg": "2",
+  "book": "1",
+  "relax": "Allow scoped watches returning a disposable handle, or sugar for a live fn instance. Cost: lifecycle API and dynamic registration order."
+ },
+ {
+  "n": 18,
+  "title": "E011: event handlers cannot be declared inside a function.",
+  "section": "State writes, watches, and declaration placement",
+  "verdict": "Justified but relaxable",
+  "msg": "2",
+  "book": "1",
+  "relax": "Allow scoped subscriptions with explicit ownership and disposal, and deterministic creation order. Cost: dynamic handler lifetime rules."
+ },
+ {
+  "n": 19,
+  "title": "Reactive declarations are not local function variables; local derived syntax is unavailable.",
+  "section": "State writes, watches, and declaration placement",
+  "verdict": "Justified but relaxable",
+  "msg": "0",
+  "book": "2",
+  "relax": "Permit an explicit scoped reactive declaration with ownership, or direct users to live fn. Cost: scoped graph nodes; add a targeted error now."
+ },
+ {
+  "n": 20,
+  "title": "The same let spelling is a reactive source/derived at module level and an ordinary snapshot local inside fn.",
+  "section": "State writes, watches, and declaration placement",
+  "verdict": "Justified but relaxable",
+  "msg": "0",
+  "book": "3",
+  "relax": "Add explicit source/derived forms and a migration path for plain module constants; retain inference as optional sugar. Cost: compatibility and one extra concept."
+ },
+ {
+  "n": 21,
+  "title": "A bare top-level assignment is a parse error, although top-level if may assign during initialization.",
+  "section": "State writes, watches, and declaration placement",
+  "verdict": "Arbitrary",
+  "msg": "0",
+  "book": "1",
+  "relax": "Allow initialization statements in declaration order, settling at the documented module boundary. Cost: grammar and initialization ordering tests."
+ },
+ {
+  "n": 22,
+  "title": "E016: a module let without mut cannot be reassigned.",
+  "section": "State writes, watches, and declaration placement",
+  "verdict": "Necessary",
+  "msg": "2",
+  "book": "2",
+  "relax": "Keep explicit mutability for ordinary bindings."
+ },
+ {
+  "n": 23,
+  "title": "E009: an immutable local cannot be assigned.",
+  "section": "State writes, watches, and declaration placement",
+  "verdict": "Necessary",
+  "msg": "2",
+  "book": "2",
+  "relax": "Keep; declare let mut for a changing local."
+ },
+ {
+  "n": 24,
+  "title": "E009: const cannot be assigned.",
+  "section": "State writes, watches, and declaration placement",
+  "verdict": "Necessary",
+  "msg": "1",
+  "book": "2",
+  "relax": "Keep const immutable; improve the diagnostic to distinguish a constant from a local."
+ },
+ {
+  "n": 25,
+  "title": "E027: fn main or another plain fn cannot directly change a source; write act fn.",
+  "section": "State writes, watches, and declaration placement",
+  "verdict": "Justified but relaxable",
+  "msg": "3",
+  "book": "3",
+  "relax": "Infer source-writing functions as actions, still forbid them from derived contexts, and expose their effect in tooling/signatures. Cost: less explicit batch boundaries and effect inference."
+ },
+ {
+  "n": 26,
+  "title": "E027: track fn cannot directly change a source.",
+  "section": "State writes, watches, and declaration placement",
+  "verdict": "Necessary",
+  "msg": "2",
+  "book": "2",
+  "relax": "Keep a pure tracked-computation role; move the transition into act fn/on. Renaming a track fn is appropriate only when its callers also permit an action."
+ },
+ {
+  "n": 27,
+  "title": "E027: an impl method cannot directly write a module source, and cannot be declared act fn.",
+  "section": "State writes, watches, and declaration placement",
+  "verdict": "Justified but relaxable",
+  "msg": "2",
+  "book": "2",
+  "relax": "Allow act methods, with the same source ownership and batching checks as act fn. Cost: method effect signatures and dispatch plumbing."
+ },
+ {
+  "n": 28,
+  "title": "E028 is a WARNING: a watch is allowed to write its own module source.",
+  "section": "State writes, watches, and declaration placement",
+  "verdict": "Justified but relaxable",
+  "msg": "2",
+  "book": "2",
+  "relax": "Keep a warning for redundant derived-state synchronization; allow intentional effect writes. Explain ordering and require an explicit action for larger transitions. Cost: no additional graph guarantee from simply moving the write into emit."
+ },
+ {
+  "n": 29,
+  "title": "E029 warns about watch feedback; watches run at most once per batch.",
+  "section": "State writes, watches, and declaration placement",
+  "verdict": "Justified but relaxable",
+  "msg": "2",
+  "book": "2",
+  "relax": "Keep the warning; optionally provide an explicit next-batch event queue or bounded fixed-point mode. Cost: new timing/convergence semantics. Moving the same feedback to an on handler does not by itself break the cycle."
+ },
+ {
+  "n": 30,
+  "title": "E030 warns when a functional collection result is dropped.",
+  "section": "State writes, watches, and declaration placement",
+  "verdict": "Justified but relaxable",
+  "msg": "1",
+  "book": "2",
+  "relax": "Keep the warning, suggest let ys=push(xs,2) for immutable inputs or let mut plus xs.push(2). Cost: context-aware fixes."
+ },
+ {
+  "n": 31,
+  "title": "E032: an importing module cannot write another module's public mutable source.",
+  "section": "Modules, visibility, targets, and ordinary static checking",
+  "verdict": "Justified but relaxable",
+  "msg": "3",
+  "book": "2",
+  "relax": "Retain read-only exports by default; optional explicit exported setter/capability could authorize batched writes. Cost: a capability/visibility surface and weaker owner encapsulation."
+ },
+ {
+  "n": 32,
+  "title": "E033: other modules cannot name private struct fields, including literals, with, writes, and patterns.",
+  "section": "Modules, visibility, targets, and ordinary static checking",
+  "verdict": "Necessary",
+  "msg": "3",
+  "book": "3",
+  "relax": "Keep default field privacy and explicit pub; no need to relax to reduce reactive friction."
+ },
+ {
+  "n": 33,
+  "title": "E034: unavailable target modules/functions cannot be used (probe: fs on web).",
+  "section": "Modules, visibility, targets, and ordinary static checking",
+  "verdict": "Justified but relaxable",
+  "msg": "2",
+  "book": "2",
+  "relax": "Allow an explicit host capability adapter. Cost: asynchronous/browser semantics and a real web runtime; keep E034 without such an adapter."
+ },
+ {
+  "n": 34,
+  "title": "E035 warns that a local file with a library module name cannot be imported using that name.",
+  "section": "Modules, visibility, targets, and ordinary static checking",
+  "verdict": "Justified but relaxable",
+  "msg": "3",
+  "book": "1",
+  "relax": "Add an explicit local/package-qualified import namespace. Cost: one resolution form; retain the warning for ambiguous old imports."
+ },
+ {
+  "n": 35,
+  "title": "E031: a generic call must satisfy its declared trait bounds.",
+  "section": "Modules, visibility, targets, and ordinary static checking",
+  "verdict": "Necessary",
+  "msg": "2",
+  "book": "2",
+  "relax": "Keep bounds checked at calls; improve missing-trait guidance to distinguish removable bounds from implementable traits."
+ },
+ {
+  "n": 36,
+  "title": "E021: ? needs a declared Result/Option return type and a matching operand kind.",
+  "section": "Modules, visibility, targets, and ordinary static checking",
+  "verdict": "Justified but relaxable",
+  "msg": "2",
+  "book": "2",
+  "relax": "Infer a consistent Result/Option return when unambiguous; retain kind checking and use explicit match for conversion. Cost: bidirectional return inference and ambiguity diagnostics."
+ },
+ {
+  "n": 37,
+  "title": "E021: Result ? requires exactly the enclosing Result error type; no conversion.",
+  "section": "Modules, visibility, targets, and ordinary static checking",
+  "verdict": "Justified but relaxable",
+  "msg": "2",
+  "book": "2",
+  "relax": "Add explicit map_error or a declared conversion trait analogous to Rust From; never guess a conversion. Cost: trait/conversion coherence and extra typing rules."
+ },
+ {
+  "n": 38,
+  "title": "E025: a recursive type with no finite value is rejected.",
+  "section": "Modules, visibility, targets, and ordinary static checking",
+  "verdict": "Justified but relaxable",
+  "msg": "3",
+  "book": "2",
+  "relax": "Allow an explicitly uninhabited declaration while rejecting recursive construction; never silently build infinite eager values. Cost: exhaustiveness and representation support."
+ },
+ {
+  "n": 39,
+  "title": "E012: direct file imports cannot escape the project root.",
+  "section": "Modules, visibility, targets, and ordinary static checking",
+  "verdict": "Justified but relaxable",
+  "msg": "2",
+  "book": "1",
+  "relax": "Allow explicit configured import roots; keep dependency declarations preferred. Cost: reproducibility and tooling configuration."
+ },
+ {
+  "n": 40,
+  "title": "E013: cyclic module imports are rejected.",
+  "section": "Modules, visibility, targets, and ordinary static checking",
+  "verdict": "Justified but relaxable",
+  "msg": "2",
+  "book": "1",
+  "relax": "Permit pure/type-only strongly connected components, reject cycles involving initialization state. Cost: staged module resolution and SCC analysis."
+ },
+ {
+  "n": 41,
+  "title": "E022: a non-pub module item cannot be imported.",
+  "section": "Modules, visibility, targets, and ordinary static checking",
+  "verdict": "Necessary",
+  "msg": "2",
+  "book": "2",
+  "relax": "Keep export privacy; correct the spec code cross-reference."
+ },
+ {
+  "n": 42,
+  "title": "E014/E001/E007: names, imports, and types must resolve in the current module.",
+  "section": "Modules, visibility, targets, and ordinary static checking",
+  "verdict": "Necessary",
+  "msg": "2",
+  "book": "2",
+  "relax": "Keep lexical/module resolution; add likely-import suggestions where known."
+ },
+ {
+  "n": 43,
+  "title": "E004: a scope cannot define the same item twice.",
+  "section": "Modules, visibility, targets, and ordinary static checking",
+  "verdict": "Necessary",
+  "msg": "1",
+  "book": "1",
+  "relax": "Keep duplicate binding/parameter rejection; local shadowing remains a separate rule."
+ },
+ {
+  "n": 44,
+  "title": "E024: a type alias cannot recursively expand to itself.",
+  "section": "Modules, visibility, targets, and ordinary static checking",
+  "verdict": "Necessary",
+  "msg": "3",
+  "book": "1",
+  "relax": "Keep aliases finite; use a nominal recursive type."
+ },
+ {
+  "n": 45,
+  "title": "E023: a value without a function type cannot be called.",
+  "section": "Modules, visibility, targets, and ordinary static checking",
+  "verdict": "Necessary",
+  "msg": "2",
+  "book": "2",
+  "relax": "Keep; an explicit callable trait would be a separate language feature."
+ },
+ {
+  "n": 46,
+  "title": "E019: a method must exist for the receiver type.",
+  "section": "Modules, visibility, targets, and ordinary static checking",
+  "verdict": "Necessary",
+  "msg": "1",
+  "book": "2",
+  "relax": "Keep method resolution; mention both inherent and trait impl fixes."
+ },
+ {
+  "n": 47,
+  "title": "E020: trait impl signatures must match the declared trait.",
+  "section": "Modules, visibility, targets, and ordinary static checking",
+  "verdict": "Necessary",
+  "msg": "2",
+  "book": "2",
+  "relax": "Keep trait signature checking."
+ },
+ {
+  "n": 48,
+  "title": "A live fn parameter cannot be declared mut.",
+  "section": "Components and handle semantics",
+  "verdict": "Justified but relaxable",
+  "msg": "1",
+  "book": "1",
+  "relax": "Desugar mut parameters into per-instance source members, or explain using let mut n=x. Cost: clarify visibility and tracking of parameter reads."
+ },
+ {
+  "n": 49,
+  "title": "Claimed rule: component parameters stay fixed for the instance lifetime.",
+  "section": "Components and handle semantics",
+  "verdict": "Necessary",
+  "msg": "0",
+  "book": "2",
+  "relax": "Enforce assignment rejection for fixed parameters, or explicitly promote mutable parameters to reactive source members. The former needs no new semantics."
+ },
+ {
+  "n": 50,
+  "title": "A component member cannot use a destructuring pattern.",
+  "section": "Components and handle semantics",
+  "verdict": "Arbitrary",
+  "msg": "2",
+  "book": "1",
+  "relax": "Lower member destructuring to hidden members/projections, evaluate the initializer once. Cost: names, spans, and projection dependencies."
+ },
+ {
+  "n": 51,
+  "title": "A component member function cannot have type parameters.",
+  "section": "Components and handle semantics",
+  "verdict": "Arbitrary",
+  "msg": "1",
+  "book": "1",
+  "relax": "Specialize member functions by instance-template and type arguments. Cost: code generation/cache keys, not a reactive semantic concession."
+ },
+ {
+  "n": 52,
+  "title": "A component member function cannot have mut parameters or mut self.",
+  "section": "Components and handle semantics",
+  "verdict": "Justified but relaxable",
+  "msg": "1",
+  "book": "1",
+  "relax": "Allow ordinary mut arguments with normal write-back rules; retain no mut self until handle semantics are specified. Cost: lowering and effect propagation."
+ },
+ {
+  "n": 53,
+  "title": "E008: derived/const/track fn cannot construct an instance.",
+  "section": "Components and handle semantics",
+  "verdict": "Necessary",
+  "msg": "0",
+  "book": "2",
+  "relax": "Keep allocation/subscription creation out of pure computations. Reconciliation/keyed construction would be an explicit owned effect feature."
+ },
+ {
+  "n": 54,
+  "title": "A module let whose initializer constructs a component runs once, even when arguments are reactive.",
+  "section": "Components and handle semantics",
+  "verdict": "Justified but relaxable",
+  "msg": "0",
+  "book": "2",
+  "relax": "Add explicit construction/snapshot syntax or a compiler hover showing startup-only inputs; live parameters could instead be explicit reactive inputs. Cost: another binding mode/API."
+ },
+ {
+  "n": 55,
+  "title": "E032: code outside an instance cannot directly change its public source member.",
+  "section": "Components and handle semantics",
+  "verdict": "Justified but relaxable",
+  "msg": "3",
+  "book": "2",
+  "relax": "Support explicitly exported write capabilities/setters; keep read-only public handles by default. Cost: expanded API authority. Report E032 before irrelevant receiver-mutability advice."
+ },
+ {
+  "n": 56,
+  "title": "E033: non-pub component members are inaccessible even elsewhere in the same file.",
+  "section": "Components and handle semantics",
+  "verdict": "Necessary",
+  "msg": "1",
+  "book": "2",
+  "relax": "Keep component privacy; use an instance-specific diagnostic instead of module wording."
+ },
+ {
+  "n": 57,
+  "title": "Component functions/events cannot be read as first-class values.",
+  "section": "Components and handle semantics",
+  "verdict": "Justified but relaxable",
+  "msg": "1",
+  "book": "1",
+  "relax": "Introduce bound member closures/event handles carrying instance ownership and effects. Cost: lifetime and effect analysis; a lambda calling the member is a limited workaround."
+ },
+ {
+  "n": 58,
+  "title": "A targetless watch cannot read an instance member.",
+  "section": "Components and handle semantics",
+  "verdict": "Justified but relaxable",
+  "msg": "2",
+  "book": "2",
+  "relax": "Track instance-member reads dynamically in targetless watches, or accept an expression target. Cost: subscriptions must switch/dispose as handles change."
+ },
+ {
+  "n": 59,
+  "title": "emit requires a name chain; an indexed instance must be bound first.",
+  "section": "Components and handle semantics",
+  "verdict": "Arbitrary",
+  "msg": "0",
+  "book": "2",
+  "relax": "Accept any once-evaluated instance expression as an emit receiver. Cost: expression lowering and preserving evaluation order."
+ },
+ {
+  "n": 60,
+  "title": "E010: a component template cannot have cyclic bare-member derived equations.",
+  "section": "Components and handle semantics",
+  "verdict": "Necessary",
+  "msg": "2",
+  "book": "2",
+  "relax": "Keep, with any future delayed/fixed-point graphs explicitly separate."
+ },
+ {
+  "n": 61,
+  "title": "The component/module template dependency graph must also be acyclic.",
+  "section": "Components and handle semantics",
+  "verdict": "Justified but relaxable",
+  "msg": "0",
+  "book": "2",
+  "relax": "Retain rejection of an actual value cycle; conservative type/template-level cycles could be allowed with per-instance runtime cycle checks. Cost: later errors and dynamic graph validation."
+ },
+ {
+  "n": 62,
+  "title": "A derived value may not come to depend on itself through dynamic instance reads.",
+  "section": "Components and handle semantics",
+  "verdict": "Necessary",
+  "msg": "0",
+  "book": "2",
+  "relax": "Keep the runtime cycle guard; improve the trace with the instance dependency path."
+ },
+ {
+  "n": 63,
+  "title": "An instance may not hold itself, even when no reactive dependency cycle exists.",
+  "section": "Components and handle semantics",
+  "verdict": "Justified but relaxable",
+  "msg": "0",
+  "book": "1",
+  "relax": "Provide weak instance links, or a cycle collector/owner-arena with explicit disposal. Cost: weak-link handling or collection overhead and disposal scheduling. The book should teach the retention mechanism."
+ },
+ {
+  "n": 64,
+  "title": "An instance may not read a module binding before its initial value is set.",
+  "section": "Components and handle semantics",
+  "verdict": "Necessary",
+  "msg": "0",
+  "book": "2",
+  "relax": "Keep the guard; possible future two-phase initialization may defer some member evaluation without exposing unset values."
+ },
+ {
+  "n": 65,
+  "title": "E030 warns when a constructed instance is immediately discarded.",
+  "section": "Components and handle semantics",
+  "verdict": "Necessary",
+  "msg": "3",
+  "book": "3",
+  "relax": "Keep this warning and handle-based lifetime rule; scoped explicit ownership is preferable to invisible permanent registration."
+ },
+ {
+  "n": 66,
+  "title": "Copying an instance handle aliases identity; it does not copy the state.",
+  "section": "Components and handle semantics",
+  "verdict": "Justified but relaxable",
+  "msg": "0",
+  "book": "3",
+  "relax": "Keep handle identity; offer explicit clone-state construction if desired. Fix module alias receiver unwrapping. Cost: an explicit cloning API, not implicit duplicated subscriptions."
+ },
+ {
+  "n": 67,
+  "title": "A live fn body cannot declare types, nested components, imports, or const members.",
+  "section": "Components and handle semantics",
+  "verdict": "Arbitrary",
+  "msg": "0",
+  "book": "1",
+  "relax": "Allow lexically scoped types/constants where their lifetime is clear; hoist template-independent items. Cost: scoping and export resolution."
+ },
+ {
+  "n": 68,
+  "title": "Explicit type arguments at generic call sites are not supported.",
+  "section": "Generics, values, grammar, and library surface",
+  "verdict": "Arbitrary",
+  "msg": "0",
+  "book": "2",
+  "relax": "Add explicit generic call/type-constructor arguments, reusing existing monomorphization. Cost: grammar disambiguation and diagnostics."
+ },
+ {
+  "n": 69,
+  "title": "A generic call with unconstrained type arguments is rejected; bare generic type names also need all arguments.",
+  "section": "Generics, values, grammar, and library surface",
+  "verdict": "Necessary",
+  "msg": "2",
+  "book": "3",
+  "relax": "Keep unresolved types an error; add the explicit argument escape hatch above rather than arbitrary default types."
+ },
+ {
+  "n": 70,
+  "title": "A tuple enum variant has exactly one payload value; Node(Tree,Tree) is rejected.",
+  "section": "Generics, values, grammar, and library surface",
+  "verdict": "Arbitrary",
+  "msg": "2",
+  "book": "1",
+  "relax": "Desugar multi-payload variants to one tuple payload; preserve pattern arity in syntax. Cost: parser/pattern sugar and compatibility decisions for display."
+ },
+ {
+  "n": 71,
+  "title": "An if used as an operand has no direct else if chain.",
+  "section": "Generics, values, grammar, and library surface",
+  "verdict": "Arbitrary",
+  "msg": "0",
+  "book": "0",
+  "relax": "Share if grammar in expression and statement positions. Cost: parser/AST normalization; preserve existing branch value/effect checking."
+ },
+ {
+  "n": 72,
+  "title": "Operand-if branches cannot contain statements, unlike a function-tail if.",
+  "section": "Generics, values, grammar, and library surface",
+  "verdict": "Arbitrary",
+  "msg": "0",
+  "book": "0",
+  "relax": "Use value blocks in both positions; apply context-sensitive purity checks to effects. Cost: one coherent block AST instead of separate forms."
+ },
+ {
+  "n": 73,
+  "title": "Match arm blocks in derived/watch/on contexts cannot contain loops/control-flow, emit, or module assignments.",
+  "section": "Generics, values, grammar, and library surface",
+  "verdict": "Justified but relaxable",
+  "msg": "1",
+  "book": "1",
+  "relax": "Allow full arm blocks in effect contexts, keep derived purity checks, and preserve return/break lexical scopes. Cost: uniform lowering of match bodies."
+ },
+ {
+  "n": 74,
+  "title": "map_new needs an import, while map methods such as m.len do not.",
+  "section": "Generics, values, grammar, and library surface",
+  "verdict": "Justified but relaxable",
+  "msg": "1",
+  "book": "2",
+  "relax": "Suggest import collections { map_new }; optionally add Map::new(). Cost: symbol-to-import lookup or one type-function alias."
+ },
+ {
+  "n": 75,
+  "title": "There is no empty map literal ({} is not a Map initializer).",
+  "section": "Generics, values, grammar, and library surface",
+  "verdict": "Arbitrary",
+  "msg": "0",
+  "book": "1",
+  "relax": "Add a typed empty map literal or Map::new(). Cost: grammar/context disambiguation; no graph cost."
+ },
+ {
+  "n": 76,
+  "title": "Map keys are only integers, String, Bool, or Char; not tuples, structs, or floats.",
+  "section": "Generics, values, grammar, and library surface",
+  "verdict": "Justified but relaxable",
+  "msg": "2",
+  "book": "1",
+  "relax": "Support structurally ordered tuple/enum/struct keys, and optional explicit total float keys. Cost: comparison definitions and compatible display/iteration order."
+ },
+ {
+  "n": 77,
+  "title": "An unannotated empty-array binding cannot infer its element type.",
+  "section": "Generics, values, grammar, and library surface",
+  "verdict": "Necessary",
+  "msg": "2",
+  "book": "2",
+  "relax": "Keep ambiguity rejection or infer from later uses where sound. Cost of the latter: delayed local inference."
+ },
+ {
+  "n": 78,
+  "title": "An unconstrained closure parameter defaults to Int, so field reads need context or an annotation.",
+  "section": "Generics, values, grammar, and library surface",
+  "verdict": "Justified but relaxable",
+  "msg": "3",
+  "book": "3",
+  "relax": "Delay inference until uses, or report an unknown parameter type rather than guessing Int. Cost: broader constraint solving and potential compatibility changes."
+ },
+ {
+  "n": 79,
+  "title": "Closures capture locals by value and cannot assign a captured mutable local.",
+  "section": "Generics, values, grammar, and library surface",
+  "verdict": "Justified but relaxable",
+  "msg": "0",
+  "book": "2",
+  "relax": "Offer explicit mutable captures with closure state or reference-cell types; retain value capture by default. Cost: callable mutability/lifetime and effect rules."
+ },
+ {
+  "n": 80,
+  "title": "return is forbidden in a closure body, including its match arms.",
+  "section": "Generics, values, grammar, and library surface",
+  "verdict": "Arbitrary",
+  "msg": "1",
+  "book": "1",
+  "relax": "Permit return to the nearest closure/function boundary. Cost: control-flow lowering; continue rejecting jumps across closure boundaries."
+ },
+ {
+  "n": 81,
+  "title": "Functions and values containing functions have no ==, !=, or contains comparison.",
+  "section": "Generics, values, grammar, and library surface",
+  "verdict": "Justified but relaxable",
+  "msg": "1",
+  "book": "2",
+  "relax": "Keep no extensional equality; optionally expose explicit function identity, never silently equate functions by behavior. Cost: stable closure identity and clarified graph change detection."
+ },
+ {
+  "n": 82,
+  "title": "Functions and any containing value cannot be printed/interpolated/to_string.",
+  "section": "Generics, values, grammar, and library surface",
+  "verdict": "Arbitrary",
+  "msg": "2",
+  "book": "2",
+  "relax": "Give functions a non-executable opaque debug display and recursively display containers. Cost: formatting stability; do not expose addresses as portable identities."
+ },
+ {
+  "n": 83,
+  "title": "A call with mut arguments must be a statement or a let initializer, not a larger expression.",
+  "section": "Generics, values, grammar, and library surface",
+  "verdict": "Justified but relaxable",
+  "msg": "2",
+  "book": "2",
+  "relax": "Sequence call, write-back, then surrounding expression; preserve evaluate-once places and failure atomicity. Cost: temporary values and ordering specification."
+ },
+ {
+  "n": 84,
+  "title": "Each mut parameter requires explicit mut on a mutable-place argument.",
+  "section": "Generics, values, grammar, and library surface",
+  "verdict": "Justified but relaxable",
+  "msg": "2",
+  "book": "2",
+  "relax": "Retain writable-place checking; optional inference of call-site mut with tooling indication. Cost: mutation becomes less visually explicit."
+ },
+ {
+  "n": 85,
+  "title": "Functions with mut parameters cannot be stored or passed as function values.",
+  "section": "Generics, values, grammar, and library surface",
+  "verdict": "Justified but relaxable",
+  "msg": "2",
+  "book": "2",
+  "relax": "Add first-class mut-parameter function types, or require an explicit adapter closure. Cost: indirect call ABI/place validation and effect-aware typing."
+ },
+ {
+  "n": 86,
+  "title": "A mut self method must be a standalone place call and cannot return a value.",
+  "section": "Generics, values, grammar, and library surface",
+  "verdict": "Justified but relaxable",
+  "msg": "1",
+  "book": "2",
+  "relax": "Allow results and expression calls after copy-back. Cost: the same sequencing representation already needed by mut functions."
+ },
+ {
+  "n": 87,
+  "title": "A method with its own type parameters cannot have mut self.",
+  "section": "Generics, values, grammar, and library surface",
+  "verdict": "Arbitrary",
+  "msg": "1",
+  "book": "1",
+  "relax": "Specialize before applying ordinary mut-self lowering. Cost: combining two existing compiler paths."
+ },
+ {
+  "n": 88,
+  "title": "Methods cannot have mut parameters other than mut self.",
+  "section": "Generics, values, grammar, and library surface",
+  "verdict": "Arbitrary",
+  "msg": "1",
+  "book": "1",
+  "relax": "Apply the free-function mut ABI to methods, with evaluate-once receiver/arguments. Cost: lowering and alias/write-back ordering rules."
+ },
+ {
+  "n": 89,
+  "title": "A generic type cannot have an impl specialized to one concrete argument.",
+  "section": "Generics, values, grammar, and library surface",
+  "verdict": "Justified but relaxable",
+  "msg": "2",
+  "book": "1",
+  "relax": "Allow disjoint concrete impls, reject overlapping methods unless precedence is explicit. Cost: coherence/overlap checking."
+ },
+ {
+  "n": 90,
+  "title": "Built-in Eq and Ord cannot be implemented for a user type.",
+  "section": "Generics, values, grammar, and library surface",
+  "verdict": "Justified but relaxable",
+  "msg": "2",
+  "book": "1",
+  "relax": "Keep graph change equality structural by default; add explicit ordering/comparison traits or structural Ord for eligible types. Cost: law/coherence policy; do not let arbitrary effectful equality control settling."
+ },
+ {
+  "n": 91,
+  "title": "Tuples have two or more values; (x,) is forbidden.",
+  "section": "Generics, values, grammar, and library surface",
+  "verdict": "Arbitrary",
+  "msg": "2",
+  "book": "1",
+  "relax": "Accept one-element tuples with trailing comma. Cost: type/display/pattern support for arity one."
+ },
+ {
+  "n": 92,
+  "title": "Unit is a type/block result, but the obvious () expression is rejected.",
+  "section": "Generics, values, grammar, and library surface",
+  "verdict": "Arbitrary",
+  "msg": "0",
+  "book": "0",
+  "relax": "Add the () literal. Cost: parser and constant representation already present in IR."
+ },
+ {
+  "n": 93,
+  "title": "Float literal patterns are rejected, even with a catch-all.",
+  "section": "Generics, values, grammar, and library surface",
+  "verdict": "Justified but relaxable",
+  "msg": "1",
+  "book": "1",
+  "relax": "Allow literal patterns with IEEE equality, warn for NaN/nonexact comparisons, or teach guarded matches. Cost: matching policy; no exhaustiveness credit for float literals."
+ },
+ {
+  "n": 94,
+  "title": "A match must be exhaustive; numeric/string literal arms need a catch-all, guarded arms do not prove coverage.",
+  "section": "Generics, values, grammar, and library surface",
+  "verdict": "Necessary",
+  "msg": "1",
+  "book": "2",
+  "relax": "Keep exhaustiveness. Better finite missing-case examples would improve diagnostics without weakening it."
+ },
+ {
+  "n": 95,
+  "title": "Branch/return types must agree without implicit numeric widening in annotated functions.",
+  "section": "Generics, values, grammar, and library surface",
+  "verdict": "Justified but relaxable",
+  "msg": "1",
+  "book": "2",
+  "relax": "Allow only lossless, explicit or expected-type-directed numeric literal conversions; keep incompatible branches rejected. Cost: conversion rules and clearer inferred-type reporting."
+ },
+ {
+  "n": 96,
+  "title": "Arrays must have a single element type.",
+  "section": "Generics, values, grammar, and library surface",
+  "verdict": "Necessary",
+  "msg": "1",
+  "book": "2",
+  "relax": "Keep homogeneous arrays; model alternatives with enums."
+ },
+ {
+  "n": 97,
+  "title": "A final semicolon does not discard a block value as it does in Rust.",
+  "section": "Generics, values, grammar, and library surface",
+  "verdict": "Justified but relaxable",
+  "msg": "1",
+  "book": "1",
+  "relax": "Either keep and teach the difference clearly, or add explicit discard expression syntax. Cost of Rust-style semicolons: a breaking grammar/value change."
+ },
+ {
+  "n": 98,
+  "title": "break/continue require a loop in the same function; they cannot cross closure boundaries.",
+  "section": "Generics, values, grammar, and library surface",
+  "verdict": "Necessary",
+  "msg": "2",
+  "book": "3",
+  "relax": "Keep lexical loop boundaries."
+ },
+ {
+  "n": 99,
+  "title": "Bitwise compound assignment forms such as &= are absent.",
+  "section": "Generics, values, grammar, and library surface",
+  "verdict": "Arbitrary",
+  "msg": "0",
+  "book": "1",
+  "relax": "Desugar bit compound assignment using the existing evaluate-once place machinery. Cost: parser/operator coverage."
+ },
+ {
+  "n": 100,
+  "title": "Identifiers/code outside strings/comments are ASCII-only.",
+  "section": "Generics, values, grammar, and library surface",
+  "verdict": "Justified but relaxable",
+  "msg": "2",
+  "book": "0",
+  "relax": "Support normalized Unicode XID identifiers with optional confusable lint. Cost: normalization/versioned identifier policy."
+ },
+ {
+  "n": 101,
+  "title": "A line starting with binary minus is rejected instead of continuing the prior expression.",
+  "section": "Generics, values, grammar, and library surface",
+  "verdict": "Justified but relaxable",
+  "msg": "3",
+  "book": "2",
+  "relax": "Keep for now; a newline-sensitive expression grammar could accept standalone unary minus. Cost: clear continuation/statement boundary rules and possible compatibility changes."
+ },
+ {
+  "n": 102,
+  "title": "Only documented escapes are valid; bare {} is not a formatting placeholder.",
+  "section": "Generics, values, grammar, and library surface",
+  "verdict": "Justified but relaxable",
+  "msg": "2",
+  "book": "2",
+  "relax": "Keep unknown-escape errors; add useful explicit Unicode/hex escapes if needed, plus a targeted empty-interpolation repair. Cost: lexical support."
+ },
+ {
+  "n": 103,
+  "title": "Claimed rule: names beginning __mod_ are reserved for compiler-generated names.",
+  "section": "Generics, values, grammar, and library surface",
+  "verdict": "Justified but relaxable",
+  "msg": "0",
+  "book": "0",
+  "relax": "Use symbol identity/hygienic namespaces internally; until then consistently reject the reserved prefix with a specific diagnostic. Cost: internal name representation or complete validation."
+ },
+ {
+  "n": 104,
+  "title": "E026 warns for older syntax; it does not prohibit it.",
+  "section": "Generics, values, grammar, and library surface",
+  "verdict": "Justified but relaxable",
+  "msg": "2",
+  "book": "2",
+  "relax": "Keep migration warnings configurable and offer concrete edits; avoid reporting them as hard restrictions."
+ },
+ {
+  "n": 105,
+  "title": "Library free functions cannot be used as first-class values without a wrapper closure.",
+  "section": "Generics, values, grammar, and library surface",
+  "verdict": "Justified but relaxable",
+  "msg": "2",
+  "book": "0",
+  "relax": "Reify typed builtin function pointers/adapters, preserving their effect summaries. Cost: first-class builtin dispatch and polymorphic builtin specialization."
+ },
+ {
+  "n": 106,
+  "title": "A mut-parameter function with no declared result has no bindable value, even when its body ends in an expression.",
+  "section": "Generics, values, grammar, and library surface",
+  "verdict": "Justified but relaxable",
+  "msg": "2",
+  "book": "2",
+  "relax": "Infer a user result separately from changed arguments, or offer a targeted annotation fix. Cost: result/copy-back ABI typing; keep no-result calls unbindable while they truly return nothing."
+ },
+ {
+  "n": 107,
+  "title": "main must take no parameters and return Unit or Int; Int is an exit status.",
+  "section": "Execution, host boundaries, and resource limits",
+  "verdict": "Justified but relaxable",
+  "msg": "2",
+  "book": "2",
+  "relax": "Optionally allow main(args:[String]) and Result exits with an explicit CLI mapping. Cost: ABI and exit/error policy; keep the current signature check until then."
+ },
+ {
+  "n": 108,
+  "title": "extern fn parameters cannot be mut.",
+  "section": "Execution, host boundaries, and resource limits",
+  "verdict": "Justified but relaxable",
+  "msg": "1",
+  "book": "1",
+  "relax": "Return an explicit updated value or define host copy-back results. Cost: a new trusted host ABI and failure atomicity rules."
+ },
+ {
+  "n": 109,
+  "title": "The CLI cannot run a program declaring any extern fn without a host implementation, even if unused.",
+  "section": "Execution, host boundaries, and resource limits",
+  "verdict": "Justified but relaxable",
+  "msg": "0",
+  "book": "2",
+  "relax": "Link only reachable extern declarations, or let the CLI load an explicit host adapter. Cost: reachability / host plugin loading."
+ },
+ {
+  "n": 110,
+  "title": "Events/handlers have fixed payload arity and types; emit does not invent missing values.",
+  "section": "Execution, host boundaries, and resource limits",
+  "verdict": "Necessary",
+  "msg": "1",
+  "book": "2",
+  "relax": "Keep arity/type validation; defaulted payload arguments could be a separate explicit feature."
+ },
+ {
+  "n": 111,
+  "title": "Integer literals must fit their selected width; unsuffixed integers are Int64.",
+  "section": "Execution, host boundaries, and resource limits",
+  "verdict": "Necessary",
+  "msg": "2",
+  "book": "2",
+  "relax": "Keep range checking; suggest the wider type/suffix where it fits."
+ },
+ {
+  "n": 112,
+  "title": "Integer arithmetic, division by zero, casts, and shifts fail on invalid values instead of wrapping silently.",
+  "section": "Execution, host boundaries, and resource limits",
+  "verdict": "Justified but relaxable",
+  "msg": "0",
+  "book": "2",
+  "relax": "Keep checked defaults; explicit checked/wrapping/saturating alternatives can serve numeric code without weakening defaults. Cost: API surface and exact width semantics."
+ },
+ {
+  "n": 113,
+  "title": "Indexing outside an array or a missing map key fails at runtime; use get for Option.",
+  "section": "Execution, host boundaries, and resource limits",
+  "verdict": "Necessary",
+  "msg": "0",
+  "book": "2",
+  "relax": "Keep safe bounds/key checks; keep get and potentially add checked place-update APIs."
+ },
+ {
+  "n": 114,
+  "title": "Parser resource caps: 256 bracket levels, 256 consecutive unary operators, 1000 AST depth.",
+  "section": "Execution, host boundaries, and resource limits",
+  "verdict": "Justified but relaxable",
+  "msg": "3",
+  "book": "1",
+  "relax": "Keep graceful errors; permit configured compiler budgets or iterative parsing where practical. Cost: resource predictability/implementation effort."
+ }
+]

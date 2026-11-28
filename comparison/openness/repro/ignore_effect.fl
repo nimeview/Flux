@@ -1,0 +1,4 @@
+import io { println }
+fn noisy() -> Int { println("x"); 1 }
+fn ignore(f: fn() -> Int) -> Int { 1 }
+derived x = ignore(noisy)

@@ -1,0 +1,2 @@
+import io { println }
+const X = println("again")

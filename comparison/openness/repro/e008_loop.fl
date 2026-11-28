@@ -1,0 +1,2 @@
+fn count() -> Int { let mut n = 0; while n < 3 { n += 1 }; n }
+derived y = count()

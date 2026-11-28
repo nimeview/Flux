@@ -1,0 +1,2 @@
+act fn read() -> Int { 1 }
+const Y = read()

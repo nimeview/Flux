@@ -1,0 +1,110 @@
+import str { parse_int, parse_float }
+
+import collections { map_new, map_has }
+
+pub enum Value {
+    Int(Int),
+    Float(Float),
+    Bool(Bool),
+    Text(String)
+}
+
+pub enum ConfigError {
+    Io(String),
+    Syntax { line: Int, text: String },
+    Duplicate { line: Int, key: String },
+    Missing(String),
+    WrongType { key: String, want: String, got: String },
+    OutOfRange { key: String, detail: String }
+}
+
+pub struct Config {
+    entries: Map[String, Value]
+}
+
+pub fn type_name(v: Value) -> String {
+    match v { Int(_) => "integer", Float(_) => "float", Bool(_) => "boolean", Text(_) => "string" }
+}
+
+pub fn message(e: ConfigError) -> String {
+    match e {
+        Io(m) => m,
+        Syntax { line, text } => "line {line}: expected `key = value`, got `{text}`",
+        Duplicate { line, key } => "line {line}: `{key}` is set twice",
+        Missing(key) => "missing required key `{key}`",
+        WrongType { key, want, got } => "`{key}` should be of type {want}, not {got}",
+        OutOfRange { key, detail } => "`{key}` {detail}"
+    }
+}
+
+fn parse_value(raw: String) -> Value {
+    if raw == "true" || raw == "false" {
+        return Bool(raw == "true")
+    }
+    if raw.len() >= 2 && raw.starts_with("\"") && raw.ends_with("\"") {
+        return Text(raw.chars().slice(1, raw.len() - 1).join(""))
+    }
+    match parse_int(raw) {
+        Ok(n) => Int(n),
+        Err(_) => match parse_float(raw) { Ok(f) => Float(f), Err(_) => Text(raw) }
+    }
+}
+
+pub fn parse(text: String) -> Result[Config, ConfigError] {
+    let mut entries: Map[String, Value] = map_new()
+    for (i, raw_line) in text.lines().enumerate() {
+        let line = raw_line.trim()
+        if line == "" || line.starts_with("#") {
+            continue
+        }
+        let parts = match line.split_once("=") {
+            Some(p) => p,
+            None => return Err(Syntax { line: i + 1, text: line })
+        }
+        let key = parts.0.trim()
+        if key == "" {
+            return Err(Syntax { line: i + 1, text: line })
+        }
+        if map_has(entries, key) {
+            return Err(Duplicate { line: i + 1, key: key })
+        }
+        entries[key] = parse_value(parts.1.trim())
+    }
+    Ok(Config { entries: entries })
+}
+
+impl Config {
+    fn find(self, key: String) -> Result[Value, ConfigError] {
+        match self.entries.get(key) { Some(v) => Ok(v), None => Err(Missing(key)) }
+    }
+    fn int(self, key: String) -> Result[Int, ConfigError] {
+        match self.find(key)? {
+            Int(n) => Ok(n),
+            other => Err(WrongType { key: key, want: "integer", got: type_name(other) })
+        }
+    }
+    fn text(self, key: String) -> Result[String, ConfigError] {
+        match self.find(key)? {
+            Text(s) => Ok(s),
+            other => Err(WrongType { key: key, want: "string", got: type_name(other) })
+        }
+    }
+    fn flag_or(self, key: String, fallback: Bool) -> Result[Bool, ConfigError] {
+        match self.entries.get(key) {
+            None => Ok(fallback),
+            Some(Bool(b)) => Ok(b),
+            Some(other) => Err(WrongType { key: key, want: "boolean", got: type_name(other) })
+        }
+    }
+    fn float_or(self, key: String, fallback: Float) -> Result[Float, ConfigError] {
+        match self.entries.get(key) {
+            None => Ok(fallback),
+            Some(Float(f)) => Ok(f),
+            Some(Int(n)) => Ok(n as Float),
+            Some(other) => Err(WrongType { key: key, want: "float", got: type_name(other) })
+        }
+    }
+    fn keys(self) -> [String] {
+        self.entries.keys()
+    }
+}

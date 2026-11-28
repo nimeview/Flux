@@ -1,0 +1,3 @@
+live fn C() { pub let mut n = 1 }
+let mut c = C()
+act fn main() { c.n = 2 }
