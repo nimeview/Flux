@@ -74,11 +74,11 @@ fn tuple_patterns_match_position_by_position() {
 fn a_match_on_tuples_must_cover_every_case() {
     rejects(
         "fn f(a: Bool, b: Bool) -> Int {\n    match (a, b) {\n        (true, true) => 1,\n        (false, _) => 0\n    }\n}\nfn main() {\n}\n",
-        "patterns that cover every tuple",
+        "does not cover every",
     );
     rejects(
         "fn f(t: (Int, String)) -> Int {\n    match t {\n        (0, _) => 1\n    }\n}\nfn main() {\n}\n",
-        "patterns that cover every tuple",
+        "does not cover every",
     );
 }
 
@@ -90,15 +90,15 @@ fn tuple_mistakes_are_reported() {
     );
     rejects(
         "fn main() {\n    let (a, b, c) = (1, 2)\n}\n",
-        "expected `a tuple of 3 values`, found `(Int64, Int64)`",
+        "expected `a tuple of 3 values`, found `(Int, Int)`",
     );
     rejects(
         "fn main() {\n    let t = (1, 2)\n    let u = t.5\n}\n",
-        "`.5` on `(Int64, Int64)`",
+        "`.5` on `(Int, Int)`",
     );
     rejects(
         "fn main() {\n    let t: (Int, String) = (1, 2)\n}\n",
-        "expected `(Int64, String)`, found `(Int64, Int64)`",
+        "expected `(Int, String)`, found `(Int, Int)`",
     );
 }
 
@@ -152,7 +152,7 @@ fn nested_tuple_patterns_keep_each_level_apart() {
 fn a_leaving_tuple_arm_is_still_type_checked() {
     rejects(
         "import io { println }\nfn f(t: (Int, Int)) -> Int {\n    match t {\n        (0, _) => return \"oops\",\n        (a, b) => a + b\n    }\n}\nfn main() {\n    println(\"{f((0, 1))}\")\n}\n",
-        "expected `Int64`, found `String`",
+        "expected `Int`, found `String`",
     );
 }
 
@@ -186,21 +186,21 @@ fn destructuring_checks_the_whole_shape() {
     );
     assert_eq!(status, Some(1));
     assert!(
-        stderr.contains("expected `a tuple of 2 values`, found `Int64`"),
+        stderr.contains("expected `a tuple of 2 values`, found `Int`"),
         "{stderr}"
     );
     assert!(
-        stderr.contains("expected `a tuple of 3 values`, found `(Int64, Int64)`"),
+        stderr.contains("expected `a tuple of 3 values`, found `(Int, Int)`"),
         "{stderr}"
     );
-    assert!(stderr.contains("found `(Int64, Int64, Int64)`"), "{stderr}");
+    assert!(stderr.contains("found `(Int, Int, Int)`"), "{stderr}");
     rejects(
         "import io { println }\nlet (a, b): (String, String) = (1, 2)\nfn main() {\n    println(\"{snap(a)} {snap(b)}\")\n}\n",
-        "expected `String`, found `Int64`",
+        "expected `String`, found `Int`",
     );
     rejects(
         "import io { println }\nfn main() {\n    let t = (1, 2)\n    println(\"{t.00}\")\n}\n",
-        "`.00` on `(Int64, Int64)`",
+        "`.00` on `(Int, Int)`",
     );
 }
 

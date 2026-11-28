@@ -11,7 +11,7 @@ pub use arith::{
     promote_int, values_equal, ArithError, BitOp, NumOp,
 };
 pub use convert::{is_tag_representable, tagged_to_value, value_to_tagged};
-pub use display::{binding_display_name, render, type_display_name};
+pub use display::{binding_display_name, render, type_display_name, TUPLE_TYPE};
 pub use heap::{
     array_finish, array_get, array_len, array_push, clear_for_tests, concat_strings, enum_payload,
     enum_variant_is, get_array, get_enum, get_string, heap_scope, heap_stats, int_range,
@@ -192,17 +192,140 @@ pub struct ClosureValue {
     pub captured: Vec<Value>,
 }
 
+/// A type's, variant's, or field's name, shared: building a value copies a
+/// pointer, not the text.
+pub type Name = std::sync::Arc<str>;
+
 #[derive(Debug, Clone)]
 pub struct StructValue {
-    pub type_name: String,
-    pub fields: HashMap<String, Value>,
+    pub type_name: Name,
+    pub fields: Fields,
 }
 
 #[derive(Debug, Clone)]
 pub struct EnumValue {
-    pub type_name: String,
-    pub variant: String,
+    pub type_name: Name,
+    pub variant: Name,
     pub payload: Option<Value>,
+}
+
+/// A struct's fields, sorted by name: a lookup compares a few short names,
+/// and equal structs hold their fields in the same order. Up to two live
+/// inside the struct itself, so a pair, a tuple of two, or a tree node is
+/// one allocation. (A `HashMap` cost one for the table and one per name.)
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Fields(smallvec::SmallVec<[(Name, Value); 2]>);
+
+impl Fields {
+    pub fn with_capacity(n: usize) -> Self {
+        Self(smallvec::SmallVec::with_capacity(n))
+    }
+
+    /// The fields of `pairs`, in any order; a later duplicate name wins.
+    pub fn from_pairs(pairs: impl IntoIterator<Item = (Name, Value)>) -> Self {
+        let mut fields: smallvec::SmallVec<[(Name, Value); 2]> = pairs.into_iter().collect();
+        // Stable, so of two equal names the later stays last.
+        fields.sort_by(|a, b| a.0.cmp(&b.0));
+        let mut i = 1;
+        while i < fields.len() {
+            if fields[i].0 == fields[i - 1].0 {
+                fields.remove(i - 1);
+            } else {
+                i += 1;
+            }
+        }
+        Self(fields)
+    }
+
+    fn position(&self, name: &str) -> Result<usize, usize> {
+        self.0.binary_search_by(|(n, _)| (**n).cmp(name))
+    }
+
+    pub fn get(&self, name: &str) -> Option<&Value> {
+        self.position(name).ok().map(|i| &self.0[i].1)
+    }
+
+    pub fn get_mut(&mut self, name: &str) -> Option<&mut Value> {
+        self.position(name).ok().map(|i| &mut self.0[i].1)
+    }
+
+    /// Sets `name` to `value`, adding the field if it is new.
+    pub fn insert(&mut self, name: impl Into<Name> + AsRef<str>, value: Value) {
+        match self.position(name.as_ref()) {
+            Ok(i) => self.0[i].1 = value,
+            Err(i) => self.0.insert(i, (name.into(), value)),
+        }
+    }
+
+    pub fn contains_key(&self, name: &str) -> bool {
+        self.position(name).is_ok()
+    }
+
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    /// Names and values, by name.
+    pub fn iter(&self) -> impl Iterator<Item = (&Name, &Value)> {
+        self.0.iter().map(|(n, v)| (n, v))
+    }
+
+    pub fn keys(&self) -> impl Iterator<Item = &Name> {
+        self.0.iter().map(|(n, _)| n)
+    }
+
+    pub fn values(&self) -> impl Iterator<Item = &Value> {
+        self.0.iter().map(|(_, v)| v)
+    }
+
+    pub fn values_mut(&mut self) -> impl Iterator<Item = &mut Value> {
+        self.0.iter_mut().map(|(_, v)| v)
+    }
+}
+
+impl std::ops::Index<&str> for Fields {
+    type Output = Value;
+    fn index(&self, name: &str) -> &Value {
+        self.get(name).expect("no such field")
+    }
+}
+
+impl From<HashMap<String, Value>> for Fields {
+    fn from(map: HashMap<String, Value>) -> Self {
+        Self::from_pairs(map.into_iter().map(|(k, v)| (Name::from(k), v)))
+    }
+}
+
+impl FromIterator<(String, Value)> for Fields {
+    fn from_iter<I: IntoIterator<Item = (String, Value)>>(iter: I) -> Self {
+        Self::from_pairs(iter.into_iter().map(|(k, v)| (Name::from(k), v)))
+    }
+}
+
+impl FromIterator<(Name, Value)> for Fields {
+    fn from_iter<I: IntoIterator<Item = (Name, Value)>>(iter: I) -> Self {
+        Self::from_pairs(iter)
+    }
+}
+
+/// `"0"`, `"1"`, …: a tuple's field names, shared.
+pub fn index_name(i: usize) -> Name {
+    static NAMES: std::sync::OnceLock<Vec<Name>> = std::sync::OnceLock::new();
+    let names = NAMES.get_or_init(|| (0..32).map(|i| Name::from(i.to_string())).collect());
+    names
+        .get(i)
+        .cloned()
+        .unwrap_or_else(|| Name::from(i.to_string()))
+}
+
+/// The type name all tuples share.
+pub fn tuple_type_name() -> Name {
+    static NAME: std::sync::OnceLock<Name> = std::sync::OnceLock::new();
+    NAME.get_or_init(|| Name::from(display::TUPLE_TYPE)).clone()
 }
 
 /// Runs `f`, which recurses into a struct or enum's parts, on a stack that
@@ -286,8 +409,11 @@ impl MapKey {
 }
 
 impl Value {
-    pub fn user_struct(type_name: String, fields: HashMap<String, Value>) -> Self {
-        Self::UserStruct(std::sync::Arc::new(StructValue { type_name, fields }))
+    pub fn user_struct(type_name: impl Into<Name>, fields: impl Into<Fields>) -> Self {
+        Self::UserStruct(std::sync::Arc::new(StructValue {
+            type_name: type_name.into(),
+            fields: fields.into(),
+        }))
     }
 
     /// A tuple of `values`: a struct with fields "0", "1", ….
@@ -295,15 +421,18 @@ impl Value {
         let fields = values
             .into_iter()
             .enumerate()
-            .map(|(i, v)| (i.to_string(), v))
-            .collect();
-        Self::user_struct(display::TUPLE_TYPE.to_string(), fields)
+            .map(|(i, v)| (index_name(i), v));
+        Self::user_struct(tuple_type_name(), Fields::from_pairs(fields))
     }
 
-    pub fn user_enum(type_name: String, variant: String, payload: Option<Value>) -> Self {
+    pub fn user_enum(
+        type_name: impl Into<Name>,
+        variant: impl Into<Name>,
+        payload: Option<Value>,
+    ) -> Self {
         Self::UserEnum(std::sync::Arc::new(EnumValue {
-            type_name,
-            variant,
+            type_name: type_name.into(),
+            variant: variant.into(),
             payload,
         }))
     }

@@ -1,4 +1,5 @@
 pub mod cache;
+pub mod explain;
 pub mod manifest;
 pub mod migrate;
 pub mod output;

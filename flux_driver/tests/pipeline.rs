@@ -103,7 +103,7 @@ fn check_file_reuses_analysis_cache() {
     fs::write(&main, "let n = 3\nlet m = n + 1\n").unwrap();
 
     let first = check_file(&main).expect("first check");
-    assert_eq!(first.types.get("m"), Some(&"Read<Int64>".to_string()));
+    assert_eq!(first.types.get("m"), Some(&"Read<Int>".to_string()));
 
     let mut diag = DiagnosticBag::new();
     let resolved = resolve_file(&main, &mut diag).expect("resolve");

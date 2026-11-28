@@ -1,4 +1,5 @@
-//! Post-lowering pass: emit E015 for module bindings that are never read.
+//! Post-lowering pass: emit E015 for module bindings and locals that are
+//! never read.
 
 use std::collections::HashSet;
 
@@ -7,11 +8,38 @@ use flux_diagnostics::{span_to_miette, DiagnosticBag, FluxWarning};
 use crate::nodes::*;
 use crate::symbol::SymbolId;
 
-/// Mark module-level bindings that are never referenced (E015).
+/// The names read anywhere, and the locals declared (with their `let`).
+#[derive(Default)]
+struct Uses {
+    read: HashSet<SymbolId>,
+    locals: Vec<(SymbolId, flux_diagnostics::Span)>,
+}
+
+impl Uses {
+    fn insert(&mut self, id: SymbolId) {
+        self.read.insert(id);
+    }
+}
+
+/// Mark module-level bindings and locals that are never referenced (E015).
 pub fn check_unused_bindings(hir: &HirProgram, diagnostics: &mut DiagnosticBag) {
-    let mut used = HashSet::new();
+    let mut uses = Uses::default();
     for item in &hir.items {
-        collect_uses_item(item, &mut used);
+        collect_uses_item(item, &mut uses);
+    }
+    let used = &uses.read;
+    for &(id, span) in &uses.locals {
+        let Some(name) = hir.names.get(&id) else {
+            continue;
+        };
+        if used.contains(&id) || should_skip_unused_check(name) || name.starts_with("__") {
+            continue;
+        }
+        diagnostics.push_warning(FluxWarning::UnusedLocal {
+            name: name.clone(),
+            span: span_to_miette(span),
+            source_id: span.source,
+        });
     }
 
     for item in &hir.items {
@@ -42,7 +70,7 @@ fn should_skip_unused_check(name: &str) -> bool {
         || name.starts_with("__closure_")
 }
 
-fn collect_uses_item(item: &HirItem, used: &mut HashSet<SymbolId>) {
+fn collect_uses_item(item: &HirItem, used: &mut Uses) {
     match item {
         HirItem::Binding(b) => collect_uses_expr(&b.value, used),
         HirItem::Fn(f) => collect_uses_block(&f.body, used),
@@ -78,15 +106,18 @@ fn collect_uses_item(item: &HirItem, used: &mut HashSet<SymbolId>) {
     }
 }
 
-fn collect_uses_block(block: &HirBlock, used: &mut HashSet<SymbolId>) {
+fn collect_uses_block(block: &HirBlock, used: &mut Uses) {
     for stmt in &block.stmts {
         collect_uses_stmt(stmt, used);
     }
 }
 
-fn collect_uses_stmt(stmt: &HirStmt, used: &mut HashSet<SymbolId>) {
+fn collect_uses_stmt(stmt: &HirStmt, used: &mut Uses) {
     match stmt {
-        HirStmt::Let(l) => collect_uses_expr(&l.value, used),
+        HirStmt::Let(l) => {
+            used.locals.push((l.name, l.span));
+            collect_uses_expr(&l.value, used)
+        }
         HirStmt::Assign(a) => {
             used.insert(a.name);
             for index in a.indices() {
@@ -135,7 +166,7 @@ fn collect_uses_stmt(stmt: &HirStmt, used: &mut HashSet<SymbolId>) {
     }
 }
 
-fn collect_uses_if(if_: &HirIf, used: &mut HashSet<SymbolId>) {
+fn collect_uses_if(if_: &HirIf, used: &mut Uses) {
     collect_uses_expr(&if_.cond, used);
     collect_uses_block(&if_.then_branch, used);
     if let Some(el) = &if_.else_branch {
@@ -146,7 +177,7 @@ fn collect_uses_if(if_: &HirIf, used: &mut HashSet<SymbolId>) {
     }
 }
 
-fn collect_uses_expr(expr: &HirExpr, used: &mut HashSet<SymbolId>) {
+fn collect_uses_expr(expr: &HirExpr, used: &mut Uses) {
     match expr {
         HirExpr::Ident { symbol, .. } => {
             used.insert(*symbol);
@@ -268,5 +299,53 @@ mod tests {
             .warnings
             .iter()
             .any(|w| matches!(w, flux_diagnostics::FluxWarning::UnusedBinding { name, .. } if name == "side")));
+    }
+
+    fn unused_locals(src: &str) -> Vec<String> {
+        let mut diags = DiagnosticBag::new();
+        let ast = parse_program(SourceId(0), src, &mut diags).expect("parse");
+        lower_program(&ast, &mut diags).expect("lower");
+        diags
+            .warnings
+            .iter()
+            .filter_map(|w| match w {
+                flux_diagnostics::FluxWarning::UnusedLocal { name, .. } => Some(name.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// 0.5: E015 covers locals too, in functions, handlers, and nested blocks.
+    #[test]
+    fn warns_on_unread_locals() {
+        let src = "event Tick
+
+fn main() {
+    let dead = 5
+    let used = 1
+    if used > 0 {
+        let inner = 2
+    }
+}
+
+on Tick {
+    let also = 3
+}
+";
+        let mut got = unused_locals(src);
+        got.sort();
+        assert_eq!(got, ["also", "dead", "inner"]);
+    }
+
+    #[test]
+    fn read_or_underscore_locals_are_not_reported() {
+        let src = "fn f(x: Int) -> Int {
+    let _keep = 1
+    let y = x + 1
+    let ys = [y].map(|v| v * 2)
+    ys[0]
+}
+";
+        assert!(unused_locals(src).is_empty());
     }
 }

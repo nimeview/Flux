@@ -414,7 +414,7 @@ fn fail_snap_in_derived() {
     run_fail("fail/reactive/snap_in_derived.fl", |errors| {
         errors
             .iter()
-            .any(|e| matches!(e, FluxError::InvalidControlFlowInDerived { .. }))
+            .any(|e| matches!(e, FluxError::UntrackedRead { .. }) && e.code() == "E008")
     });
 }
 

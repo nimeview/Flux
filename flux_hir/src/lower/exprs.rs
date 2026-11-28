@@ -49,6 +49,14 @@ pub(super) fn lower_expr(
         Expr::InterpolatedString { parts, span } => {
             lower_interpolated_string(parts, *span, symbols, scope, diagnostics, reads_reactive)
         }
+        // `Map::new()`: an empty map, with no import (`map_new()` is the
+        // same function). A program's own `Map` type keeps its own `new`.
+        Expr::Ident { name, span } if name == "Map::new" && symbols.lookup(name).is_none() => {
+            Some(HirExpr::Ident {
+                symbol: symbols.hidden_builtin("map_new", *span),
+                span: *span,
+            })
+        }
         // `m::x`, `Shape::Circle`, `Point::new`.
         Expr::Ident { name, span } if name.contains("::") => {
             match resolve_path(name, *span, symbols, diagnostics)? {
@@ -131,7 +139,15 @@ pub(super) fn lower_expr(
             {
                 match scope.context() {
                     crate::CompileContext::PureFn => {
-                        let help = if symbols.immutable_lets.contains(&sym) {
+                        let help = if symbols.instance_lets.contains(&sym) {
+                            format!(
+                                "`{name}` holds a component instance, which a plain `fn` \
+                                 reads only when it is given one: make this a `track fn` or \
+                                 `act fn` (`act fn main` for `main`), or take the instance as \
+                                 a parameter and pass `{name}` from an `act fn`, `on` \
+                                 handler, or `track fn`"
+                            )
+                        } else if symbols.immutable_lets.contains(&sym) {
                             format!(
                                 "`{name}` is a module `let` (a reactive source); if it is a \
                                  fixed value, declare it `const {name} = …` to read it here, \
@@ -251,8 +267,11 @@ pub(super) fn lower_expr(
                         .last()
                         .is_some_and(|w| w.kind == crate::symbol::WriterKind::Act);
                     if scope.context() != crate::CompileContext::PureFn && !in_act_fn {
-                        diagnostics.push(FluxError::InvalidControlFlowInDerived {
-                            construct: "snap()".into(),
+                        diagnostics.push(FluxError::UntrackedRead {
+                            message: "`snap()` cannot be used here".into(),
+                            help: "`snap` takes a snapshot for a plain `fn`; in a derived value, \
+                                   `watch`, `on` handler, or `track fn`, read the value directly"
+                                .into(),
                             span: span_to_miette(*span),
                             source_id: span.source,
                         });
@@ -542,6 +561,7 @@ pub(super) fn lower_expr(
                             name: plain,
                             span: span_to_miette(name.span),
                             source_id: name.span.source,
+                            help: None,
                         });
                         return None;
                     }
@@ -553,6 +573,7 @@ pub(super) fn lower_expr(
                     name: name.name.clone(),
                     span: span_to_miette(name.span),
                     source_id: name.span.source,
+                    help: None,
                 });
                 return None;
             }
@@ -601,6 +622,7 @@ pub(super) fn lower_expr(
             scrutinee,
             arms,
             span,
+            ..
         } => {
             let scrutinee = Box::new(lower_expr(
                 scrutinee,
@@ -841,10 +863,34 @@ pub(super) fn resolve_name(
                 name: crate::display_path(name),
                 span: span_to_miette(span),
                 source_id: span.source,
+                help: undefined_name_help(name, symbols),
             });
             None
         }
     }
+}
+
+/// For E001: the library import that provides `name`, or a visible name
+/// spelled almost the same.
+pub(super) fn undefined_name_help(name: &str, symbols: &SymbolTable) -> Option<String> {
+    let modules: Vec<&str> = flux_std::STD_MODULES
+        .iter()
+        .filter(|(_, exports)| exports.contains(&name))
+        .map(|(module, _)| *module)
+        .collect();
+    if let Some(module) = modules.first() {
+        let or = if name == "map_new" {
+            ", or write `Map::new()`, which needs no import"
+        } else {
+            ""
+        };
+        return Some(format!(
+            "`{name}` is in the `{module}` library: add `import {module} {{ {name} }}` at the top of the file{or}"
+        ));
+    }
+    let visible = symbols.visible_names();
+    flux_diagnostics::did_you_mean(name, visible.iter().map(String::as_str))
+        .map(|close| format!("a name with a similar spelling exists: `{close}`"))
 }
 
 /// The event `emit`/`on` names: `Inc`, or `counter::Inc` for a `pub` event
@@ -867,6 +913,7 @@ pub(super) fn resolve_event(
                     name: event.to_string(),
                     span: span_to_miette(span),
                     source_id: span.source,
+                    help: None,
                 });
             }
             return found;
@@ -961,6 +1008,7 @@ fn lower_module_member(
         name: field.to_string(),
         span: span_to_miette(span),
         source_id: span.source,
+        help: None,
     });
     None
 }

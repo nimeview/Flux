@@ -22,6 +22,18 @@ fn main() {
 
 Most of the library is also available as methods, which need no import:
 
+| Receiver | Methods | Use |
+|---|---|---|
+| `String` | `len`, `chars`, `slice`, `pad_start`, `pad_end`, `split`, `split_once`, `lines`, `words`, `trim`, `contains`, `starts_with`, `ends_with`, `replace`, `to_lower`, `to_upper`, `parse_int`, `parse_float`, `to_bytes`, `to_string` | Count and work with characters or text; `slice(start, end)` excludes `end` |
+| `[T]` | `len`, `get`, `first`, `last`, `map`, `filter`, `reduce`, `contains`, `find`, `any`, `all`, `enumerate`, `zip`, `slice`, `sorted`, `sorted_by`, `reversed`; `join` on `[String]`; changing `push`, `pop`, `set`, `sort`, `sort_by`, `reverse` | Read or return a new array, or change a `let mut` array |
+| `Map[K, V]` | `len`, `get`, `get_or`, `has`, `keys`, `values`, `entries`; changing `set`, `remove` | Read or change entries; `Map::new()` makes an empty map without an import |
+| `Option[T]` | `unwrap_or`, `map`, `and_then`, `ok_or`, `is_some`, `is_none` | Handle a missing value; `ok_or(error)` turns `None` into `Err(error)` |
+| `Result[T, E]` | `unwrap_or`, `map`, `and_then`, `map_err`, `is_ok`, `is_err` | Handle success or error; `map_err(f)` changes the error value |
+| numbers | `abs`, `sqrt`, `floor`, `ceil`, `pow`, `min`, `max`, `clamp`, `to_string`; integer `checked_*` methods | Compute a value; checked integer methods return `Option` |
+| `Bytes` | `len`, `slice`, `to_text` | Count or slice bytes, or decode UTF-8 as a `Result` |
+
+`String.slice(start, end)` counts characters, not bytes. An index outside `0..=len()` or `start > end` is `index out of bounds`. `pad_start` and `pad_end` repeat and cut the fill to reach exactly the requested width in characters. An empty fill or a string already wide enough is unchanged. `sorted_by` and `sort_by` compare tuple keys part by part, including nested tuples; equal keys keep their original order. `sorted()` and `sort()` still sort only numbers and strings. See the [library methods](../../../SPEC.md#library-methods) reference for signatures and changing methods.
+
 ```flux
 import io { println }
 
@@ -56,6 +68,33 @@ best: ann
 ```
 
 `scores.push(40)` and `scores.sort()` change `scores` itself, so they go on their own line and `scores` must be `let mut`. The free functions such as `push(xs, v)` stay, and return a new array instead. The full list of methods is in the language reference.
+
+This example uses text methods, a tuple sort key, an empty map, and the two ways to turn an error into another form:
+
+```flux
+import io { println }
+
+fn main() {
+    let text = "привет мир"
+    let words = [("b", 2), ("a", 2), ("c", 5)]
+    let ordered = words.sorted_by(|e| (-e.1, e.0))
+    let mut counts: Map[String, Int] = Map::new()
+    counts["a"] = 2
+    let result: Result[Int, String] = Err("bad")
+    let message = result.map_err(|e| "error: {e}")
+    let maybe: Option[Int] = None
+    let with_error = maybe.ok_or("missing")
+    println("{text.slice(0, 6)} {"7".pad_start(3, "0")} {"ab".pad_end(5, "-=")}")
+    println("{ordered} {counts}")
+    println("{message} {with_error}")
+}
+```
+
+```output
+привет 007 ab-=-
+[("c", 5), ("a", 2), ("b", 2)] {"a": 2}
+Err("error: bad") Err("missing")
+```
 
 Every integer type has `checked_add(m)`, `checked_sub(m)`, `checked_mul(m)`, `checked_div(m)`, `checked_rem(m)`, `checked_neg()`, and `checked_pow(exponent)`. Each returns `Option[N]` for the receiver's integer type `N`: `Some(result)` on success, or `None` for overflow, division by zero, an integer argument that does not fit `N`, or a negative exponent. A signed minimum's `checked_rem(-1)` is `Some(0)`. These are pure methods with no import or free-function forms, and may be used in derived values and `const` initializers. Float receivers and arguments are E005. There are no `wrapping_` or `saturating_` forms. See [Arithmetic](./basics.md#arithmetic) for an example.
 
@@ -152,7 +191,7 @@ All five functions are side effects. They cannot run in a derived value or `cons
 | `map(xs, f)` | `[U]` | |
 | `filter(xs, f)` | `[T]` | |
 | `reduce(xs, init, f)` | `U` | `f` returns `init`'s exact type |
-| `map_new()` | `Map[K, V]` | needs a type from an annotation or first `set` |
+| `map_new()` | `Map[K, V]` | still valid; import from `collections`, or use `Map::new()` without an import |
 | `map_has(m, k)` | `Bool` | |
 | `map_remove(m, k)` | `Map[K, V]` | |
 | `map_keys(m)`, `map_values(m)` | arrays | in key order |

@@ -165,3 +165,15 @@ fn if_expression_infers_union_numeric() {
     let ty = binding_type(&hir, &typed, "b");
     assert!(matches!(ty, Type::Read(inner) if *inner == Type::Int64));
 }
+
+/// `let b = a` holds `a`'s value: its type is `Read<Int64>`, not
+/// `Read<Cell<Int64>>`, so `b`'s methods resolve (0.5: E019 on `Cell<Int64>`).
+#[test]
+fn alias_of_a_source_holds_the_value() {
+    let (hir, typed) = check_source("let a = -5\nlet b = a\nlet c = b.abs()\n");
+    let ty = binding_type(&hir, &typed, "b");
+    assert!(
+        matches!(ty, Type::Read(ref inner) if **inner == Type::Int64),
+        "{ty:?}"
+    );
+}

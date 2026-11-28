@@ -76,7 +76,7 @@ fn derived_values_reject_effects_and_snap_however_reached() {
     // `snap` inside a function: the derived value would not follow `x`.
     rejects(
         "let mut x = 1\nfn read() -> Int {\n    snap(x)\n}\nderived y = read()\nfn main() {\n    let z = snap(y)\n}\n",
-        "`snap()` read inside `read` is not allowed in a derived expression",
+        "`read` reads with `snap()`, so a derived value cannot call it",
     );
     // A pure method and a pure function are fine.
     prints(
@@ -101,7 +101,7 @@ fn const_initializers_have_no_side_effects() {
 fn library_functions_keep_their_types() {
     rejects(
         "import collections { reduce }\nfn main() {\n    let x: Float = reduce([1.5, 2.5], 0.0)\n}\n",
-        "expected `3 arguments`, found `2 arguments`",
+        "takes 3 arguments but 2 were given",
     );
     rejects(
         "import math { sqrt }\nfn main() {\n    let f = sqrt\n}\n",

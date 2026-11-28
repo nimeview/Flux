@@ -1336,7 +1336,7 @@ mod tests {
         assert_eq!(definition_line(&mut store, 8, 8), Some((3, 16)));
         assert!(hover(&mut store, 15, 17).contains("n: "));
         assert_eq!(definition_line(&mut store, 15, 17), Some((3, 16)));
-        assert!(hover(&mut store, 16, 15).contains("double: Int64"));
+        assert!(hover(&mut store, 16, 15).contains("double: Int"));
         assert_eq!(definition_line(&mut store, 16, 15), Some((4, 16)));
         assert!(hover(&mut store, 14, 12).contains("Inc: event"));
         assert_eq!(definition_line(&mut store, 14, 12), Some((5, 14)));

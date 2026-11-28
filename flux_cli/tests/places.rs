@@ -105,7 +105,7 @@ fn places_are_type_checked() {
     );
     rejects(
         &format!("{head}fn main() {{\n    let mut p = P {{ x: 1 }}\n    p.x = \"a\"\n}}\n"),
-        "expected `Int64`, found `String`",
+        "expected `Int`, found `String`",
     );
     rejects(
         &format!("{head}fn main() {{\n    let p = P {{ x: 1 }}\n    p.x = 2\n}}\n"),
@@ -117,7 +117,7 @@ fn places_are_type_checked() {
     );
     rejects(
         "fn main() {\n    let mut xs = [1]\n    xs[0] += 1.5\n}\n",
-        "expected `Int64`, found `Float64`",
+        "expected `Int`, found `Float`",
     );
 }
 
@@ -169,10 +169,13 @@ fn a_dropped_collection_result_warns() {
     assert_eq!(stdout, "[1, 1]\n");
     let warned: Vec<&str> = stderr
         .lines()
-        .filter_map(|l| l.trim().strip_prefix("x the result of `"))
+        .filter_map(|l| l.trim().strip_prefix("! the result of `"))
         .collect();
     assert_eq!(warned.len(), 3, "{stderr}");
-    assert!(stderr.contains("write `xs = push(xs, v)`"), "{stderr}");
+    assert!(
+        stderr.contains("write `xs.push(v)` on its own line"),
+        "{stderr}"
+    );
     assert!(stderr.contains("write `xs[i] = v`"), "{stderr}");
 }
 

@@ -633,36 +633,36 @@ fn jit_parity_structs_and_struct_variant_fields() {
         fn run() -> Int {\n    let p = make(3)\n    sum(p) + area(Dot(p)) * 100 + area(Empty) + sum(shift(p)) * 10000\n}\n";
     let point = |x: i64, y: i64| {
         RuntimeValue::user_struct(
-            "Point".into(),
+            "Point",
             [
                 ("x".to_string(), RuntimeValue::int_i64(x)),
                 ("y".to_string(), RuntimeValue::int_i64(y)),
             ]
             .into_iter()
-            .collect(),
+            .collect::<flux_value::Fields>(),
         )
     };
     let tagged = RuntimeValue::user_struct(
-        "Tagged".into(),
+        "Tagged",
         [
             ("name".to_string(), RuntimeValue::String("t".into())),
-            ("p".to_string(), point(3, 6)),
+            ("p".into(), point(3, 6)),
             (
                 "xs".to_string(),
                 RuntimeValue::array(vec![RuntimeValue::int_i64(7), RuntimeValue::int_i64(8)]),
             ),
         ]
         .into_iter()
-        .collect(),
+        .collect::<flux_value::Fields>(),
     );
     let maybe = RuntimeValue::user_struct(
-        "Maybe".into(),
+        "Maybe",
         [(
             "v".to_string(),
             RuntimeValue::Option(Some(Box::new(RuntimeValue::int_i64(5)))),
         )]
         .into_iter()
-        .collect(),
+        .collect::<flux_value::Fields>(),
     );
     let calls: Vec<(&str, Vec<RuntimeValue>)> = vec![
         ("run", vec![]),

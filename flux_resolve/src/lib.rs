@@ -558,6 +558,14 @@ fn bind_module_imports(
                         name: sym.clone(),
                         span: span_to_miette(import.span),
                         source_id: import.span.source,
+                        help: Some(flux_diagnostics::export_help(
+                            std_name,
+                            sym,
+                            flux_std::std_module_exports(std_name)
+                                .unwrap_or_default()
+                                .iter()
+                                .copied(),
+                        )),
                     });
                     return None;
                 }
@@ -570,6 +578,7 @@ fn bind_module_imports(
                         name: export,
                         span: span_to_miette(import.span),
                         source_id: import.span.source,
+                        help: None,
                     });
                     return None;
                 }
@@ -586,11 +595,17 @@ fn bind_module_imports(
                     return None;
                 }
                 if !is_pub_export(&target_module.ast, sym) {
+                    let exports = pub_export_names(&target_module.ast);
                     diagnostics.push(FluxError::UnknownExport {
                         module: import.path.clone(),
                         name: sym.clone(),
                         span: span_to_miette(import.span),
                         source_id: import.span.source,
+                        help: Some(flux_diagnostics::export_help(
+                            &import.path,
+                            sym,
+                            exports.iter().map(String::as_str),
+                        )),
                     });
                     return None;
                 }

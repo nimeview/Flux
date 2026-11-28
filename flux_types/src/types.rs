@@ -117,6 +117,8 @@ impl Type {
             Type::Int8 => "Int8".into(),
             Type::Int16 => "Int16".into(),
             Type::Int32 => "Int32".into(),
+            // `Int` and `Float` are what programs write for these.
+            Type::Int64 if !internal => "Int".into(),
             Type::Int64 => "Int64".into(),
             Type::UInt8 => "UInt8".into(),
             Type::UInt16 => "UInt16".into(),
@@ -124,6 +126,7 @@ impl Type {
             Type::UInt64 => "UInt64".into(),
             Type::Float => "Float".into(),
             Type::Float32 => "Float32".into(),
+            Type::Float64 if !internal => "Float".into(),
             Type::Float64 => "Float64".into(),
             Type::Char => "Char".into(),
             Type::Bool => "Bool".into(),
@@ -134,16 +137,25 @@ impl Type {
                 let values: Vec<String> = values.iter().map(|v| v.render(internal)).collect();
                 format!("Event<{}>", values.join(", "))
             }
+            // A source's or derived value's own type is its value's.
+            Type::Cell(inner) | Type::Read(inner) if !internal => inner.render(internal),
             Type::Cell(inner) => format!("Cell<{}>", inner.render(internal)),
             Type::Read(inner) => format!("Read<{}>", inner.render(internal)),
             Type::Array(inner) => format!("[{}]", inner.render(internal)),
+            Type::Option(inner) if !internal => format!("Option[{}]", inner.render(internal)),
             Type::Option(inner) => format!("Option<{}>", inner.render(internal)),
+            Type::Map { key, value } if !internal => {
+                format!("Map[{}, {}]", key.render(internal), value.render(internal))
+            }
             Type::Map { key, value } => {
                 format!("Map<{}, {}>", key.render(internal), value.render(internal))
             }
             Type::Tuple(elems) => {
                 let elems: Vec<String> = elems.iter().map(|e| e.render(internal)).collect();
                 format!("({})", elems.join(", "))
+            }
+            Type::Result { ok, err } if !internal => {
+                format!("Result[{}, {}]", ok.render(internal), err.render(internal))
             }
             Type::Result { ok, err } => {
                 format!("Result<{}, {}>", ok.render(internal), err.render(internal))

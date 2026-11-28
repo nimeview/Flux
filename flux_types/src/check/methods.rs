@@ -28,6 +28,7 @@ pub fn resolve_method_calls(program: &mut HirProgram, typed: &TypedProgram) {
     if typed.method_calls.is_empty()
         && typed.field_calls.is_empty()
         && typed.bit_not_sites.is_empty()
+        && typed.numeric_widenings.is_empty()
     {
         return;
     }
@@ -35,6 +36,7 @@ pub fn resolve_method_calls(program: &mut HirProgram, typed: &TypedProgram) {
         methods: &typed.method_calls,
         fields: &typed.field_calls,
         bit_nots: &typed.bit_not_sites,
+        widenings: &typed.numeric_widenings,
         grouped: program.builtin_ids.get(flux_hir::GROUPED).copied(),
     };
     for item in &mut program.items {
@@ -59,7 +61,22 @@ struct Calls<'a> {
     methods: &'a HashMap<(Option<SymbolId>, Span), SymbolId>,
     fields: &'a std::collections::HashSet<(Option<SymbolId>, Span)>,
     bit_nots: &'a std::collections::HashSet<Span>,
+    widenings: &'a HashMap<Span, crate::Type>,
     grouped: Option<SymbolId>,
+}
+
+/// `e` as `to` when the checker found it narrower than the value it joins
+/// (`if c { 3 } else { 2.5 }`): wrapped in a conversion.
+fn widen(e: &mut HirExpr, calls: &Calls<'_>) {
+    let span = e.span();
+    if let Some(to) = calls.widenings.get(&span) {
+        let inner = std::mem::replace(e, HirExpr::Bool { value: false, span });
+        *e = HirExpr::Cast {
+            expr: Box::new(inner),
+            ty: to.key(),
+            span,
+        };
+    }
 }
 
 impl Calls<'_> {
@@ -210,6 +227,8 @@ fn expr(e: &mut HirExpr, calls: &Calls<'_>, owner: Option<SymbolId>) {
             expr(cond, calls, owner);
             expr(then_expr, calls, owner);
             expr(else_expr, calls, owner);
+            widen(then_expr, calls);
+            widen(else_expr, calls);
         }
         HirExpr::Array { elems, .. } => elems.iter_mut().for_each(|x| expr(x, calls, owner)),
         HirExpr::StructLit { fields, .. } => {
@@ -225,6 +244,7 @@ fn expr(e: &mut HirExpr, calls: &Calls<'_>, owner: Option<SymbolId>) {
                 }
                 block(&mut arm.body, calls, owner);
                 expr(&mut arm.expr, calls, owner);
+                widen(&mut arm.expr, calls);
             }
         }
         HirExpr::EnumVariant { payload, .. } => {

@@ -28,6 +28,9 @@ pub const METHOD_FNS: &[&str] = &[
     "\0get_or",
     "\0entries",
     "\0split_once",
+    "\0str_slice",
+    "\0pad_start",
+    "\0pad_end",
     "\0lines",
     "\0words",
     "\0find",
@@ -61,9 +64,32 @@ pub const METHOD_HOFS: &[&str] = &[
     "\0map_err",
 ];
 
-/// The order `sorted` uses: numbers by value, strings by code point.
+/// The order `sorted` uses: numbers by value, strings by code point,
+/// `false` before `true`, and tuples (the keys of `sorted_by`) field by
+/// field, the first difference deciding.
 pub fn order(a: &Value, b: &Value) -> Ordering {
-    flux_value::compare(a, b).unwrap_or(Ordering::Equal)
+    match (a, b) {
+        (Value::Bool(x), Value::Bool(y)) => x.cmp(y),
+        (Value::UserStruct(x), Value::UserStruct(y))
+            if &*x.type_name == flux_value::TUPLE_TYPE
+                && &*y.type_name == flux_value::TUPLE_TYPE =>
+        {
+            for i in 0.. {
+                let key = i.to_string();
+                match (x.fields.get(&key), y.fields.get(&key)) {
+                    (Some(p), Some(q)) => match order(p, q) {
+                        Ordering::Equal => continue,
+                        other => return other,
+                    },
+                    (None, None) => return Ordering::Equal,
+                    (None, Some(_)) => return Ordering::Less,
+                    (Some(_), None) => return Ordering::Greater,
+                }
+            }
+            Ordering::Equal
+        }
+        _ => flux_value::compare(a, b).unwrap_or(Ordering::Equal),
+    }
 }
 
 fn items(v: Option<&Value>) -> Option<&std::sync::Arc<Vec<Value>>> {
@@ -255,6 +281,44 @@ pub fn call(name: &str, args: &[Value]) -> Option<Result<Value, ArithError>> {
                     .collect(),
             ))
         }
+        // `s.slice(a, b)`: characters `a` up to, not including, `b`.
+        "\0str_slice" => {
+            let Value::String(s) = args.first()? else {
+                return None;
+            };
+            let (Some(a), Some(b)) = (int(args.get(1)), int(args.get(2))) else {
+                return Some(Err(ArithError::IndexOutOfBounds));
+            };
+            let count = s.chars().count();
+            if !(0 <= a && a <= b && (b as u64) <= count as u64) {
+                return Some(Err(ArithError::IndexOutOfBounds));
+            }
+            ok(Value::String(
+                s.chars().skip(a as usize).take((b - a) as usize).collect(),
+            ))
+        }
+        // `s.pad_start(width, fill)`: `fill` repeated before `s` up to
+        // `width` characters (cut to fit); `s` as it is when already wide.
+        "\0pad_start" | "\0pad_end" => {
+            let (Value::String(s), Value::String(fill)) = (args.first()?, args.get(2)?) else {
+                return None;
+            };
+            let width = int(args.get(1))?;
+            let count = s.chars().count() as i64;
+            if width <= count || fill.is_empty() {
+                return ok(Value::String(s.clone()));
+            }
+            let pad: String = fill
+                .chars()
+                .cycle()
+                .take((width - count) as usize)
+                .collect();
+            ok(Value::String(if name == "\0pad_start" {
+                pad + s
+            } else {
+                s.clone() + &pad
+            }))
+        }
         // `s.split_once(sep)`: the parts before and after the first `sep`.
         "\0split_once" => {
             let (Value::String(s), Value::String(sep)) = (args.first()?, args.get(1)?) else {
@@ -324,6 +388,9 @@ pub fn library_method(receiver: Receiver, method: &str) -> Option<(&'static str,
         (String, "parse_int") => plain("parse_int"),
         (String, "parse_float") => plain("parse_float"),
         (String, "split_once") => plain("\0split_once"),
+        (String, "slice") => plain("\0str_slice"),
+        (String, "pad_start") => plain("\0pad_start"),
+        (String, "pad_end") => plain("\0pad_end"),
         (String, "lines") => plain("\0lines"),
         (String, "words") => plain("\0words"),
         (Array, "len") => plain("len"),
@@ -407,6 +474,8 @@ pub const LIBRARY_METHOD_NAMES: &[&str] = &[
     "parse_int",
     "parse_float",
     "split_once",
+    "pad_start",
+    "pad_end",
     "lines",
     "words",
     "get",

@@ -301,7 +301,7 @@ A function with `mut` parameters cannot be stored or passed as a value: E000 ("`
 
 ## Control flow
 
-`if` is also an expression. `while` and `for` loop. `break` leaves the loop, and `continue` starts its next iteration:
+`if` is also a value. It has the same branches in a `let`, a derived value, an argument, or an arithmetic expression as at the end of a function. Each branch may have statements before its final expression, and `else if` chains work. `while` and `for` loop. `break` leaves the loop, and `continue` starts its next iteration:
 
 ```flux
 import collections { range }
@@ -333,6 +333,56 @@ fn main() {
 16 big
 0
 ```
+
+Here one branch binds a local before producing its value:
+
+```flux
+import io { println }
+
+fn describe(n: Int) -> String {
+    let text = if n == 0 {
+        "zero"
+    } else if n < 0 {
+        let m = -n
+        "minus {m}"
+    } else {
+        "plus {n}"
+    }
+    text
+}
+
+fn main() {
+    println("{describe(-4)} {describe(0)} {describe(3)}")
+}
+```
+
+```output
+minus 4 zero plus 3
+```
+
+A branch may also `return` from the enclosing function. An `if` used as a value needs a final `else`; branches that produce values must have compatible types.
+
+If value branches have different number types, the value takes the wider type. The narrower branch is converted when it runs. This also works in a derived value:
+
+```flux
+import io { println }
+
+let mut choose_int = true
+
+derived selected = if choose_int { 3 } else { 2.5 }
+
+fn main() {
+    let direct = if true { 3 } else { 2.5 }
+    let by_match = match 0 { 0 => 3, _ => 2.5 }
+    println("{direct} {by_match} {snap(selected)}")
+}
+```
+
+```output
+3.0 3.0 3.0
+```
+
+A final `if … else` statement used as a function's value still requires exact branch types. Array elements also keep one type; `[3, 2.5]` is E005.
 
 `break` and `continue` must be inside a `while` or `for` body in the same function. They can be inside an `if`, a block, or a `match` arm within the loop, but cannot cross a closure boundary. Using either outside a loop, including in `act fn main`, is E000: "`break` outside a loop: it must be inside a `while` or `for` body" (or the same message for `continue`). Move it into a loop or use `return` to leave the function.
 

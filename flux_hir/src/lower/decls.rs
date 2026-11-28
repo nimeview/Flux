@@ -613,8 +613,14 @@ pub(super) fn lower_const_binding(
         &mut reads_reactive,
     )?;
     if reads_reactive {
-        diagnostics.push(FluxError::InvalidControlFlowInDerived {
-            construct: "reactive read in const".into(),
+        diagnostics.push(FluxError::UntrackedRead {
+            message: format!(
+                "`const {}` reads a value that can change",
+                binding.name.name
+            ),
+            help: "a `const` is fixed before the program runs; compute it from literals and \
+                   other constants, or use `let` for a value that follows a source"
+                .into(),
             span: span_to_miette(binding.span),
             source_id: binding.span.source,
         });

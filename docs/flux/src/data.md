@@ -71,12 +71,12 @@ For files, `read_bytes(path) -> Result[Bytes, String]` and `write_bytes(path, b)
 `Map[K, V]` maps keys to values. Keys are integers, strings, `Bool`, or `Char`. Entries stay in key order, so printing and iterating are predictable.
 
 ```flux
-import collections { get, len, map_has, map_keys, map_new, map_remove }
+import collections { get, len, map_has, map_keys, map_remove }
 
 import io { println }
 
 fn main() {
-    let mut ages: Map[String, Int] = map_new()
+    let mut ages: Map[String, Int] = Map::new()
     ages["ann"] = 30
     ages["bob"] = 25
     println("{ages} {len(ages)} {map_has(ages, "ann")}")
@@ -205,9 +205,9 @@ fn main() {
 6.0 1.0 Shape::Rect { h: 3.0, w: 2.0 }
 ```
 
-Leaving a variant out is a compile error:
+Leaving a variant out is E036. The message names the missing variant, and the help suggests an arm for it or `_ => …`:
 
-```flux,error=E005
+```flux,error=E036
 enum Light {
     Red,
     Green
@@ -259,7 +259,9 @@ number 4 nothing
 
 ### Blocks in arms
 
-An arm can be a block, whose last expression is its value. Separate arms with commas, including after a block. Inside a function, an arm can do whatever the function body can: run a loop, `return`, `emit` an event, or update a reactive source.
+An arm can be a block, whose last expression is its value. A block arm needs no comma before the next arm; a comma after it is allowed. Separate other arms with commas. The last arm may have a comma. A block can run statements before its final expression. Inside a function, a final `if … else` statement can also give the arm its value. An arm can do what the enclosing function body can: run a loop, `return`, `emit` an event, or update a reactive source.
+
+When value arms have different number types, `match` takes the wider type and converts the narrower arm when it runs. `match 0 { 0 => 3, _ => 2.5 }` is `3.0`. A final `if … else` statement inside an arm block still requires exact branch types.
 
 ```flux
 import io { println }
@@ -299,13 +301,48 @@ fn g(x: Int) {
 
 Returning `"s"` in an arm of `f` would be E005 because `f` declares `-> Int`.
 
+An arm can also be one statement, such as `return`, `break`, `continue`, `emit`, or an assignment. In an `on` handler or `watch`, a block arm can `emit`, write a source, and use `if`, `while`, or `for`, as the enclosing body can. A source write in a watch still warns E028.
+
+```flux
+import io { println }
+
+enum Choice {
+    Yes,
+    No
+}
+
+event Pick(choice: Choice)
+
+event Chosen
+
+on Pick(choice) {
+    match choice {
+        Yes => emit Chosen(),
+        No => {}
+    }
+}
+
+on Chosen {
+    println("chosen")
+}
+
+fn main() {
+    emit Pick(Yes)
+    emit Pick(No)
+}
+```
+
+```output
+chosen
+```
+
+In a derived value, `const` initializer, or module initializer, an arm block can only bind a local with `let`, assign a local, or evaluate an expression. It cannot `emit`, write a module binding, or use `if`, `while`, or `for` statements. I/O there is still E017.
+
 ## Tuples
 
 A tuple groups a few values of different types without declaring a struct. It is handy for returning two results:
 
 ```flux
-import collections { map_new }
-
 import io { println }
 
 fn divide(a: Int, b: Int) -> (Int, Int) {
@@ -327,7 +364,7 @@ fn main() {
     let pair = (q, "three")
     println("{q} {r} {pair} {pair.1}")
     println("{sign((0, 4))} {sign((2, 3))}")
-    let mut stock: Map[String, Int] = map_new()
+    let mut stock: Map[String, Int] = Map::new()
     stock["pears"] = 2
     stock["apples"] = 5
     for (fruit, count) in stock {

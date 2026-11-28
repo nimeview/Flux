@@ -2,7 +2,43 @@
 
 Notable changes to Flux. The versioning policy is in [`RELEASE.md`](RELEASE.md).
 
-## [Unreleased]
+## [0.5.0] - 2026-11-27
+
+Flux 0.5 covers work chosen from the [comparison study report](comparison/report/index.html) and fixes bugs found during implementation.
+Value `if` and `match` branches use one form in more contexts.
+Diagnostics give specific help and `flux explain`; the CLI library adds string, sorting, and map operations.
+Struct and enum values take fewer VM instructions.
+
+### Added
+
+- `String.slice(start, end)` takes characters from `start` up to `end`; an invalid range is `index out of bounds`. `String.pad_start(width, fill)` and `pad_end(width, fill)` repeat and cut the fill to reach a width in characters. An empty fill or a string already wide enough is unchanged.
+- `Map::new()` makes an empty map without an import, with its type supplied by context such as `let mut m: Map[String, Int] = Map::new()`. `collections`' `map_new()` remains valid. A program type named `Map` keeps its own `new`.
+- `flux explain E0xx` prints that code's section of the book's error-code chapter. Short forms such as `e2` and `2` work. Unknown codes exit 1. After compilation errors, the CLI prints a command for the first error code with a section. The chapter covers E000–E036.
+- E036 reports a non-exhaustive `match`, naming missing variants with `or` before the last, or saying that every value of a type such as `Int` or `(Bool, Bool)` is not covered. Its help suggests the missing arms or `_ => …`; this case previously used E005.
+
+### Fixed
+
+- A value `if` or `match` with branches of different number types now converts the narrower branch's value when it runs. `if true { 3 } else { 2.5 }` produces the `Float` value `3.0`, including in a derived value; it previously kept the runtime `Int` value `3`. A function's trailing `if` statement and mixed array elements still require exact types.
+- The event loop now runs events a host thread posted just before it let go of its sender; those events could previously be missed.
+- Assigning a `live fn` parameter is now E009, including `+=` and writes from the component's `act fn`s and `on` handlers. Parameters are fixed for the instance's life. Such writes used to compile and run. Keep a changing copy in a member (`let mut x_now = x`) and assign that.
+- A module-level alias `let b = a` holds `a`'s value and has the value's type. Methods on aliases of numbers and component instances used to fail with E019 on an internal `Cell<…>` type.
+- `flux check` now reports E010 for a reactive cycle through an instance's member, such as `C.d → total → C.d`, just as `flux run` does. It used to pass the cycle.
+- `flux fmt` keeps `//` comments between statements in functions and handlers: on their own line, after a statement on the same line, or before the closing brace. Comments on their own lines are re-indented. A comment inside an expression, such as between array elements, is still refused, and the file is left unchanged.
+
+### Changed
+
+- Struct and enum values share type, variant, and field names and keep up to two fields inline in name order. VM function calls find user functions with a fast hash lookup. Retired instructions fell 42% for binary-trees (depth 12), 16% for the todo-list scenario, and from 7.4 to 7.0 billion for fib(30); the 0.4 benchmark workloads had no regression. The IR cache version changed, so old entries are rebuilt. See [performance measurements](PERFORMANCE.md#05-vm-values-and-calls-2026-11-27).
+- `sorted_by(key)` and `sort_by(key)` accept tuple keys, including nested tuples. Parts compare in order, with `false` before `true` for `Bool`, and equal keys keep their input order. Other key types are E005. `sorted()` and `sort()` still sort numbers and strings.
+- E005 for an untyped empty map and the parse hint for `{}` now show `Map::new()`. E001 for `map_new` without its import also suggests `Map::new()`.
+- E001, E007, E014, and E019 suggest close names. E014 may list exports. E019 may suggest an `impl` for a user type or list a library type's methods.
+- E005 reports wrong argument counts in words and shows the call's parameter types. Arithmetic on `Option` or `Result` suggests taking the value with `.unwrap_or`, `match`, or `?`; text plus a number suggests interpolation. Types in diagnostics use Flux spellings such as `Int`, `Float`, `Option[Int]`, `Result[Int, String]`, and `Map[String, Int]`, without internal wrappers.
+- E008 names the action or untracked read: an `act fn`, host function, instance construction, `snap()`, a changing value read by `const`, or a function that reads with `snap()`. E002 explains how a plain function can read a component instance. E009 explains that a closure holds a copy of a captured local. E030 suggests a changing method or keeping the result of `push`, `pop`, `set`, or `map_remove`.
+- Parse errors describe missing expressions and operators, unclosed brackets, missing commas, `{}` used as a value, and indexed `emit` in words. Lowering reports later errors in a block after a failed statement; a failed `let` still declares its names, and an already erroneous type is not reported again. Warnings are drawn with `!` rather than `x`.
+- A value `if` now has the same branch form as a final `if` in a function: statements before each branch's value, `else if` chains, and a branch that returns from a function. It works in bindings, derived values, arguments, and other expressions. Derived values, `const` initializers, and module initializers still reject effects in branches.
+- `match` block arms no longer need a comma before the next arm. Other arms still need commas. An arm may now be a single `emit` or assignment statement, including compound and indexed assignments. `on` handlers and watches can use `emit`, source writes, and `if`/`while`/`for` in arm blocks; writes from a watch still warn E028.
+- `flux fmt` prints value `if` branches with statements as blocks, uses `else if` for plain chains, and keeps single-statement match arms on their arm lines. Block arms remain blocks; empty ones print `{}`.
+- E015 also warns for an unused local `let` in functions, handlers, watches, and nested blocks: "unused local `x`", with help "remove it, or name it `_x` to keep it unused". Names starting with `_` are skipped. Parameters are not reported.
+- The E029 watch-cycle check closes dependencies in one pass over strongly connected components. Checking a 1,000-deep chain of derived values with a watch takes 0.08 s instead of 9.5 s.
 
 ## [0.4.0] - 2026-11-27
 

@@ -161,11 +161,13 @@ for_stmt = { "for" ~ (tuple_binding | ident) ~ kw_in ~ expr ~ block }
 // `match`/`if` are reached as operands (see `primary_expr`).
 expr = { or_expr }
 
-match_expr = { kw_match ~ or_expr ~ "{" ~ match_arm ~ ("," ~ match_arm)* ~ ","? ~ "}" }
+// Arms are separated by commas; a block arm needs none after it, as in Rust.
+match_expr = { kw_match ~ or_expr ~ "{" ~ match_arm+ ~ "}" }
 kw_match = @{ "match" ~ kw_end }
-match_arm = { match_pattern ~ guard? ~ "=>" ~ (arm_block | arm_jump | expr) }
-// An arm that leaves instead of producing a value: `Err(e) => return Err(e)`.
-arm_jump = { return_stmt | break_stmt | continue_stmt }
+match_arm = { match_pattern ~ guard? ~ "=>" ~ (arm_block ~ ","? | (arm_jump | expr) ~ ("," | &"}")) }
+// An arm that is one statement instead of a value: it leaves
+// (`Err(e) => return Err(e)`), or acts (`A => emit Boom()`, `_ => n += 1`).
+arm_jump = { return_stmt | break_stmt | continue_stmt | emit_stmt | assign_stmt }
 arm_block = { "{" ~ block_stmts ~ "}" }
 guard = { kw_if ~ expr }
 match_pattern = { lit_pat | tuple_value_pat | tuple_pat | struct_pat | simple_pat }
@@ -179,7 +181,10 @@ simple_pat = { path_ident | ident }
 tuple_pat = { (path_ident | ident) ~ "(" ~ (lit_pat | tuple_value_pat | tuple_pat | path_ident | ident_list)? ~ ")" }
 struct_pat = { (path_ident | ident) ~ "{" ~ ident_list ~ "}" }
 
-if_expr = { kw_if ~ or_expr ~ "{" ~ expr ~ "}" ~ kw_else ~ "{" ~ expr ~ "}" }
+// An `if` used as a value: each branch is a block whose last expression is
+// its value, and `else if` chains, as at the end of a function.
+if_expr = { kw_if ~ or_expr ~ if_branch ~ kw_else ~ (if_expr | if_branch) }
+if_branch = { "{" ~ block_stmts ~ "}" }
 
 or_expr = { and_expr ~ ("||" ~ and_expr)* }
 and_expr = { eq_expr ~ ("&&" ~ eq_expr)* }

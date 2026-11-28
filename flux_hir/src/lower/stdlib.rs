@@ -50,6 +50,11 @@ pub(super) fn register_stdlib_import(
                 module: import.path.clone(),
                 span: span_to_miette(import.span),
                 source_id: import.span.source,
+                help: Some(flux_diagnostics::export_help(
+                    module,
+                    name,
+                    exports.iter().copied(),
+                )),
             });
             continue;
         }

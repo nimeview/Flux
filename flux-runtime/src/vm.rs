@@ -55,7 +55,7 @@ pub(crate) fn stack_pop_opt(stack: &mut Vec<RuntimeValue>, context: &str) -> Opt
 pub(crate) fn resolve_load(
     name: &str,
     graph: &ReactiveGraph,
-    functions: &std::collections::HashMap<String, std::sync::Arc<CompiledFunction>>,
+    functions: &rustc_hash::FxHashMap<String, std::sync::Arc<CompiledFunction>>,
 ) -> RuntimeValue {
     if let Some(v) = graph.get_by_name(name) {
         return v.clone();
@@ -74,7 +74,7 @@ pub(crate) fn resolve_load(
 pub(crate) fn is_bound(
     name: &str,
     graph: &ReactiveGraph,
-    functions: &std::collections::HashMap<String, std::sync::Arc<CompiledFunction>>,
+    functions: &rustc_hash::FxHashMap<String, std::sync::Arc<CompiledFunction>>,
 ) -> bool {
     graph.get_by_name(name).is_some()
         || functions.contains_key(name)

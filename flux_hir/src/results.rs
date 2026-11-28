@@ -131,10 +131,19 @@ fn check(e: &HirExpr, hir: &HirProgram, diagnostics: &mut DiagnosticBag) {
         return;
     };
     let help = match name {
-        "push" => "it returns a new array: write `xs = push(xs, v)`".to_string(),
-        "pop" => "it returns a new array: write `xs = pop(xs)`".to_string(),
-        "set" => "it returns a new collection: write `xs[i] = v`".to_string(),
-        "map_remove" => "it returns a new map: write `m = map_remove(m, k)`".to_string(),
+        "push" => "it returns a new array and leaves `xs` as it was: to change `xs`, write \
+                   `xs.push(v)` on its own line (with `let mut xs`), or keep the result: \
+                   `let ys = push(xs, v)`"
+            .to_string(),
+        "pop" => "it returns a new array and leaves `xs` as it was: to change `xs`, write \
+                  `xs.pop()` on its own line (with `let mut xs`), or keep the result"
+            .to_string(),
+        "set" => "it returns a new collection: to change `xs`, write `xs[i] = v` (with \
+                  `let mut xs`)"
+            .to_string(),
+        "map_remove" => "it returns a new map: to change `m`, write `m = map_remove(m, k)` \
+                         (with `let mut m`)"
+            .to_string(),
         _ => format!("`{name}` only computes a value: use it, or remove the call"),
     };
     diagnostics.push_warning(FluxWarning::UnusedResult {

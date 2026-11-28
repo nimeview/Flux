@@ -90,7 +90,7 @@ fn library_method_mistakes_are_reported() {
     );
     rejects(
         "fn main() {\n    let xs = [1]\n    let y = xs.contains(\"a\")\n}\n",
-        "expected `Int64`, found `String`",
+        "expected `Int`, found `String`",
     );
     rejects(
         "fn main() {\n    let o = Some(1)\n    let y = o.and_then(|v| v + 1)\n}\n",
@@ -180,7 +180,7 @@ fn main() {
     );
     rejects(
         "fn main() {\n    let mut xs = [1]\n    let f = |n: Int| match n {\n        _ => {\n            xs.push(n)\n            n\n        }\n    }\n    let y = f(1)\n}\n",
-        "cannot assign to immutable local `xs`",
+        "a closure cannot change `xs`",
     );
 }
 
@@ -208,5 +208,49 @@ fn a_dropped_method_result_is_reported() {
     assert!(
         stderr.contains("`.sorted()` only computes a value"),
         "{stderr}"
+    );
+}
+
+/// 0.5: `s.slice(a, b)` counts characters, as `chars()` does, and is out of
+/// bounds past the end like an array's; `pad_start`/`pad_end` repeat the
+/// fill up to the width and leave a wider string as it is.
+#[test]
+fn strings_slice_by_character_and_pad() {
+    prints(
+        "import io { println }\nfn main() {\n    let s = \"привет мир\"\n    println(s.slice(0, 6))\n    println(s.slice(7, 10))\n    println(\"[{\"7\".pad_start(3, \"0\")}] [{\"ab\".pad_end(5, \"-=\")}] [{\"long\".pad_start(2, \"x\")}] [{\"a\".pad_end(3, \"\")}]\")\n}\n",
+        "привет\nмир\n[007] [ab-=-] [long] [a]\n",
+    );
+    let (status, _, stderr) = both(
+        "import io { println }\nfn main() {\n    let s = \"abc\"\n    println(s.slice(1, 4))\n}\n",
+    );
+    assert_eq!(status, Some(1), "{stderr}");
+    assert!(stderr.contains("index out of bounds"), "{stderr}");
+}
+
+/// 0.5: `sorted_by` and `sort_by` take a tuple key, compared value by value
+/// (here: count down, then word up); equal keys keep their order.
+#[test]
+fn sorting_by_a_tuple_key() {
+    prints(
+        "import io { println }\nfn main() {\n    let words = [(\"b\", 2), (\"a\", 2), (\"c\", 5), (\"d\", 1)]\n    println(\"{words.sorted_by(|e| (-e.1, e.0))}\")\n    let mut flags = [(true, 1), (false, 2), (true, 0)]\n    flags.sort_by(|p| p)\n    println(\"{flags}\")\n    let same = [(1, \"x\"), (0, \"y\"), (1, \"z\")]\n    println(\"{same.sorted_by(|p| (p.0, 0))}\")\n}\n",
+        "[(\"c\", 5), (\"a\", 2), (\"b\", 2), (\"d\", 1)]\n[(false, 2), (true, 0), (true, 1)]\n[(0, \"y\"), (1, \"x\"), (1, \"z\")]\n",
+    );
+    rejects(
+        "fn main() {\n    let xs = [[1], [2]]\n    let ys = xs.sorted_by(|x| (x, 1))\n}\n",
+        "a key that is a number, a string, a Bool, or a tuple of them",
+    );
+}
+
+/// 0.5: `Map::new()` makes an empty map with no import; a program's own
+/// `Map` type keeps its own `new`.
+#[test]
+fn map_new_needs_no_import() {
+    prints(
+        "import io { println }\nfn main() {\n    let mut m: Map[String, Int] = Map::new()\n    m[\"a\"] = 1\n    println(\"{m} {m.len()}\")\n}\n",
+        "{\"a\": 1} 1\n",
+    );
+    prints(
+        "import io { println }\nstruct Map {\n    n: Int,\n}\nimpl Map {\n    fn new() -> Map {\n        Map { n: 7 }\n    }\n}\nfn main() {\n    println(\"{Map::new().n}\")\n}\n",
+        "7\n",
     );
 }

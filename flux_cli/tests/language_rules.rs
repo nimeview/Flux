@@ -79,11 +79,12 @@ fn match_arms_keep_their_other_limits() {
     );
     rejects(
         "event T\nlet mut x = 0\nderived d = match x {\n    _ => {\n        emit T\n        1\n    }\n}\nfn main() { }\n",
-        "`emit` is not supported",
+        "`emit` is not allowed in a derived value",
     );
-    rejects(
-        "event T\non T {\n    match 0 {\n        _ => {\n            emit T\n        }\n    }\n}\nfn main() { }\n",
-        "`emit` is not supported",
+    // 0.5: a handler's arms may act, as its body does.
+    prints(
+        "import io { println }\nevent T\nevent U\non T {\n    match 0 {\n        _ => {\n            emit U\n        }\n    }\n}\non U {\n    println(\"u\")\n}\nfn main() {\n    emit T\n}\n",
+        "u\n",
     );
     // An effect hidden in a function's arm still cannot reach a derived value.
     rejects(
@@ -365,11 +366,11 @@ fn an_if_chain_ending_a_block_arm_is_the_arms_value() {
     // condition must be a `Bool`, as for a function body's `if` tail.
     rejects(
         "fn f(n: Int) -> Float {\n    match n {\n        0 => 1.5,\n        _ => {\n            if n > 1 { 2 } else { 2.5 }\n        }\n    }\n}\nfn main() {\n    f(1)\n}\n",
-        "expected `Int64`, found `Float64`",
+        "expected `Int`, found `Float`",
     );
     rejects(
         "fn f(n: Int) -> Int {\n    match n {\n        0 => 1,\n        _ => {\n            if n { 2 } else { 3 }\n        }\n    }\n}\nfn main() {\n    f(1)\n}\n",
-        "expected `Bool`, found `Int64`",
+        "expected `Bool`, found `Int`",
     );
 }
 
@@ -425,7 +426,7 @@ fn a_match_whose_arms_all_return_ends_a_function() {
     );
     rejects(
         "fn h(x: Int) -> Int {\n    match x {\n        0 => return \"s\",\n        _ => return 2,\n    }\n}\nfn main() {\n    let a = h(1)\n}\n",
-        "expected `Int64`, found `String`",
+        "expected `Int`, found `String`",
     );
 }
 
@@ -448,7 +449,7 @@ fn checked_integer_operations_return_none_instead_of_stopping() {
     );
     rejects(
         "fn main() {\n    let b = 3.checked_add(1.5)\n}\n",
-        "expected `an integer`, found `Float64`",
+        "expected `an integer`, found `Float`",
     );
 }
 

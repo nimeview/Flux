@@ -52,6 +52,18 @@ pub fn method_doc(receiver: Receiver, method: &str) -> Option<Doc> {
             "s.split_once(separator: String) -> Option[(String, String)]",
             "The parts before and after the first separator.",
         ),
+        (String, "slice") => d(
+            "s.slice(start: Int, end: Int) -> String",
+            "The characters from `start` up to, not including, `end`.",
+        ),
+        (String, "pad_start") => d(
+            "s.pad_start(width: Int, fill: String) -> String",
+            "`fill` repeated before the string up to `width` characters.",
+        ),
+        (String, "pad_end") => d(
+            "s.pad_end(width: Int, fill: String) -> String",
+            "`fill` repeated after the string up to `width` characters.",
+        ),
         (String, "lines") => d("s.lines() -> [String]", "The lines of the string."),
         (String, "words") => d(
             "s.words() -> [String]",
@@ -109,7 +121,7 @@ pub fn method_doc(receiver: Receiver, method: &str) -> Option<Doc> {
         ),
         (Array, "sorted_by") => d(
             "xs.sorted_by(key: fn(T) -> K) -> [T]",
-            "A copy sorted by `key`; equal keys keep their order.",
+            "A copy sorted by `key` (a number, string, Bool, or a tuple of them, compared in order); equal keys keep their order.",
         ),
         (Array, "reversed") => d("xs.reversed() -> [T]", "A reversed copy."),
         (Array, "first") => d("xs.first() -> Option[T]", "The first element, or `None`."),
@@ -126,7 +138,7 @@ pub fn method_doc(receiver: Receiver, method: &str) -> Option<Doc> {
         ),
         (Array, "sort_by") => d(
             "xs.sort_by(key: fn(T) -> K)",
-            "Sorts the array by `key`; equal keys keep their order.",
+            "Sorts the array by `key` (a number, string, Bool, or a tuple of them); equal keys keep their order.",
         ),
         (Array, "reverse") => d("xs.reverse()", "Reverses the array."),
         (Map, "len") => d("m.len() -> Int", "The number of entries."),

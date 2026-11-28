@@ -159,13 +159,14 @@ pub struct Executor {
     pub graph: ReactiveGraph,
     pub program: CompiledProgram,
     /// Shared so a call can run a body without cloning it.
-    functions: HashMap<String, std::sync::Arc<CompiledFunction>>,
+    /// Looked up on every call: a fast hash, not SipHash.
+    functions: rustc_hash::FxHashMap<String, std::sync::Arc<CompiledFunction>>,
     /// `program.nodes` index by binding name.
     node_index: HashMap<String, usize>,
     /// Each node's code, shared so a recomputation does not copy it.
     node_code: Vec<std::sync::Arc<[flux_ir::Inst]>>,
     /// Functions that may read reactive values (see `flux_ir::graph_readers`).
-    graph_readers: HashSet<String>,
+    graph_readers: rustc_hash::FxHashSet<String>,
     in_watch: bool,
     /// When true, `set_source` records mutations and skips propagation until flush.
     defer_propagation: bool,
@@ -415,7 +416,7 @@ impl Executor {
             functions,
             node_index,
             node_code,
-            graph_readers,
+            graph_readers: graph_readers.into_iter().collect(),
             in_watch: false,
             defer_propagation: false,
             reactive: Box::new(ReactiveState {

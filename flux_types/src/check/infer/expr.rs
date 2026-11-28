@@ -357,6 +357,7 @@ pub(crate) fn infer_expr(
                     .unwrap_or_else(|| format!("symbol #{}", symbol.0)),
                 span: span_to_miette(*span),
                 source_id: span.source,
+                help: None,
             });
             Some(Type::Error)
         }),
@@ -378,12 +379,13 @@ pub(crate) fn infer_expr(
                         return Some(Type::Error);
                     };
                     if params.len() != args.len() {
-                        diagnostics.push(FluxError::TypeMismatch {
-                            expected: format!("{} arguments", params.len()),
-                            found: format!("{} arguments", args.len()),
-                            span: span_to_miette(*span),
-                            source_id: span.source,
-                        });
+                        diagnostics.push(crate::check::wrong_arg_count(
+                            Some(field),
+                            crate::check::count(params.len(), "argument"),
+                            args.len(),
+                            Some(&params),
+                            *span,
+                        ));
                     }
                     for (p, a) in params.iter().zip(args.iter()) {
                         let got =
@@ -474,12 +476,14 @@ pub(crate) fn infer_expr(
                         let mut call_args = vec![base.as_ref().clone()];
                         call_args.extend(args.iter().cloned());
                         if params.len() != call_args.len() {
-                            diagnostics.push(FluxError::TypeMismatch {
-                                expected: format!("{} arguments", params.len()),
-                                found: format!("{} arguments", call_args.len()),
-                                span: span_to_miette(*span),
-                                source_id: span.source,
-                            });
+                            // `self` is not one the caller writes.
+                            diagnostics.push(crate::check::wrong_arg_count(
+                                Some(field),
+                                crate::check::count(params.len().saturating_sub(1), "argument"),
+                                args.len(),
+                                params.get(1..),
+                                *span,
+                            ));
                         }
                         for (p, a) in params.iter().zip(call_args.iter()) {
                             let got = infer_expr_expected(
@@ -575,11 +579,42 @@ pub(crate) fn infer_expr(
                     }
                 }
                 if !is_field && !base_ty.is_error() {
+                    // The methods this type has: the library's and its impls'.
+                    let mut known: Vec<&str> = flux_std::methods::LIBRARY_METHOD_NAMES
+                        .iter()
+                        .copied()
+                        .filter(|m| flux_std::methods::library_method(receiver, m).is_some())
+                        .collect();
+                    known.extend(
+                        ctx.trait_impls
+                            .keys()
+                            .filter(|(ty, _)| *ty == type_tag)
+                            .map(|(_, m)| m.as_str()),
+                    );
+                    let own_type = matches!(
+                        ctx.expand(unwrap_value_type(&base_ty)),
+                        Type::Struct { .. } | Type::Enum { .. }
+                    );
+                    // As the program writes the type (`[Int]`), not its key.
+                    let shown = unwrap_value_type(&base_ty).display();
+                    let help = match flux_diagnostics::did_you_mean(field, known.iter().copied()) {
+                        Some(close) => format!("there is a method with a similar name: `{close}`"),
+                        None if own_type => format!(
+                            "to give `{shown}` this method, write `impl {shown} {{ fn {field}(self) … }}`"
+                        ),
+                        None if known.is_empty() => format!("`{shown}` has no methods"),
+                        None => {
+                            known.sort_unstable();
+                            known.dedup();
+                            format!("`{shown}` has: {}", known.join(", "))
+                        }
+                    };
                     diagnostics.push(FluxError::UnknownMethod {
                         method: field.clone(),
-                        ty: type_tag,
+                        ty: shown,
                         span: span_to_miette(*span),
                         source_id: span.source,
+                        help: Some(help),
                     });
                     return Some(Type::Error);
                 }
@@ -649,12 +684,19 @@ pub(crate) fn infer_expr(
             match unwrap_value_type(&callee_ty) {
                 Type::Func { params, ret } => {
                     if params.len() != args.len() {
-                        diagnostics.push(FluxError::TypeMismatch {
-                            expected: format!("{} arguments", params.len()),
-                            found: format!("{} arguments", args.len()),
-                            span: span_to_miette(*span),
-                            source_id: span.source,
-                        });
+                        let name = match callee.as_ref() {
+                            HirExpr::Ident { symbol, .. } => {
+                                lookup_name(names, *symbol).map(|n| flux_hir::display_path(n))
+                            }
+                            _ => None,
+                        };
+                        diagnostics.push(crate::check::wrong_arg_count(
+                            name.as_deref(),
+                            crate::check::count(params.len(), "argument"),
+                            args.len(),
+                            Some(&params),
+                            *span,
+                        ));
                     }
                     for (p, a) in params.iter().zip(args.iter()) {
                         let got =
@@ -805,7 +847,11 @@ pub(crate) fn infer_expr(
                 return Some(Type::Error);
             }
             if super::super::util::numeric_compatible(&tv, &ev) {
-                Some(super::super::util::widen_numeric(&tv, &ev))
+                let wide = super::super::util::widen_numeric(&tv, &ev);
+                // The narrower branch is converted when it runs.
+                note_widening(ctx, &tv, &wide, Some(then_expr.span()));
+                note_widening(ctx, &ev, &wide, Some(else_expr.span()));
+                Some(wide)
             } else if types_compatible(&tv, &ev) {
                 Some(super::super::util::refine_unknown(&tv, &ev))
             } else {
@@ -858,6 +904,8 @@ pub(crate) fn infer_expr(
                 _ => None,
             };
             let mut arm_types = Vec::new();
+            // Each value arm's expression, for a conversion its value needs.
+            let mut arm_spans: Vec<Option<flux_diagnostics::Span>> = Vec::new();
             let mut covered_variants = std::collections::HashSet::new();
             // Payload shapes of nested-pattern arms, per outer variant.
             let mut nested_arms: HashMap<String, Vec<flux_hir::PatShape>> = HashMap::new();
@@ -951,8 +999,10 @@ pub(crate) fn infer_expr(
                 // A block arm ending in a statement is `()`.
                 if arm.unit {
                     arm_types.push(Type::Unit);
+                    arm_spans.push(None);
                     continue;
                 }
+                arm_spans.push(Some(arm.expr.span()));
                 arm_types.push(infer_expr(
                     ctx,
                     &arm.expr,
@@ -986,24 +1036,42 @@ pub(crate) fn infer_expr(
                         .cloned()
                         .collect();
                     if !missing.is_empty() {
-                        diagnostics.push(FluxError::TypeMismatch {
-                            expected: format!("exhaustive match ({})", variants.join(", ")),
-                            found: format!("missing {}", missing.join(", ")),
+                        // `Shape::Triangle` as the program writes it; `None`
+                        // and the other library variants bare.
+                        let prefix = match ctx.expand(scrut_value_ty.clone()) {
+                            Type::Enum { name, .. } => {
+                                format!("{}::", flux_hir::display_path(&name))
+                            }
+                            _ => String::new(),
+                        };
+                        let named: Vec<String> =
+                            missing.iter().map(|v| format!("`{prefix}{v}`")).collect();
+                        let list = match named.as_slice() {
+                            [one] => one.clone(),
+                            [rest @ .., last] => format!("{} or {last}", rest.join(", ")),
+                            [] => String::new(),
+                        };
+                        diagnostics.push(FluxError::NonExhaustiveMatch {
+                            missing: list.clone(),
+                            help: format!(
+                                "add an arm for {list}, or `_ => …` for every case not listed"
+                            ),
                             span: span_to_miette(*span),
                             source_id: span.source,
                         });
                     }
                 } else if matches!(scrut_value_ty, Type::Tuple(_)) {
-                    diagnostics.push(FluxError::TypeMismatch {
-                        expected: "patterns that cover every tuple, or a catch-all `_`".into(),
-                        found: scrut_value_ty.display(),
+                    diagnostics.push(FluxError::NonExhaustiveMatch {
+                        missing: format!("every `{}` value", scrut_value_ty.display()),
+                        help: "add arms for the missing combinations, or `_ => …` for the rest"
+                            .into(),
                         span: span_to_miette(*span),
                         source_id: span.source,
                     });
                 } else {
-                    diagnostics.push(FluxError::TypeMismatch {
-                        expected: "catch-all pattern".into(),
-                        found: scrut_value_ty.display(),
+                    diagnostics.push(FluxError::NonExhaustiveMatch {
+                        missing: format!("every `{}` value", scrut_value_ty.display()),
+                        help: "add a catch-all arm `_ => …` for the values not listed".into(),
                         span: span_to_miette(*span),
                         source_id: span.source,
                     });
@@ -1037,6 +1105,11 @@ pub(crate) fn infer_expr(
                     unified = super::super::util::refine_unknown(&unified, &arm_ty);
                 }
             }
+            // An arm of a narrower number type is converted when it runs:
+            // `match n { 0 => 1, _ => 2.5 }` is a Float either way.
+            for (arm_ty, at) in arm_types.iter().zip(&arm_spans) {
+                note_widening(ctx, arm_ty, &unified, *at);
+            }
             Some(unified)
         }
         HirExpr::EnumVariant {
@@ -1050,6 +1123,7 @@ pub(crate) fn infer_expr(
                     name: enum_name.clone(),
                     span: span_to_miette(*span),
                     source_id: span.source,
+                    help: None,
                 });
                 return Some(Type::Error);
             };
@@ -1154,6 +1228,7 @@ pub(crate) fn infer_expr(
                     name: name.clone(),
                     span: span_to_miette(*span),
                     source_id: span.source,
+                    help: None,
                 });
                 return Some(Type::Error);
             };
@@ -1401,6 +1476,7 @@ pub(crate) fn infer_expr(
                         name,
                         span: span_to_miette(s),
                         source_id: s.source,
+                        help: None,
                     });
                 })
                 .ok()?;
@@ -1584,7 +1660,7 @@ fn captured_change(
         HirExpr::Ident { symbol, .. } => names.get(symbol).cloned().unwrap_or_default(),
         _ => String::new(),
     };
-    diagnostics.push(FluxError::AssignToImmutableLocal {
+    diagnostics.push(FluxError::AssignToCaptured {
         name,
         span: span_to_miette(span),
         source_id: span.source,
@@ -1671,4 +1747,21 @@ fn check_struct_fields(
         }
     }
     bound
+}
+
+/// Records that the value at `at`, of type `from`, must become `to` when it
+/// runs: a branch or element narrower than the number type of the whole.
+fn note_widening(
+    ctx: &TypeCheckContext,
+    from: &Type,
+    to: &Type,
+    at: Option<flux_diagnostics::Span>,
+) {
+    let from = unwrap_value_type(from);
+    let numeric = |t: &Type| t.is_integer() || t.is_float();
+    if let Some(at) = at {
+        if numeric(&from) && numeric(to) && from.key() != to.key() {
+            ctx.numeric_widenings.borrow_mut().insert(at, to.clone());
+        }
+    }
 }

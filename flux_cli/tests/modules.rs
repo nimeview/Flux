@@ -341,7 +341,7 @@ fn review_findings_for_module_types_stay_fixed() {
             ),
         ],
         ".",
-        "missing Green",
+        "does not cover `Color::Green`",
     );
     // Two modules' `Point` types specialize a generic function apart; a type
     // parameter named like an imported type is the parameter; qualified type
@@ -396,7 +396,7 @@ fn each_module_sees_only_the_variants_of_enums_it_declares_or_imports() {
             ),
         ],
         ".",
-        "missing",
+        "does not cover",
     );
     // A private enum's variant is not visible, and its name is free.
     check_fails(

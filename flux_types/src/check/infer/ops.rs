@@ -59,6 +59,45 @@ pub(crate) fn equality_allowed(l: &Type, r: &Type) -> bool {
         || (types_compatible(&l, &r) && types_compatible(&r, &l) && equality_supported(&l))
 }
 
+/// E005 for arithmetic on operands that do not fit, with a hint for the
+/// usual causes: a value that may be missing (`Option`) or an error
+/// (`Result`), and text joined to a number.
+fn operand_mismatch(expected: &str, l: &Type, r: &Type, span: flux_diagnostics::Span) -> FluxError {
+    let found = format!("{} and {}", l.display(), r.display());
+    let wrapped = [l, r]
+        .into_iter()
+        .find(|t| matches!(t, Type::Option(_) | Type::Result { .. }));
+    let help = match wrapped {
+        Some(Type::Option(inner)) => Some(format!(
+            "an `Option[{}]` may be missing: take the value with `.unwrap_or(default)`, a `match` on `Some`/`None`, or `?` in a function that returns an `Option`",
+            inner.display()
+        )),
+        Some(Type::Result { ok, .. }) => Some(format!(
+            "a `Result` may hold an error instead of an `{}`: take the value with `.unwrap_or(default)`, a `match` on `Ok`/`Err`, or `?` in a function that returns a `Result`",
+            ok.display()
+        )),
+        _ if (*l == Type::String) != (*r == Type::String) => Some(
+            "to join text and a value, interpolate: `\"{a}{b}\"`, or convert with `.to_string()`".into(),
+        ),
+        _ => None,
+    };
+    match help {
+        Some(help) => FluxError::TypeMismatchWithHelp {
+            expected: expected.into(),
+            found,
+            span: span_to_miette(span),
+            source_id: span.source,
+            help,
+        },
+        None => FluxError::TypeMismatch {
+            expected: expected.into(),
+            found,
+            span: span_to_miette(span),
+            source_id: span.source,
+        },
+    }
+}
+
 pub(crate) fn infer_binary(
     op: BinaryOp,
     left: &Type,
@@ -142,12 +181,7 @@ pub(crate) fn infer_binary(
             } else if numeric_compatible(&l, &r) {
                 Some(widen_numeric(&l, &r))
             } else {
-                diagnostics.push(FluxError::TypeMismatch {
-                    expected: "numeric or String type".into(),
-                    found: format!("{} and {}", l.display(), r.display()),
-                    span: span_to_miette(span),
-                    source_id: span.source,
-                });
+                diagnostics.push(operand_mismatch("numeric or String type", &l, &r, span));
                 Some(Type::Error)
             }
         }
@@ -156,12 +190,7 @@ pub(crate) fn infer_binary(
             if numeric_compatible(&l, &r) {
                 Some(widen_numeric(&l, &r))
             } else {
-                diagnostics.push(FluxError::TypeMismatch {
-                    expected: "numeric type".into(),
-                    found: format!("{} and {}", l.display(), r.display()),
-                    span: span_to_miette(span),
-                    source_id: span.source,
-                });
+                diagnostics.push(operand_mismatch("numeric type", &l, &r, span));
                 Some(Type::Error)
             }
         }

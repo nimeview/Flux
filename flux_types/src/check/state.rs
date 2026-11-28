@@ -114,6 +114,8 @@ pub struct TypeCheckContext {
     /// `!x` on an integer, by span: a bit flip, which the rewrite after
     /// type checking marks (`UnaryOp::BitNot`).
     pub(crate) bit_not_sites: std::cell::RefCell<std::collections::HashSet<flux_diagnostics::Span>>,
+    /// Branches and elements whose value runs as a wider number type.
+    pub(crate) numeric_widenings: std::cell::RefCell<HashMap<flux_diagnostics::Span, Type>>,
     pub(crate) changing_sites:
         std::cell::RefCell<std::collections::HashSet<flux_diagnostics::Span>>,
     /// `op.f(x)` calls of the function in field `f`, by enclosing function and span.
@@ -420,6 +422,11 @@ impl TypeCheckContext {
 
     pub(crate) fn capturing_closure(&self, id: SymbolId) -> Option<&flux_hir::HirFn> {
         self.capturing_closures.get(&id)
+    }
+
+    /// The names of the program's own types and type aliases.
+    pub(crate) fn type_names(&self) -> impl Iterator<Item = &String> + '_ {
+        self.user_types.keys().chain(self.type_aliases.keys())
     }
 
     /// The symbols of library functions, for the purity check.

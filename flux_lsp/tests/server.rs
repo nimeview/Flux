@@ -965,7 +965,7 @@ fn signature_help_covers_user_functions_and_the_library() {
     let help = ask(&client, 2, "textDocument/signatureHelp", at(12, 24));
     assert_eq!(
         help["signatures"][0]["label"],
-        "total(i: Item, extra: Int64) -> Int64"
+        "total(i: Item, extra: Int) -> Int"
     );
     assert_eq!(help["activeParameter"], 1);
     // Inside `println(`.
@@ -1353,13 +1353,13 @@ fn a_local_named_like_an_imported_type_and_a_qualified_type_resolve_right() {
     assert_eq!(location["uri"], other.to_string(), "{location}");
     assert_eq!(location["range"]["start"]["line"], 2, "{location}");
     let hover = ask(&client, 3, "textDocument/hover", at_main(6, 5)).to_string();
-    assert!(hover.contains("Point: Int64"), "{hover}");
+    assert!(hover.contains("Point: Int"), "{hover}");
     let _ = util;
     shutdown(&client, handle);
 }
 
 /// A generic struct's fields have the types of its arguments: `p.` offers
-/// `a: Int64` for a `Pair[Int]`, and hover shows the instance type.
+/// `a: Int` for a `Pair[Int]`, and hover shows the instance type.
 #[test]
 fn members_and_hover_of_a_generic_type_use_its_arguments() {
     let (client, handle) = start_server();
@@ -1374,10 +1374,10 @@ fn members_and_hover_of_a_generic_type_use_its_arguments() {
     };
     let items = ask(&client, 2, "textDocument/completion", at(3, 14)).to_string();
     assert!(items.contains("\"label\":\"a\""), "{items}");
-    assert!(items.contains("Int64"), "{items}");
+    assert!(items.contains("Int"), "{items}");
     assert!(!items.contains("\"T\""), "{items}");
     let hover = ask(&client, 3, "textDocument/hover", at(2, 8)).to_string();
-    assert!(hover.contains("Pair[Int64]"), "{hover}");
+    assert!(hover.contains("Pair[Int]"), "{hover}");
     shutdown(&client, handle);
 }
 
@@ -1401,13 +1401,13 @@ fn a_field_of_a_generic_instance_offers_its_members() {
 #[test]
 fn a_generic_impls_methods_are_offered_on_an_instance() {
     let (client, handle) = start_server();
-    let text = "struct Pair[T] { a: T, b: T }\nimpl[T] Pair[T] {\n    fn swap(self) -> Pair[T] {\n        Pair { a: self.b, b: self.a }\n    }\n}\nfn main() {\n    let p = Pair { a: 1, b: 2 }\n    let q = p.swap()\n}\n";
+    let text = "struct Pair[T] { a: T, b: T }\nimpl[T] Pair[T] {\n    fn swap(self) -> Pair[T] {\n        Pair { a: self.b, b: self.a }\n    }\n}\nfn main() {\n    let p = Pair { a: 1, b: 2 }\n    let _q = p.swap()\n}\n";
     did_open(&client, text);
     let diagnostics = recv_diagnostics(&client);
     assert!(diagnostics.diagnostics.is_empty(), "{diagnostics:?}");
     let at = serde_json::json!({
         "textDocument": { "uri": test_uri() },
-        "position": { "line": 8, "character": 14 },
+        "position": { "line": 8, "character": 15 },
     });
     let items = ask(&client, 2, "textDocument/completion", at).to_string();
     assert!(items.contains("\"label\":\"swap\""), "{items}");
@@ -1436,7 +1436,7 @@ fn hover_on_a_generic_method_call_shows_the_instance() {
     });
     let hover = ask(&client, 2, "textDocument/hover", at).to_string();
     assert!(!hover.contains("<error>"), "{hover}");
-    assert!(hover.contains("Int64"), "{hover}");
+    assert!(hover.contains("-> Int"), "{hover}");
     shutdown(&client, handle);
 }
 
@@ -1445,7 +1445,7 @@ fn hover_on_a_generic_method_call_shows_the_instance() {
 #[test]
 fn a_reactive_module_checks_and_its_sources_are_read_only_outside() {
     let (_dir, main, util) = import_project(
-        "pub let mut count = 0\npub event Inc(by: Int)\non Inc(by) {\n    count += by\n}\nwatch count {\n    let seen = count\n}\n",
+        "pub let mut count = 0\npub event Inc(by: Int)\non Inc(by) {\n    count += by\n}\nwatch count {\n    let _seen = count\n}\n",
     );
     let (client, handle) = start_server();
     let util_text = std::fs::read_to_string(util.to_file_path().unwrap()).unwrap();

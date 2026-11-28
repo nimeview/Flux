@@ -85,3 +85,32 @@ fn events_sent_from_another_thread_run_in_order() {
     assert_eq!(*log.lock().unwrap(), vec!["\"a\"", "\"b\"", "\"c\""]);
     assert!(compiled.executor.stopped());
 }
+
+/// A sender that posts and goes while the loop is busy with its earlier
+/// events: the later ones still run (0.5: the loop saw no sender left and
+/// ended with them queued). The handler is slow on purpose, so the sender
+/// finishes while it runs.
+#[test]
+fn events_from_a_sender_that_just_left_still_run() {
+    for round in 0..10 {
+        let count: Arc<Mutex<usize>> = Arc::default();
+        let seen = Arc::clone(&count);
+        let host = Host::new().function("hit", move |_| {
+            std::thread::sleep(std::time::Duration::from_millis(5));
+            *seen.lock().unwrap() += 1;
+            Ok(RuntimeValue::Unit)
+        });
+        let src = "extern fn hit()\n\nevent Hit\n\non Hit {\n    hit()\n}\n";
+        let mut compiled = compile("late-sender", src, host).expect("compiles");
+        let sender = compiled.executor.event_sender();
+        let thread = std::thread::spawn(move || {
+            sender.send("Hit", vec![]);
+            std::thread::sleep(std::time::Duration::from_millis(1));
+            sender.send("Hit", vec![]);
+            sender.send("Hit", vec![]);
+        });
+        compiled.executor.run_event_loop().expect("runs");
+        thread.join().unwrap();
+        assert_eq!(*count.lock().unwrap(), 3, "round {round}");
+    }
+}

@@ -120,6 +120,11 @@ enum Commands {
     },
     /// Run the full stdio Language Server (diagnostics + hover + completion)
     LspServer,
+    /// Explain an error or warning code in detail (`flux explain E002`)
+    Explain {
+        /// The code, such as `E002` or `2`
+        code: String,
+    },
     /// Experimental stub: type-checks the file, but no WASM code generation exists yet (always fails)
     Wasm {
         /// Path to the source file
@@ -215,6 +220,19 @@ fn main() {
             Ok(()) => 0,
             Err(e) => {
                 eprintln!("flux lsp-server error: {e}");
+                1
+            }
+        },
+        Commands::Explain { code } => match flux_cli::explain::explain(&code) {
+            Some(text) => {
+                print!("{text}");
+                0
+            }
+            None => {
+                eprintln!(
+                    "error: no explanation for `{code}`; codes run from E000 to {}",
+                    flux_cli::explain::last_code()
+                );
                 1
             }
         },

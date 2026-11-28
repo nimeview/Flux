@@ -213,14 +213,15 @@ pub enum Inst {
         name: String,
         slot: u32,
     },
+    /// Names are shared (`Arc<str>`): building a value copies pointers.
     MakeUserEnum {
-        type_name: String,
-        variant: String,
+        type_name: std::sync::Arc<str>,
+        variant: std::sync::Arc<str>,
         has_payload: bool,
     },
     MakeUserStruct {
-        type_name: String,
-        fields: Vec<String>,
+        type_name: std::sync::Arc<str>,
+        fields: Vec<std::sync::Arc<str>>,
     },
     FieldGet(String),
     /// Pops `captures` values and pushes a closure over function `name`,

@@ -54,7 +54,7 @@ fn write_value(out: &mut String, value: &Value) {
             out.push(']');
         }
         // A tuple: a struct of this name with fields "0", "1", ….
-        Value::UserStruct(s) if s.type_name == TUPLE_TYPE => deep_recursion(|| {
+        Value::UserStruct(s) if &*s.type_name == TUPLE_TYPE => deep_recursion(|| {
             out.push('(');
             for i in 0..s.fields.len() {
                 if i > 0 {
@@ -67,17 +67,16 @@ fn write_value(out: &mut String, value: &Value) {
             out.push(')');
         }),
         Value::UserStruct(s) => deep_recursion(|| {
-            let mut names: Vec<&String> = s.fields.keys().collect();
-            names.sort();
+            // Fields are kept sorted by name.
             out.push_str(type_display_name(&s.type_name));
             out.push_str(" { ");
-            for (i, name) in names.iter().enumerate() {
+            for (i, (name, value)) in s.fields.iter().enumerate() {
                 if i > 0 {
                     out.push_str(", ");
                 }
                 out.push_str(name);
                 out.push_str(": ");
-                write_value(out, &s.fields[*name]);
+                write_value(out, value);
             }
             out.push_str(" }");
         }),
@@ -87,7 +86,7 @@ fn write_value(out: &mut String, value: &Value) {
             out.push_str(&e.variant);
             // A struct variant: `Shape::Rect { h: 3, w: 2 }`.
             if let Some(p @ Value::UserStruct(s)) = &e.payload {
-                if s.type_name == VARIANT_FIELDS_TYPE {
+                if &*s.type_name == VARIANT_FIELDS_TYPE {
                     let mut text = String::new();
                     write_value(&mut text, p);
                     out.push(' ');

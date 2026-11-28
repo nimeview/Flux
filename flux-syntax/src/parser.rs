@@ -101,9 +101,19 @@ fn parse_program_unbounded(
                 _ if in_trait_body(&input[..span.start]) => "a trait method is only a \
                     signature and ends with `;`, as in `fn area(self) -> Float;`"
                     .into(),
-                // The span already carries the location; pest's `Display` would
-                // render a second snippet inside the diagnostic.
-                _ => err.variant.message().into_owned(),
+                _ => match parse_hint(&input[..span.start], &input[span.start..]) {
+                    Some(hint) => hint,
+                    // The span already carries the location; pest's `Display`
+                    // would render a second snippet inside the diagnostic.
+                    None => match &err.variant {
+                        pest::error::ErrorVariant::ParsingError { positives, .. }
+                            if !positives.is_empty() =>
+                        {
+                            expected_in_words(positives, &input[..span.start], &input[span.start..])
+                        }
+                        _ => err.variant.message().into_owned(),
+                    },
+                },
             };
             diagnostics.push(FluxError::Parse {
                 message,
@@ -150,6 +160,16 @@ fn parse_program_unbounded(
             });
             return None;
         }
+        if let Some(span) = indexed_emit(source_id, input, pair.clone()) {
+            diagnostics.push(FluxError::Parse {
+                message: "`emit` names an instance directly: bind it first, as in \
+                          `let item = items[i]` then `emit item.Ping()`"
+                    .into(),
+                span: span_to_miette(span),
+                source_id,
+            });
+            return None;
+        }
         if let Some(span) = leading_minus(source_id, input, pair.clone()) {
             diagnostics.push(FluxError::Parse {
                 message: "this line starts with `-`, which would continue the expression on \
@@ -170,6 +190,224 @@ fn parse_program_unbounded(
         source: source_id,
         items,
     })
+}
+
+/// A parse error for the usual slips, in words: what is wrong and how to
+/// write it. `before` is the text up to the error, `rest` the text from it.
+fn parse_hint(before: &str, rest: &str) -> Option<String> {
+    let line_rest = rest.lines().next().unwrap_or("").trim();
+    let last_line = before.rsplit('\n').next().unwrap_or("").trim();
+    // `A => x` then a new line `B => y` with no comma between.
+    if line_rest.contains("=>")
+        && !line_rest.starts_with("=>")
+        && before.trim_end().ends_with(|c: char| c != ',' && c != '{')
+        && inside_match(before)
+    {
+        return Some(
+            "expected `,` before this match arm: arms are separated by commas \
+             (a block arm `=> { … }` needs none after it)"
+                .into(),
+        );
+    }
+    // `let m = {}`: braces are a block, not a value.
+    if rest.starts_with('{')
+        && (last_line.ends_with('=') || last_line.ends_with('('))
+        && rest[1..].trim_start().starts_with('}')
+    {
+        return Some(
+            "`{}` is not a value: an empty map is `Map::new()` (with its type on the \
+             binding, as in `let m: Map[String, Int] = Map::new()`)"
+                .into(),
+        );
+    }
+    // `fn f(a: Int b: Int)`, `struct P { x: Int\n y: Int }`: the error lands
+    // on the type, and what follows it is the next name.
+    if last_line.ends_with(':') || last_line.ends_with(": mut") {
+        // The type (`Int`, `[Int]`, `Map[String, Int]` without spaces),
+        // then what follows it: `b: …` means a missing comma.
+        let type_end = rest
+            .find(|c: char| !(c.is_alphanumeric() || "_[]".contains(c)))
+            .unwrap_or(rest.len());
+        let after_type = rest[type_end..].trim_start();
+        let name_end = after_type
+            .find(|c: char| !(c.is_alphanumeric() || c == '_'))
+            .unwrap_or(after_type.len());
+        let next_is_name = name_end > 0 && after_type[name_end..].trim_start().starts_with(':');
+        if next_is_name {
+            return Some(
+                "expected `,` after this type: parameters and fields are separated by commas"
+                    .into(),
+            );
+        }
+    }
+    // `emit items[i].Ping()`: an instance's event goes through a name.
+    if last_line.starts_with("emit ") && rest.starts_with('[') {
+        return Some(
+            "`emit` names an instance directly: bind it first, as in \
+             `let item = items[i]` then `emit item.Ping()`"
+                .into(),
+        );
+    }
+    None
+}
+
+/// Whether `before` ends inside the braces of a `match`.
+fn inside_match(before: &str) -> bool {
+    let mut depth = 0i32;
+    for (i, c) in before.char_indices().rev() {
+        match c {
+            '}' => depth += 1,
+            '{' if depth > 0 => depth -= 1,
+            '{' => {
+                let head = before[..i].rsplit('\n').next().unwrap_or("");
+                return head.trim_start().starts_with("match ")
+                    || head.contains(" match ")
+                    || head.contains("= match ")
+                    || head.contains("=> match ");
+            }
+            _ => {}
+        }
+    }
+    false
+}
+
+/// pest's "expected eq_op, rel_op, …" in words, with what was found.
+fn expected_in_words(positives: &[Rule], before: &str, rest: &str) -> String {
+    let mut words: Vec<&str> = Vec::new();
+    for rule in positives {
+        let word = match rule {
+            Rule::eq_op
+            | Rule::rel_op
+            | Rule::add_op
+            | Rule::bits_op
+            | Rule::mul_op
+            | Rule::assign_op
+            | Rule::kw_as
+            | Rule::kw_with => "an operator",
+            Rule::index_suffix
+            | Rule::try_suffix
+            | Rule::field_suffix
+            | Rule::call_args
+            | Rule::call_suffix
+            | Rule::with_suffix => "`.`, `(`, `[`, or `?`",
+            Rule::stmt | Rule::block_stmts => "a statement",
+            Rule::expr
+            | Rule::or_expr
+            | Rule::and_expr
+            | Rule::eq_expr
+            | Rule::rel_expr
+            | Rule::add_expr
+            | Rule::mul_expr
+            | Rule::cast_expr
+            | Rule::unary_expr
+            | Rule::postfix_expr
+            | Rule::primary_expr
+            | Rule::expr_list
+            | Rule::arg_list
+            | Rule::call_arg => "an expression",
+            Rule::ident | Rule::path_ident | Rule::ident_list => "a name",
+            Rule::type_name
+            | Rule::simple_type
+            | Rule::generic_type
+            | Rule::array_type
+            | Rule::tuple_type
+            | Rule::function_type
+            | Rule::option_type
+            | Rule::result_type
+            | Rule::type_ann => "a type",
+            Rule::match_arm | Rule::match_pattern => "a match arm",
+            Rule::block | Rule::if_branch | Rule::arm_block => "`{`",
+            Rule::item => "a declaration (`fn`, `let`, `struct`, `event`, …)",
+            Rule::EOI => "the end of the file",
+            Rule::param | Rule::param_list => "a parameter",
+            Rule::kw_else | Rule::else_clause => "`else`",
+            Rule::emit_args => "`(`",
+            Rule::string_lit | Rule::raw_string_lit => "a string",
+            Rule::int_lit | Rule::float_lit | Rule::lit_pat | Rule::neg_int_lit => "a number",
+            _ => "",
+        };
+        if !word.is_empty() && !words.contains(&word) {
+            words.push(word);
+        }
+    }
+    let expected = match words.as_slice() {
+        [] => "something else".to_string(),
+        [one] => (*one).to_string(),
+        [rest @ .., last] => format!("{}, or {last}", rest.join(", ")),
+    };
+    let found: String = rest
+        .chars()
+        .take_while(|c| !c.is_whitespace())
+        .take(20)
+        .collect();
+    let message = if found.is_empty() {
+        format!("expected {expected}, found the end of the line")
+    } else {
+        format!("expected {expected}, found `{found}`")
+    };
+    match unclosed(before) {
+        Some((open, line)) => format!("{message}; the `{open}` on line {line} is not closed"),
+        None => message,
+    }
+}
+
+/// The innermost `(` or `[` still open at the end of `before`, with its
+/// line, skipping strings and comments.
+fn unclosed(before: &str) -> Option<(char, usize)> {
+    let mut stack: Vec<(char, usize)> = Vec::new();
+    let mut line = 1;
+    let mut chars = before.chars().peekable();
+    let mut in_string = false;
+    while let Some(c) = chars.next() {
+        match c {
+            '\n' => {
+                line += 1;
+                in_string = false;
+            }
+            '\\' if in_string => {
+                chars.next();
+            }
+            '"' => in_string = !in_string,
+            '/' if !in_string && chars.peek() == Some(&'/') => {
+                for c in chars.by_ref() {
+                    if c == '\n' {
+                        line += 1;
+                        break;
+                    }
+                }
+            }
+            '(' | '[' | '{' if !in_string => stack.push((c, line)),
+            ')' | ']' | '}' if !in_string => {
+                stack.pop();
+            }
+            _ => {}
+        }
+    }
+    stack.pop().filter(|(c, _)| *c != '{')
+}
+
+/// `emit items[i].Ping()`: the grammar reads `emit items` and then an array
+/// `[i]`, so it is caught here, by the `[` right after the emitted name.
+fn indexed_emit(
+    source_id: SourceId,
+    input: &str,
+    pair: pest::iterators::Pair<'_, Rule>,
+) -> Option<Span> {
+    if pair.as_rule() == Rule::emit_stmt {
+        let target = pair.clone().into_inner().find(|p| {
+            matches!(
+                p.as_rule(),
+                Rule::emit_member | Rule::path_ident | Rule::ident
+            )
+        })?;
+        let end = target.as_span().end();
+        if input[end..].starts_with('[') {
+            return Some(span_of(source_id, &pair));
+        }
+        return None;
+    }
+    pair.into_inner()
+        .find_map(|child| indexed_emit(source_id, input, child))
 }
 
 /// A binary `-` that begins a line: newlines do not end expressions, so

@@ -435,14 +435,17 @@ impl Executor {
                     ));
                 }
                 Inst::MakeUserStruct { type_name, fields } => {
-                    let mut map = std::collections::HashMap::new();
-                    for field_name in fields.iter().rev() {
-                        let val = stack_pop_with(stack, || {
-                            format!("MakeUserStruct `{type_name}` field `{field_name}`")
-                        });
-                        map.insert(field_name.clone(), val);
+                    if stack.len() < fields.len() {
+                        debug_assert_vm(
+                            false,
+                            &format!("MakeUserStruct `{type_name}`: stack underflow"),
+                        );
                     }
-                    stack.push(RuntimeValue::user_struct(type_name.clone(), map));
+                    let start = stack.len().saturating_sub(fields.len());
+                    let built = flux_value::Fields::from_pairs(
+                        fields.iter().cloned().zip(stack.drain(start..)),
+                    );
+                    stack.push(RuntimeValue::user_struct(type_name.clone(), built));
                 }
                 Inst::MakeClosure { name, captures } => {
                     let start = stack.len().saturating_sub(*captures);
@@ -550,6 +553,13 @@ impl Executor {
     }
 
     pub(crate) fn call_function(&mut self, name: &str, args: &[RuntimeValue]) -> RuntimeValue {
+        // A user function first: one hash lookup, where the library checks
+        // below compare the name with dozens of others. No user function
+        // shares a library function's name (lowering renames it).
+        if let Some(func) = self.functions.get(name) {
+            let func = std::sync::Arc::clone(func);
+            return self.call_user(name, &func, args);
+        }
         // Higher-order builtins are handled here so they can invoke user functions/closures.
         if flux_std::is_hof(name) {
             return match name {

@@ -41,7 +41,10 @@ pub(super) fn parse_expr(source_id: SourceId, pair: pest::iterators::Pair<'_, Ru
                             Rule::expr => arm_expr = Some(parse_expr(source_id, child)),
                             Rule::arm_block => {
                                 // A final expression is the arm's value;
-                                // otherwise the arm leaves or is `()`.
+                                // otherwise the arm leaves or is `()`. (A
+                                // final `if … else` stays a statement: in a
+                                // function, lowering takes its value with
+                                // no numeric widening.)
                                 let mut body = super::stmts::parse_block(source_id, child).stmts;
                                 if let Some(Stmt::Expr(_)) = body.last() {
                                     if let Some(Stmt::Expr(tail)) = body.pop() {
@@ -71,6 +74,7 @@ pub(super) fn parse_expr(source_id: SourceId, pair: pest::iterators::Pair<'_, Ru
             Expr::Match {
                 scrutinee,
                 arms,
+                if_form: false,
                 span,
             }
         }
@@ -701,14 +705,114 @@ fn parse_if_expr(source_id: SourceId, pair: pest::iterators::Pair<'_, Rule>) -> 
         .into_inner()
         .filter(|p| !matches!(p.as_rule(), Rule::kw_if | Rule::kw_else));
     let cond = parse_expr(source_id, inner.next().expect("if cond"));
-    let then_expr = parse_expr(source_id, inner.next().expect("if then"));
-    let else_expr = parse_expr(source_id, inner.next().expect("if else"));
-    Expr::If {
-        cond: Box::new(cond),
-        then_expr: Box::new(then_expr),
-        else_expr: Box::new(else_expr),
-        span,
+    let then_branch = parse_if_branch(source_id, inner.next().expect("if then"));
+    let else_pair = inner.next().expect("if else");
+    let else_branch = match else_pair.as_rule() {
+        Rule::if_expr => (Vec::new(), Some(parse_if_expr(source_id, else_pair))),
+        _ => parse_if_branch(source_id, else_pair),
+    };
+    value_if(cond, then_branch, else_branch, span)
+}
+
+/// A value `if` from its condition and branches, each its statements and
+/// final expression: a plain `Expr::If` when no branch has statements,
+/// otherwise a match on the condition (see [`Expr::Match`]'s `if_form`).
+fn value_if(
+    cond: Expr,
+    then_branch: (Vec<Stmt>, Option<Expr>),
+    else_branch: (Vec<Stmt>, Option<Expr>),
+    span: flux_diagnostics::Span,
+) -> Expr {
+    match (then_branch, else_branch) {
+        // `if c { a } else { b }`, `… else if …`: a plain value `if`.
+        ((then_stmts, Some(then_expr)), (else_stmts, Some(else_expr)))
+            if then_stmts.is_empty() && else_stmts.is_empty() =>
+        {
+            Expr::If {
+                cond: Box::new(cond),
+                then_expr: Box::new(then_expr),
+                else_expr: Box::new(else_expr),
+                span,
+            }
+        }
+        // A branch with statements, or one that leaves (`return`): the
+        // arms `true` and `_` of a match on the condition, which already
+        // run statements before their value.
+        ((then_stmts, then_expr), (else_stmts, else_expr)) => {
+            let cond_span = cond.span();
+            Expr::Match {
+                scrutinee: Box::new(cond),
+                arms: vec![
+                    MatchArm {
+                        pattern: MatchPattern::Literal(Expr::Bool {
+                            value: true,
+                            span: cond_span,
+                        }),
+                        guard: None,
+                        stmts: then_stmts,
+                        expr: then_expr,
+                        span,
+                    },
+                    MatchArm {
+                        pattern: MatchPattern::Simple(Ident {
+                            name: "_".into(),
+                            span: cond_span,
+                        }),
+                        guard: None,
+                        stmts: else_stmts,
+                        expr: else_expr,
+                        span,
+                    },
+                ],
+                if_form: true,
+                span,
+            }
+        }
     }
+}
+
+/// A branch `{ stmts… expr }` of a value `if`: its statements, and its final
+/// expression (none when it leaves or ends in a statement).
+fn parse_if_branch(
+    source_id: SourceId,
+    pair: pest::iterators::Pair<'_, Rule>,
+) -> (Vec<Stmt>, Option<Expr>) {
+    split_tail(super::stmts::parse_block(source_id, pair).stmts)
+}
+
+/// A block's statements and its final expression. A last `if` with an
+/// `else` at every level is the block's value too (`else { if a { 1 } else
+/// { 2 } }`), as at the end of a function.
+fn split_tail(mut stmts: Vec<Stmt>) -> (Vec<Stmt>, Option<Expr>) {
+    let tail = match stmts.pop() {
+        Some(Stmt::Expr(e)) => Some(e),
+        Some(Stmt::If(i)) if has_else_everywhere(&i) => Some(if_stmt_value(i)),
+        Some(other) => {
+            stmts.push(other);
+            None
+        }
+        None => None,
+    };
+    (stmts, tail)
+}
+
+fn has_else_everywhere(i: &IfStmt) -> bool {
+    match &i.else_branch {
+        Some(ElseBranch::Block(_)) => true,
+        Some(ElseBranch::If(inner)) => has_else_everywhere(inner),
+        None => false,
+    }
+}
+
+/// `if c { … } else …` written as a statement, as a value.
+fn if_stmt_value(i: IfStmt) -> Expr {
+    let then_branch = split_tail(i.then_branch.stmts);
+    let else_branch = match i.else_branch {
+        Some(ElseBranch::If(inner)) => (Vec::new(), Some(if_stmt_value(*inner))),
+        Some(ElseBranch::Block(block)) => split_tail(block.stmts),
+        None => (Vec::new(), None),
+    };
+    value_if(i.cond, then_branch, else_branch, i.span)
 }
 
 pub(super) fn parse_expr_list(

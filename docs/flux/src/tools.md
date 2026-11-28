@@ -30,6 +30,16 @@ Importing a module the target lacks is E034: "`fs` is not available on target `w
 
 An unknown target is an error: "unknown target `mars`; the targets are `cli` and `web`". `web` can only be checked. Nothing builds or runs for it yet.
 
+## flux explain
+
+```bash
+flux explain E001
+flux explain e1
+flux explain 1
+```
+
+Prints the code's section of the [error-code chapter](./error-codes.md). Each spelling above selects E001. An unknown code exits 1. After a compile error, Flux prints a command for the first error code that has a section.
+
 ## flux test
 
 Any function named `test_*` with no parameters, in any `.fl` file under the project, is a test. It passes if it returns `Unit` or `true`, and fails on `false`, on any runtime error, or if its file does not compile. Each runs against a freshly initialized program.
@@ -79,6 +89,12 @@ flux fmt app.fl --check  # exit 1 if it would change
 ```
 
 There are no options, so all Flux code looks the same. A `match` stays on one line when it fits in 100 columns. Number spellings such as `1_000` and `0xff` are kept.
+
+A value `if` chain with statements in any branch uses block layout throughout. A plain chain stays on one line with `else if`; `else { if … }` becomes `else if …`. A one-statement arm written on the arm's line (`=> emit E()`, `=> n += 1`) stays there; a block arm stays a block, even with one statement; an empty block arm prints `{}`.
+
+The formatter keeps `//` comments between statements in functions and handlers: on their own line, after a statement on the same line, or before the closing brace. Comments on their own lines are re-indented.
+
+A comment inside an expression, such as between array elements, is still refused: "fmt cannot preserve a comment inside an expression yet; move it to its own line; the file was left unchanged". Move it to a line between statements.
 
 ## flux migrate
 

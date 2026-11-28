@@ -6,8 +6,10 @@ use flux_syntax::{parse_program, Item, Stmt};
 /// Format Flux source. Returns formatted text, or diagnostics on parse failure.
 ///
 /// Formatting never drops text: comments between top-level items (leading,
-/// same-line trailing, and end-of-file) are kept in place. A comment inside an
-/// item cannot be placed yet, so such input is rejected and left unchanged.
+/// same-line trailing, and end-of-file) are kept in place, and so are
+/// comments between the statements of a block (on their own line, or after a
+/// statement on its line). A comment inside an expression cannot be placed
+/// yet, so such input is rejected and left unchanged.
 pub fn format_source(input: &str) -> Result<String, DiagnosticBag> {
     // Formatting recurses over the tree; see `flux_syntax::COMPILER_STACK`.
     stacker::grow(flux_syntax::COMPILER_STACK, || {
@@ -22,6 +24,7 @@ fn format_source_unbounded(input: &str) -> Result<String, DiagnosticBag> {
     };
     SOURCE.with(|s| s.replace(input.to_string()));
     let all_comments = scan_comments(input);
+    ALL.with(|a| a.replace(all_comments.clone()));
     let spans: Vec<Span> = program
         .items
         .iter()
@@ -45,18 +48,26 @@ fn format_source_unbounded(input: &str) -> Result<String, DiagnosticBag> {
                 out.push('\n');
             }
         }
-        if let Some(inside) = comments.next_if(|c| c.start < span.end) {
+        // Comments inside the item go to the statements of its blocks.
+        let mut inside = Vec::new();
+        while let Some(c) = comments.next_if(|c| c.start < span.end) {
+            inside.push(c);
+        }
+        PENDING.with(|p| *p.borrow_mut() = inside);
+        format_item(item, &mut out, 0);
+        let unplaced = PENDING.with(|p| std::mem::take(&mut *p.borrow_mut()));
+        let misplaced = MISPLACED.with(|m| m.take());
+        if let Some(c) = misplaced.or_else(|| unplaced.first().map(|c| (c.start, c.end))) {
             let mut diagnostics = DiagnosticBag::new();
             diagnostics.push(FluxError::Parse {
-                message: "fmt cannot preserve a comment inside a declaration yet; \
-                          the file was left unchanged"
+                message: "fmt cannot preserve a comment inside an expression yet; \
+                          move it to its own line; the file was left unchanged"
                     .into(),
-                span: span_to_miette(Span::new(SourceId(0), inside.start, inside.end)),
+                span: span_to_miette(Span::new(SourceId(0), c.0, c.1)),
                 source_id: SourceId(0),
             });
             return Err(diagnostics);
         }
-        format_item(item, &mut out, 0);
         let next_start = spans.get(i + 1).map_or(input.len(), |s| s.start);
         let line_end = input[span.end..]
             .find('\n')
@@ -86,6 +97,7 @@ fn format_source_unbounded(input: &str) -> Result<String, DiagnosticBag> {
 }
 
 /// Byte range of a `// …` comment (without its newline).
+#[derive(Clone, Copy)]
 struct Comment {
     start: usize,
     end: usize,
@@ -507,8 +519,84 @@ fn format_fn_like(
 }
 
 fn format_block(block: &flux_syntax::Block, out: &mut String, level: usize) {
-    for stmt in &block.stmts {
+    SOURCE.with(|source| {
+        ALL.with(|all| format_block_in(block, out, level, &source.borrow(), &all.borrow()))
+    })
+}
+
+/// [`format_block`] over the text and its comments (borrowed, not copied:
+/// nested blocks borrow them again).
+fn format_block_in(
+    block: &flux_syntax::Block,
+    out: &mut String,
+    level: usize,
+    input: &str,
+    all: &[Comment],
+) {
+    for (i, stmt) in block.stmts.iter().enumerate() {
+        let span = trim_trivia(input, stmt_span(stmt), all);
+        for c in take_comments(span.start) {
+            indent(out, level);
+            out.push_str(&input[c.start..c.end]);
+            out.push('\n');
+        }
         format_stmt(stmt, out, level);
+        // A comment left inside the statement sits in an expression.
+        if let Some(c) = PENDING.with(|p| p.borrow().first().map(|c| (c.start, c.end))) {
+            if c.0 < span.end {
+                MISPLACED.with(|m| {
+                    m.get().is_none().then(|| m.set(Some(c)));
+                });
+                take_comments(span.end);
+            }
+        }
+        let next = block
+            .stmts
+            .get(i + 1)
+            .map_or(block.span.end, |n| stmt_span(n).start);
+        let line_end = input[span.end..]
+            .find('\n')
+            .map_or(input.len(), |n| span.end + n);
+        if let Some(c) = take_comments(line_end.min(next)).into_iter().next() {
+            // Same-line trailing comment: back onto the statement's last line.
+            if out.ends_with('\n') {
+                out.pop();
+            }
+            out.push(' ');
+            out.push_str(&input[c.start..c.end]);
+            out.push('\n');
+        }
+    }
+    // Comments after the last statement, before the closing brace.
+    for c in take_comments(block.span.end) {
+        indent(out, level);
+        out.push_str(&input[c.start..c.end]);
+        out.push('\n');
+    }
+}
+
+/// Removes and returns the pending comments that start before `pos`.
+fn take_comments(pos: usize) -> Vec<Comment> {
+    PENDING.with(|p| {
+        let mut p = p.borrow_mut();
+        let n = p.iter().take_while(|c| c.start < pos).count();
+        p.drain(..n).collect()
+    })
+}
+
+fn stmt_span(stmt: &Stmt) -> Span {
+    match stmt {
+        Stmt::Let(s) => s.span,
+        Stmt::Assign(s) => s.span,
+        Stmt::Emit(s) => s.span,
+        Stmt::Return(s) => s.span,
+        Stmt::Break(span) | Stmt::Continue(span) => *span,
+        Stmt::Expr(e) => e.span(),
+        Stmt::If(s) => s.span,
+        Stmt::While(s) => s.span,
+        Stmt::For(s) => s.span,
+        Stmt::Watch(s) => s.span,
+        Stmt::On(s) => s.span,
     }
 }
 
@@ -518,6 +606,12 @@ thread_local! {
     static LEVEL: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// The text being formatted, for literals written as `1_000` or `0xff`.
     static SOURCE: std::cell::RefCell<String> = const { std::cell::RefCell::new(String::new()) };
+    /// Every comment of the text being formatted.
+    static ALL: std::cell::RefCell<Vec<Comment>> = const { std::cell::RefCell::new(Vec::new()) };
+    /// Comments inside the item being printed, not placed yet, in order.
+    static PENDING: std::cell::RefCell<Vec<Comment>> = const { std::cell::RefCell::new(Vec::new()) };
+    /// The first comment found inside an expression, which fmt cannot place.
+    static MISPLACED: std::cell::Cell<Option<(usize, usize)>> = const { std::cell::Cell::new(None) };
 }
 
 /// A raw string (`r"..."`, `r#"..."#`) as the source writes it.
@@ -694,10 +788,116 @@ fn format_if_stmt(stmt: &flux_syntax::IfStmt, out: &mut String, level: usize) {
 }
 
 /// An arm that is only `return …`/`break`/`continue`, on the arm's line.
+/// Whether the source writes `arm`'s body as a `{ … }` block.
+fn written_as_block(arm: &flux_syntax::MatchArm) -> bool {
+    SOURCE.with(|s| {
+        let source = s.borrow();
+        source
+            .get(arm.span.start..arm.span.end)
+            .and_then(|text| text.split_once("=>"))
+            .is_some_and(|(_, body)| body.trim_start().starts_with('{'))
+    })
+}
+
 fn jump_fmt(stmt: &flux_syntax::Stmt) -> String {
     let mut out = String::new();
     format_stmt(stmt, &mut out, 0);
     out.trim().to_string()
+}
+
+/// Whether an `else` part of a value `if` chain has a branch with statements.
+fn if_chain_has_block(expr: &flux_syntax::Expr) -> bool {
+    match expr {
+        flux_syntax::Expr::Match { if_form: true, .. } => true,
+        flux_syntax::Expr::If { else_expr, .. } => if_chain_has_block(else_expr),
+        _ => false,
+    }
+}
+
+/// A value `if` whose branches hold statements (parsed as a match on the
+/// condition with arms `true` and `_`), printed as the `if` it was written as.
+fn if_form_fmt(cond: &flux_syntax::Expr, arms: &[flux_syntax::MatchArm]) -> String {
+    let base = LEVEL.with(|l| l.get());
+    let branch = |arm: &flux_syntax::MatchArm| {
+        let mut out = String::from("{\n");
+        for stmt in &arm.stmts {
+            format_stmt(stmt, &mut out, base + 1);
+        }
+        if let Some(value) = &arm.expr {
+            LEVEL.with(|l| l.set(base + 1));
+            indent(&mut out, base + 1);
+            out.push_str(&expr_fmt(value));
+            out.push('\n');
+        }
+        LEVEL.with(|l| l.set(base));
+        indent(&mut out, base);
+        out.push('}');
+        out
+    };
+    let mut out = format!("if {} {}", expr_fmt(cond), branch(&arms[0]));
+    match &arms[1] {
+        flux_syntax::MatchArm {
+            stmts,
+            expr: Some(e @ flux_syntax::Expr::Match { if_form: true, .. }),
+            ..
+        } if stmts.is_empty() => {
+            out.push_str(" else ");
+            out.push_str(&expr_fmt(e));
+        }
+        flux_syntax::MatchArm {
+            stmts,
+            expr:
+                Some(flux_syntax::Expr::If {
+                    cond,
+                    then_expr,
+                    else_expr,
+                    ..
+                }),
+            ..
+        } if stmts.is_empty() => {
+            out.push_str(" else ");
+            out.push_str(&if_blocks_fmt(cond, then_expr, else_expr));
+        }
+        arm => {
+            out.push_str(" else ");
+            out.push_str(&branch(arm));
+        }
+    }
+    out
+}
+
+/// A plain value `if` in a chain that has a block branch elsewhere: printed
+/// with blocks too, so the whole chain has one layout.
+fn if_blocks_fmt(
+    cond: &flux_syntax::Expr,
+    then_expr: &flux_syntax::Expr,
+    else_expr: &flux_syntax::Expr,
+) -> String {
+    let base = LEVEL.with(|l| l.get());
+    let block = |e: &flux_syntax::Expr| {
+        LEVEL.with(|l| l.set(base + 1));
+        let value = expr_fmt(e);
+        LEVEL.with(|l| l.set(base));
+        let mut out = String::from("{\n");
+        indent(&mut out, base + 1);
+        out.push_str(&value);
+        out.push('\n');
+        indent(&mut out, base);
+        out.push('}');
+        out
+    };
+    let mut out = format!("if {} {} else ", expr_fmt(cond), block(then_expr));
+    match else_expr {
+        flux_syntax::Expr::If {
+            cond,
+            then_expr,
+            else_expr,
+            ..
+        } => out.push_str(&if_blocks_fmt(cond, then_expr, else_expr)),
+        e @ flux_syntax::Expr::Match { if_form: true, .. } => out.push_str(&expr_fmt(e)),
+        e => out.push_str(&block(e)),
+    }
+    out
 }
 
 /// Multi-line `match` for block arms or a long expression: arms one level in, block
@@ -722,6 +922,14 @@ fn match_block_fmt(scrutinee: &flux_syntax::Expr, arms: &[flux_syntax::MatchArm]
                 | flux_syntax::Stmt::Break(_)
                 | flux_syntax::Stmt::Continue(_))],
             ) => out.push_str(&jump_fmt(jump)),
+            // `=> emit E()`, `=> n += 1` stay on the arm's line when written
+            // there; a block with that one statement stays a block.
+            (None, [stmt @ (flux_syntax::Stmt::Emit(_) | flux_syntax::Stmt::Assign(_))])
+                if !written_as_block(arm) =>
+            {
+                out.push_str(&jump_fmt(stmt))
+            }
+            (None, []) => out.push_str("{}"),
             (value, stmts) => {
                 out.push_str("{\n");
                 for stmt in stmts {
@@ -903,12 +1111,23 @@ fn expr_fmt(expr: &flux_syntax::Expr) -> String {
             then_expr,
             else_expr,
             ..
+        } if if_chain_has_block(else_expr) => if_blocks_fmt(cond, then_expr, else_expr),
+        flux_syntax::Expr::If {
+            cond,
+            then_expr,
+            else_expr,
+            ..
         } => {
+            let rest = match else_expr.as_ref() {
+                // `else if …`, not `else { if … }`.
+                e @ (flux_syntax::Expr::If { .. }
+                | flux_syntax::Expr::Match { if_form: true, .. }) => expr_fmt(e),
+                e => format!("{{ {} }}", expr_fmt(e)),
+            };
             format!(
-                "if {} {{ {} }} else {{ {} }}",
+                "if {} {{ {} }} else {rest}",
                 expr_fmt(cond),
-                expr_fmt(then_expr),
-                expr_fmt(else_expr)
+                expr_fmt(then_expr)
             )
         }
         flux_syntax::Expr::Array { elems, .. } => {
@@ -923,6 +1142,12 @@ fn expr_fmt(expr: &flux_syntax::Expr) -> String {
                 .join(", ");
             format!("{} {{ {fs} }}", name.name)
         }
+        flux_syntax::Expr::Match {
+            scrutinee,
+            arms,
+            if_form: true,
+            ..
+        } => if_form_fmt(scrutinee, arms),
         flux_syntax::Expr::Match {
             scrutinee, arms, ..
         } if arms.iter().any(|a| !a.stmts.is_empty()) => match_block_fmt(scrutinee, arms),

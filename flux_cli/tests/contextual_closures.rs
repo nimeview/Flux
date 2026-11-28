@@ -116,7 +116,7 @@ fn contextual_typing_preserves_annotations_and_fallback_diagnostics() {
     assert_eq!(errors[0].code(), "E005");
     assert_eq!(
         errors[0].to_string(),
-        "type mismatch: expected `field `price``, found `Int64`"
+        "type mismatch: expected `field `price``, found `Int`"
     );
     assert_eq!(errors[0].help().unwrap().to_string(), "closure parameter `i` defaulted to `Int` because it had no type annotation or call-site hint; add an explicit annotation, e.g. `|i: YourType| ...`");
     let failure = compile(source_from("<annotation>", "import collections { map }\nstruct Item { price: Int }\nfn main() { let xs = [Item { price: 3 }]\nlet ys = map(xs, |i: Int| i + 1) }\n")).err().expect("annotation mismatch");
@@ -130,7 +130,7 @@ fn contextual_typing_preserves_annotations_and_fallback_diagnostics() {
     assert_eq!(error.code(), "E005");
     assert_eq!(
         error.to_string(),
-        "type mismatch: expected `Item`, found `Int64`"
+        "type mismatch: expected `Item`, found `Int`"
     );
     assert!(error.help().is_none());
 }

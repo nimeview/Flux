@@ -322,7 +322,7 @@ fn outside_code_uses_only_pub_members_and_never_assigns() {
     );
     rejects(
         &format!("{C}act fn main() {{\n    let c = C(1)\n    emit c.Inc(\"x\")\n}}\n"),
-        &["expected `Int64`, found `String`"],
+        &["expected `Int`, found `String`"],
     );
     rejects(
         &format!("{C}fn main() {{\n    let c = C(1)\n    let f = c.reset\n}}\n"),
@@ -677,4 +677,61 @@ fn main() {
 "#,
         "  w1 sees 1\n  w1 sees 2\n  w2 sees 2\ntick 1\ntick 2\ndone\n",
     );
+}
+
+/// A parameter is fixed for the instance's life: no member may assign it,
+/// directly, by `+=`, or from a handler (0.5: it used to run).
+#[test]
+fn a_parameter_cannot_be_assigned() {
+    for body in [
+        "pub act fn reset() { x = 2 }",
+        "pub act fn bump() { x += 1 }",
+        "on Tick { x = 0 }",
+    ] {
+        let src = format!(
+            "event Tick\n\nlive fn C(x: Int) {{\n    pub fn get() -> Int {{ x }}\n    {body}\n}}\n\nfn main() {{\n}}\n"
+        );
+        rejects(
+            &src,
+            &[
+                "E009",
+                "a parameter of `live fn C` is fixed",
+                "let mut x_now = x",
+            ],
+        );
+    }
+}
+
+/// A module-level alias of an instance is the same instance, as a local
+/// alias is (0.5: `b.inc()` was E019 on `C`).
+#[test]
+fn a_module_alias_is_the_same_instance() {
+    prints(
+        "import io { println }\n\nlive fn C() {\n    pub let mut n = 0\n    pub act fn inc() {\n        n += 1\n    }\n}\n\nlet a = C()\n\nlet b = a\n\nact fn main() {\n    b.inc()\n    println(\"{a.n} {a == b}\")\n}\n",
+        "1 true\n",
+    );
+}
+
+/// `flux check` rejects a cycle through an instance's member, as `flux run`
+/// does (0.5: check passed it).
+#[test]
+fn check_rejects_a_cycle_through_a_member() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("main.fl"),
+        "live fn C() {\n    pub derived d: Int = total + 1\n}\n\nlet c = C()\n\nderived total: Int = c.d\n\nfn main() {\n}\n",
+    )
+    .unwrap();
+    for args in [
+        &["check", "main.fl"][..],
+        &["run", "--quiet", "main.fl"][..],
+    ] {
+        let cmd = args[0];
+        let (status, _, stderr) = flux(dir.path(), args);
+        assert_eq!(status, Some(1), "{cmd}: {stderr}");
+        assert!(
+            stderr.contains("E010") && stderr.contains("C.d → total → C.d"),
+            "{cmd}: {stderr}"
+        );
+    }
 }

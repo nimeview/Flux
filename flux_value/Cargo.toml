@@ -5,4 +5,5 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+smallvec = "1.15"
 stacker = "0.1"

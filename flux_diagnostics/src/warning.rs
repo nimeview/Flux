@@ -9,6 +9,7 @@ pub enum FluxWarning {
     #[error("unused binding `{name}`")]
     #[diagnostic(
         code(flux::E015),
+        severity(Warning),
         help("remove the binding or reference it from a derived value, watch, or handler")
     )]
     UnusedBinding {
@@ -17,10 +18,22 @@ pub enum FluxWarning {
         span: miette::SourceSpan,
         source_id: SourceId,
     },
+    #[error("unused local `{name}`")]
+    #[diagnostic(
+        code(flux::E015),
+        severity(Warning),
+        help("remove it, or name it `_{name}` to keep it unused")
+    )]
+    UnusedLocal {
+        name: String,
+        #[label("never read")]
+        span: miette::SourceSpan,
+        source_id: SourceId,
+    },
     /// An older form that still works. `replacement` is the exact text that
     /// replaces `span`, applied by the editor's quick fix and `flux migrate`.
     #[error("{message}")]
-    #[diagnostic(code(flux::E026))]
+    #[diagnostic(code(flux::E026), severity(Warning))]
     Deprecated {
         message: String,
         replacement: String,
@@ -30,7 +43,7 @@ pub enum FluxWarning {
     },
     /// An older form whose replacement cannot be written as one edit.
     #[error("{message}")]
-    #[diagnostic(code(flux::E026))]
+    #[diagnostic(code(flux::E026), severity(Warning))]
     OldForm {
         message: String,
         #[label("older form")]
@@ -40,7 +53,7 @@ pub enum FluxWarning {
     /// Watches that wake each other in a cycle.
     #[error("{message}")]
     #[diagnostic(
-        code(flux::E029),
+        code(flux::E029), severity(Warning),
         help("each watch runs at most once per batch, so the last change in the cycle does not wake the watch it reaches; compute the value with `let`, or change it in an `on` handler")
     )]
     WatchCycle {
@@ -51,7 +64,7 @@ pub enum FluxWarning {
     },
     /// A collection function called for a result nobody uses.
     #[error("the result of `{name}` is not used")]
-    #[diagnostic(code(flux::E030), help("{help}"))]
+    #[diagnostic(code(flux::E030), severity(Warning), help("{help}"))]
     UnusedResult {
         name: String,
         help: String,
@@ -64,6 +77,7 @@ pub enum FluxWarning {
     #[error("`{file}` is not imported: `{name}` is a library module")]
     #[diagnostic(
         code(flux::E035),
+        severity(Warning),
         help("rename the file to import it; `import {name}` always means the library")
     )]
     ShadowedLibraryModule {
@@ -76,7 +90,7 @@ pub enum FluxWarning {
     /// A watch changes a source.
     #[error("this watch changes `{name}`")]
     #[diagnostic(
-        code(flux::E028),
+        code(flux::E028), severity(Warning),
         help("a watch reacts to changes; compute `{name}` with `let`, or `emit` an event whose `on` handler changes it")
     )]
     WatchWrites {
@@ -100,6 +114,7 @@ impl FluxWarning {
     pub fn source_id(&self) -> SourceId {
         match self {
             Self::UnusedBinding { source_id, .. }
+            | Self::UnusedLocal { source_id, .. }
             | Self::Deprecated { source_id, .. }
             | Self::WatchWrites { source_id, .. }
             | Self::ShadowedLibraryModule { source_id, .. }
@@ -111,7 +126,7 @@ impl FluxWarning {
 
     pub fn code(&self) -> &'static str {
         match self {
-            Self::UnusedBinding { .. } => "E015",
+            Self::UnusedBinding { .. } | Self::UnusedLocal { .. } => "E015",
             Self::Deprecated { .. } | Self::OldForm { .. } => "E026",
             Self::WatchWrites { .. } => "E028",
             Self::ShadowedLibraryModule { .. } => "E035",
@@ -124,6 +139,7 @@ impl FluxWarning {
         let source_id = self.source_id();
         let miette_span = match self {
             Self::UnusedBinding { span, .. }
+            | Self::UnusedLocal { span, .. }
             | Self::Deprecated { span, .. }
             | Self::WatchWrites { span, .. }
             | Self::ShadowedLibraryModule { span, .. }
@@ -143,6 +159,7 @@ impl FluxWarning {
                 replacement: replacement.clone(),
             }),
             Self::UnusedBinding { .. }
+            | Self::UnusedLocal { .. }
             | Self::WatchWrites { .. }
             | Self::ShadowedLibraryModule { .. }
             | Self::WatchCycle { .. }

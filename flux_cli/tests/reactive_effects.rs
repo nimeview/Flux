@@ -353,10 +353,32 @@ fn migrate_fixes_every_writing_fn_in_one_go() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join("main.fl"), &src).unwrap();
     let (_, _, stderr) = flux(dir.path(), &["check", "main.fl"]);
-    assert_eq!(stderr.matches("E027").count(), 9, "{stderr}");
+    assert_eq!(stderr.matches("flux::E027").count(), 9, "{stderr}");
     flux(dir.path(), &["migrate", "--write", "main.fl"]);
     let after = std::fs::read_to_string(dir.path().join("main.fl")).unwrap();
     assert_eq!(after.matches("act fn f").count(), 9, "{after}");
     let (status, _, stderr) = flux(dir.path(), &["check", "main.fl"]);
     assert_eq!(status, Some(0), "{stderr}");
+}
+
+/// The E029 check is one pass over the graph: a watch at the end of 2,000
+/// chained derived values checks quickly (0.5: the old fixed point took a
+/// round per link, 9.5 s for 1,000 on a release build).
+#[test]
+fn a_long_derived_chain_with_a_watch_checks_quickly() {
+    let mut src = String::from("let mut s = 0\n\nderived d0 = s + 1\n");
+    for i in 1..2000 {
+        src.push_str(&format!("derived d{i} = d{} + 1\n", i - 1));
+    }
+    src.push_str("\nwatch d1999 {\n}\n\nfn main() {\n}\n");
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("main.fl"), &src).unwrap();
+    let started = std::time::Instant::now();
+    let (status, _, stderr) = flux(dir.path(), &["check", "main.fl"]);
+    assert_eq!(status, Some(0), "{stderr}");
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(10),
+        "{:?}",
+        started.elapsed()
+    );
 }

@@ -336,7 +336,7 @@ fn text(s: &str) -> RuntimeValue {
 }
 
 fn color(variant: &str, payload: Option<RuntimeValue>) -> RuntimeValue {
-    RuntimeValue::user_enum("Color".into(), variant.into(), payload)
+    RuntimeValue::user_enum("Color", variant, payload)
 }
 
 /// Values from the host cross into compiled code and back unchanged.

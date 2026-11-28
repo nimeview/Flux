@@ -2,7 +2,9 @@
 
 [Introduction](./introduction.md)
 
-[What changed in 0.4](./whats-new.md)
+[What changed in 0.5](./whats-new.md)
+
+[What changed in 0.4](./whats-new-0.4.md)
 
 [What changed in 0.3](./whats-new-0.3.md)
 
@@ -18,4 +20,5 @@
 - [Tools](./tools.md)
 - [The standard library](./stdlib.md)
 - [Reading errors](./reading-errors.md)
+- [Error codes](./error-codes.md)
 - [Status and limits](./status.md)

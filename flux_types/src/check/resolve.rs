@@ -60,10 +60,12 @@ pub(super) fn resolve_hir_type(
             match resolve_type_name(name, *span) {
                 Ok(t) => Some(t),
                 Err((name, span)) => {
+                    let help = unknown_type_help(ctx, &name);
                     diagnostics.push(FluxError::UnknownType {
                         name,
                         span: span_to_miette(span),
                         source_id: span.source,
+                        help,
                     });
                     Some(Type::Error)
                 }
@@ -157,10 +159,12 @@ pub(super) fn resolve_hir_type(
                 match resolve_type_name(name, *span) {
                     Ok(t) => Some(t),
                     Err((name, span)) => {
+                        let help = unknown_type_help(ctx, &name);
                         diagnostics.push(FluxError::UnknownType {
                             name,
                             span: span_to_miette(span),
                             source_id: span.source,
+                            help,
                         });
                         Some(Type::Error)
                     }
@@ -259,4 +263,22 @@ pub(crate) fn resolve_hir_type_simple(ty: &HirType) -> Type {
 /// Whether values of `ty` can be map keys.
 pub(crate) fn is_map_key(ty: &Type) -> bool {
     ty.is_error() || ty.is_integer() || matches!(ty, Type::String | Type::Bool | Type::Char)
+}
+
+/// E007's help: a type with a close name, as the program would write it.
+fn unknown_type_help(ctx: &TypeCheckContext, name: &str) -> Option<String> {
+    const LIBRARY: &[&str] = &[
+        "Int", "Int8", "Int16", "Int32", "Int64", "UInt8", "UInt16", "UInt32", "UInt64", "Float",
+        "Float32", "Float64", "Bool", "Char", "String", "Bytes", "Unit", "Option", "Result", "Map",
+    ];
+    let user: Vec<String> = ctx
+        .type_names()
+        .map(|n| flux_value::type_display_name(n).to_string())
+        .collect();
+    let candidates = LIBRARY
+        .iter()
+        .copied()
+        .chain(user.iter().map(String::as_str));
+    flux_diagnostics::did_you_mean(name, candidates)
+        .map(|close| format!("a type with a similar name exists: `{close}`"))
 }

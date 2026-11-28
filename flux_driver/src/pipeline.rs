@@ -617,8 +617,12 @@ fn finish_lower(
 
     if options.phase == CompilePhase::Check {
         // Lowering finds what only it can see, such as a cycle among
-        // initializers; `check` must not pass what `run` rejects.
-        if flux_ir::lower_to_ir(&hir, source.id, diagnostics).is_none() || diagnostics.has_errors()
+        // initializers or through an instance's members; `check` must not
+        // pass what `run` rejects, so it lowers the same resolved program.
+        let mut resolved = hir.clone();
+        flux_types::resolve_method_calls(&mut resolved, &typed);
+        if flux_ir::lower_to_ir(&resolved, source.id, diagnostics).is_none()
+            || diagnostics.has_errors()
         {
             return Err(CompileFailed::new(
                 source,
@@ -727,7 +731,18 @@ fn store_cache(project_root: &Path, key: &str, ir: &CompiledProgram) {
 fn build_type_map(hir: &HirProgram, typed: &TypedProgram) -> HashMap<String, String> {
     hir.names
         .iter()
-        .filter_map(|(id, name)| typed.types.get(id).map(|t| (name.clone(), t.display())))
+        .filter_map(|(id, name)| {
+            typed.types.get(id).map(|t| {
+                // A module binding keeps its kind (the REPL carries sources
+                // over by it); the value's type reads as the program writes it.
+                let shown = match t {
+                    flux_types::Type::Cell(inner) => format!("Cell<{}>", inner.display()),
+                    flux_types::Type::Read(inner) => format!("Read<{}>", inner.display()),
+                    other => other.display(),
+                };
+                (name.clone(), shown)
+            })
+        })
         .collect()
 }
 

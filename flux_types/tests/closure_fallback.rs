@@ -22,7 +22,7 @@ fn fallback_field_error_explains_the_parameter_default_once() {
     assert_eq!(error.code(), "E005");
     assert_eq!(
         error.to_string(),
-        "type mismatch: expected `field `total``, found `Int64`"
+        "type mismatch: expected `field `total``, found `Int`"
     );
     assert_eq!(error.help().unwrap().to_string(),
         "closure parameter `t` defaulted to `Int` because it had no type annotation or call-site hint; add an explicit annotation, e.g. `|t: YourType| ...`");

@@ -55,7 +55,7 @@ balance=0 doubled=0 over=false
 
 This is the one place where `let` means something different at the top level from inside a function, and it is the first thing to remember about Flux.
 
-Derived values must be pure. They cannot print, write files, or `emit`, directly or through anything they call, and they cannot use loops:
+Derived values must be pure. A value `if` or `match` may choose a branch, and that branch may bind or assign a local before its final expression. It cannot `emit`, write a module binding, or use `if`, `while`, or `for` statements inside the branch. Printing and I/O are still E017, including when reached through a call:
 
 ```flux,error=E017
 import io { println }
@@ -408,6 +408,8 @@ n=11
 The module's watch runs first, then each instance's watch in creation order. `act fn main` is one batch, so its watches run after it returns. For `a`, `Inc` raises `n` to 5, `reset` puts it back to 0, and `Tick` adds 1. `b` receives only `Tick`, so its `n` becomes 11. The print in `main` sees these values before the watches run.
 
 A component may contain `let`, `let mut`, `derived`, `event`, `on`, `watch`, and functions (`fn`, `act fn`, `track fn`). Each member may be `pub`. A member names one value; it cannot use a destructuring pattern. A member function cannot have type parameters, `mut` parameters, or `mut self`. A component parameter cannot be `mut`. Each instance keeps its own copy of its parameters. They are fixed for its life, and reading them is not a reactive read.
+
+Assigning a parameter with `x = …` or `x += …`, including in an `act fn` or `on` handler, is E009. Keep a changing copy in a member, `let mut x_now = x`, and assign that. In `Counter` above, `n` is the changing copy of `start`.
 
 Making an instance is an action, like calling an `act fn`. Module initialization, `on` handlers, `act fn`s, and functions may make instances. A derived value, `const`, or `track fn` that makes one is E008. A module-level `let` whose value makes an instance runs once at startup. For example, `let label = Label(a, "a")` reads the module binding `a` then; it is not a derived value.
 

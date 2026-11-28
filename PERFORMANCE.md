@@ -411,6 +411,18 @@ What these workloads showed:
 - Instance members are found by their internal names without first trying the global table.
 - A projection node for `let mut current`, discussed for components, was not needed. No benchmark showed the cost.
 
+## 0.5 VM values and calls (2026-11-27)
+
+Retired instructions on the VM, before and after the value and call changes:
+
+| Workload | Before | After | Change |
+|----------|--------|-------|--------|
+| binary-trees (depth 12) | 16.8 billion | 9.7 billion | -42% |
+| Comparison study todo-list scenario | 5.3 billion | 4.4 billion | -16% |
+| fib(30) | 7.4 billion | 7.0 billion | -5% |
+
+Struct and enum values now share their type, variant, and field names (`Arc<str>`). Up to two fields sit inline, sorted by name; more fields use a heap allocation. The old layout used a `HashMap` with an owned name for each field. Calls look up user functions first with a fast hash. On the 0.4 benchmark workloads, instruction counts changed by 0 to -1.5%, with no regression. The IR cache version changed; old entries are rebuilt. Language behavior is unchanged.
+
 ## Findings
 
 1. **Arrays were copied quadratically (fixed).** `Value::Array(Vec<Value>)` has full value semantics, so every read of a local array (`len(xs)`, `get(xs, i)`, passing it to a function) deep-clones it, nested structs included. `xs = push(xs, v)` copies it as well, because the old value is still held by `xs` during the call. Doubling the size roughly quadruples the time, for building (`push`: 500 → 0.3 s, 1,000 → 0.9 s, 2,000 → 3.6 s) and for indexed scanning (1,000 → 1.1 s, 2,000 → 4.2 s). Fix:

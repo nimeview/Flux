@@ -119,6 +119,14 @@ pub fn report_errors(
         render_diagnostic(&handler, source, error.clone())?;
     }
     note_hidden(bag.errors.len(), "error");
+    if let Some(code) = bag
+        .errors
+        .iter()
+        .map(|e| e.code())
+        .find(|code| crate::explain::explain(code).is_some())
+    {
+        eprintln!("For more about this error, run `flux explain {code}`.");
+    }
     Err(())
 }
 

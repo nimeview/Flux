@@ -98,6 +98,8 @@ pub struct SymbolTable {
     /// Module `let` bindings declared without `mut` (still reactive sources;
     /// used only to suggest `const` in E002).
     pub immutable_lets: std::collections::HashSet<SymbolId>,
+    /// Module `let`s whose value makes a component instance (`let c = C()`).
+    pub instance_lets: std::collections::HashSet<SymbolId>,
     /// Trait impl methods keyed by `(receiver type tag, method name)`, populated as
     /// `impl Trait for Type` blocks are lowered. Used for exact `x.method(...)` dispatch.
     pub trait_impl_index: HashMap<(String, String), SymbolId>,
@@ -224,6 +226,7 @@ impl SymbolTable {
             const_bindings: std::collections::HashSet::new(),
             constants: std::collections::HashSet::new(),
             immutable_lets: std::collections::HashSet::new(),
+            instance_lets: std::collections::HashSet::new(),
             trait_impl_index: HashMap::new(),
             type_bounds: HashMap::new(),
             mut_params: HashMap::new(),
@@ -415,6 +418,21 @@ impl SymbolTable {
             }
         }
         None
+    }
+
+    /// Every name the code at this point can use, as written (internal
+    /// names left out).
+    pub fn visible_names(&self) -> Vec<String> {
+        let mut names: Vec<String> = self
+            .scopes
+            .iter()
+            .flat_map(|scope| scope.symbols.keys())
+            .filter(|name| !name.starts_with("__"))
+            .cloned()
+            .collect();
+        names.sort();
+        names.dedup();
+        names
     }
 
     pub fn lookup_by_id(&self, id: SymbolId) -> Option<&Symbol> {

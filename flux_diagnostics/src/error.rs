@@ -22,6 +22,9 @@ pub enum FluxError {
         #[label("not found")]
         span: miette::SourceSpan,
         source_id: SourceId,
+        /// A close name in scope, or the library import that provides it.
+        #[help]
+        help: Option<String>,
     },
 
     #[error("cannot read reactive `{name}` in a pure function")]
@@ -89,6 +92,9 @@ pub enum FluxError {
         #[label("unknown event")]
         span: miette::SourceSpan,
         source_id: SourceId,
+        /// A close name that exists.
+        #[help]
+        help: Option<String>,
     },
 
     #[error("unknown type `{name}`")]
@@ -98,6 +104,9 @@ pub enum FluxError {
         #[label("unknown type")]
         span: miette::SourceSpan,
         source_id: SourceId,
+        /// A close name that exists.
+        #[help]
+        help: Option<String>,
     },
 
     #[error("control flow `{construct}` is not allowed in a derived expression")]
@@ -109,6 +118,30 @@ pub enum FluxError {
     )]
     InvalidControlFlowInDerived {
         construct: String,
+        #[label("not allowed here")]
+        span: miette::SourceSpan,
+        source_id: SourceId,
+    },
+
+    /// A closure assigns a local it captured: it holds a copy.
+    #[error("a closure cannot change `{name}`: it holds a copy of it")]
+    #[diagnostic(
+        code(flux::E009),
+        help("a closure gets the value `{name}` had when the closure was made, so a change inside it would be lost; return the new value from the closure, or use a `for` loop instead")
+    )]
+    AssignToCaptured {
+        name: String,
+        #[label("captured by the closure")]
+        span: miette::SourceSpan,
+        source_id: SourceId,
+    },
+
+    /// `snap` in a derived value, or a reactive read in a `const`.
+    #[error("{message}")]
+    #[diagnostic(code(flux::E008), help("{help}"))]
+    UntrackedRead {
+        message: String,
+        help: String,
         #[label("not allowed here")]
         span: miette::SourceSpan,
         source_id: SourceId,
@@ -172,13 +205,16 @@ pub enum FluxError {
     },
 
     #[error("unknown export `{name}` in module `{module}`")]
-    #[diagnostic(code(flux::E014), help("check the module's public exports"))]
+    #[diagnostic(code(flux::E014))]
     UnknownExport {
         name: String,
         module: String,
         #[label("not exported")]
         span: miette::SourceSpan,
         source_id: SourceId,
+        /// A close export, or what the module exports.
+        #[help]
+        help: Option<String>,
     },
 
     #[error("{}", if *assigned {
@@ -222,16 +258,16 @@ pub enum FluxError {
     },
 
     #[error("no method `{method}` for type `{ty}`")]
-    #[diagnostic(
-        code(flux::E019),
-        help("methods come from `impl Trait for {ty}`; add one that defines `{method}`")
-    )]
+    #[diagnostic(code(flux::E019))]
     UnknownMethod {
         method: String,
         ty: String,
         #[label("method not found")]
         span: miette::SourceSpan,
         source_id: SourceId,
+        /// A method of that type with a close name, or how to add one.
+        #[help]
+        help: Option<String>,
     },
 
     #[error("{message}")]
@@ -330,16 +366,15 @@ pub enum FluxError {
 
     /// A derived value, `const`, or `track fn` reaches an `act fn`, whose
     /// reads are not followed.
-    #[error("{place} cannot call the `act fn` `{act}`")]
-    #[diagnostic(
-        code(flux::E008),
-        help(
-            "an `act fn` is an action, and a derived value does not follow what it reads; write `track fn {act}` for a function that computes from sources"
-        )
-    )]
+    #[error("{place} cannot {what}")]
+    #[diagnostic(code(flux::E008), help("{help}"))]
     ActInPureContext {
         place: String,
         act: String,
+        /// "call the `act fn` `f`", "call the host function `f`", "make a
+        /// `C` instance".
+        what: String,
+        help: String,
         #[label("runs `{act}`")]
         span: miette::SourceSpan,
         source_id: SourceId,
@@ -353,6 +388,46 @@ pub enum FluxError {
         ty: String,
         help: String,
         #[label("not visible here")]
+        span: miette::SourceSpan,
+        source_id: SourceId,
+    },
+
+    /// A call with the wrong number of arguments.
+    #[error("{callee} takes {expected} but {given}")]
+    #[diagnostic(code(flux::E005))]
+    WrongArgCount {
+        callee: String,
+        expected: String,
+        given: String,
+        #[label("wrong number of arguments")]
+        span: miette::SourceSpan,
+        source_id: SourceId,
+        /// The callee's parameters, when known.
+        #[help]
+        help: Option<String>,
+    },
+
+    /// A `match` that some value of its scrutinee reaches no arm of.
+    #[error("this `match` does not cover {missing}")]
+    #[diagnostic(code(flux::E036), help("{help}"))]
+    NonExhaustiveMatch {
+        missing: String,
+        help: String,
+        #[label("not every case has an arm")]
+        span: miette::SourceSpan,
+        source_id: SourceId,
+    },
+
+    /// A `live fn` parameter is assigned: it is fixed for the instance's life.
+    #[error("cannot assign to `{name}`: a parameter of `live fn {component}` is fixed for the instance's life")]
+    #[diagnostic(
+        code(flux::E009),
+        help("keep a changing copy in a member: `let mut {name}_now = {name}`, and assign that")
+    )]
+    AssignToLiveParam {
+        name: String,
+        component: String,
+        #[label("parameter")]
         span: miette::SourceSpan,
         source_id: SourceId,
     },
@@ -446,6 +521,11 @@ impl FluxError {
             | Self::WriteOutsideAct { source_id, .. }
             | Self::UnsatisfiedBound { source_id, .. }
             | Self::ForeignSourceWrite { source_id, .. }
+            | Self::AssignToLiveParam { source_id, .. }
+            | Self::NonExhaustiveMatch { source_id, .. }
+            | Self::WrongArgCount { source_id, .. }
+            | Self::UntrackedRead { source_id, .. }
+            | Self::AssignToCaptured { source_id, .. }
             | Self::InstanceMemberWrite { source_id, .. }
             | Self::NotOnTarget { source_id, .. }
             | Self::ActInPureContext { source_id, .. }
@@ -486,6 +566,11 @@ impl FluxError {
             Self::WriteOutsideAct { .. } => "E027",
             Self::UnsatisfiedBound { .. } => "E031",
             Self::ForeignSourceWrite { .. } => "E032",
+            Self::AssignToLiveParam { .. } => "E009",
+            Self::NonExhaustiveMatch { .. } => "E036",
+            Self::WrongArgCount { .. } => "E005",
+            Self::UntrackedRead { .. } => "E008",
+            Self::AssignToCaptured { .. } => "E009",
             Self::InstanceMemberWrite { .. } => "E032",
             Self::NotOnTarget { .. } => "E034",
             Self::ActInPureContext { .. } => "E008",
@@ -526,6 +611,11 @@ impl FluxError {
             | Self::WriteOutsideAct { span, .. }
             | Self::UnsatisfiedBound { span, .. }
             | Self::ForeignSourceWrite { span, .. }
+            | Self::AssignToLiveParam { span, .. }
+            | Self::NonExhaustiveMatch { span, .. }
+            | Self::WrongArgCount { span, .. }
+            | Self::UntrackedRead { span, .. }
+            | Self::AssignToCaptured { span, .. }
             | Self::InstanceMemberWrite { span, .. }
             | Self::NotOnTarget { span, .. }
             | Self::ActInPureContext { span, .. }
@@ -571,6 +661,20 @@ impl DiagnosticBag {
     /// Adds `error` unless the same error at the same place was already
     /// reported (the checker may infer one expression more than once).
     pub fn push(&mut self, error: FluxError) {
+        // A type that is `<error>` comes from an error already reported:
+        // a second message about it only repeats the first.
+        let cascade = matches!(
+            &error,
+            FluxError::TypeMismatch { expected, found, .. }
+                | FluxError::TypeMismatchWithHelp { expected, found, .. }
+                if expected.contains("<error>") || found.contains("<error>")
+        ) || matches!(
+            &error,
+            FluxError::NonExhaustiveMatch { missing, .. } if missing.contains("<error>")
+        );
+        if cascade && !self.errors.is_empty() {
+            return;
+        }
         let key = (error.code(), error.to_string(), error.label_span());
         let duplicate = self
             .errors

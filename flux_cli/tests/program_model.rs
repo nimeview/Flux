@@ -348,7 +348,7 @@ fn a_missing_variant_is_reported_at_any_nesting_depth() {
     let output = run(src, "--vm", &[]);
     assert_eq!(output.status.code(), Some(1), "{output:?}");
     assert!(
-        text(&output.stderr).contains("exhaustive match"),
+        text(&output.stderr).contains("does not cover `Tree::Leaf`"),
         "{}",
         text(&output.stderr)
     );
@@ -377,10 +377,7 @@ fn type_errors_name_a_recursive_type_briefly() {
     let output = run(src, "--vm", &[]);
     assert_eq!(output.status.code(), Some(1), "{output:?}");
     let stderr = text(&output.stderr);
-    assert!(
-        stderr.contains("expected `Int64`, found `Tree`"),
-        "{stderr}"
-    );
+    assert!(stderr.contains("expected `Int`, found `Tree`"), "{stderr}");
 }
 
 #[test]
@@ -431,7 +428,7 @@ fn closures_capture_in_handlers_watches_and_generics() {
 fn a_captured_error_and_a_bad_capture_are_reported() {
     let body = "import io { println }\nimport collections { map }\nfn main() {\n";
     let cases = [
-        ("    let mut k = 1\n    let ys = map([1], |x| match x {\n        1 => {\n            k = 2\n            k\n        },\n        _ => 0\n    })\n    println(\"{ys}\")\n", "immutable"),
+        ("    let mut k = 1\n    let ys = map([1], |x| match x {\n        1 => {\n            k = 2\n            k\n        },\n        _ => 0\n    })\n    println(\"{ys}\")\n", "a closure cannot change `k`"),
         ("    let k = \"s\"\n    println(\"{map([1], |x| x * k)}\")\n", "type mismatch"),
     ];
     for (code, needle) in cases {
@@ -514,7 +511,7 @@ fn function_types_are_checked() {
         ),
         (
             "fn g(f: fn(Int) -> Int) -> Int {\n    f(1, 2)\n}\nfn main() {\n}\n",
-            "type mismatch",
+            "`f` takes 1 argument but 2 were given",
         ),
         (
             "fn main() {\n    let f = double\n    let y = f == double\n}\n",

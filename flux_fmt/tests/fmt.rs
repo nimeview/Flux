@@ -105,10 +105,23 @@ fn keeps_comments_between_items() {
     );
 }
 
+/// 0.5: comments between statements stay where they are: on their own
+/// line, after a statement on its line, and before a closing brace.
 #[test]
-fn refuses_rather_than_dropping_a_comment_inside_an_item() {
-    let input = "fn f() -> Int {\n  // inside\n  2\n}\n";
-    assert!(format_source(input).is_err());
+fn keeps_comments_between_statements() {
+    assert_format_idempotent(
+        "fn f() -> Int {\n  // inside\n  let x = 1   // one\n  if x > 0 {\n      // nested\n      return 1\n  }\n  // last\n  2\n  // end\n}\n\non Tick {\n// handler\nlet y = 1\n}\n",
+        "fn f() -> Int {\n    // inside\n    let x = 1 // one\n    if x > 0 {\n        // nested\n        return 1\n    }\n    // last\n    2\n    // end\n}\n\non Tick {\n    // handler\n    let y = 1\n}\n",
+    );
+}
+
+/// A comment inside an expression has no place yet: refuse, keep the file.
+#[test]
+fn refuses_rather_than_dropping_a_comment_inside_an_expression() {
+    let input =
+        "fn f() -> Int {\n    let y = [\n        1, // one\n        2,\n    ]\n    y[0]\n}\n";
+    let err = format_source(input).expect_err("refuses");
+    assert!(format!("{:?}", err.errors).contains("inside an expression"));
 }
 
 #[test]
@@ -189,10 +202,9 @@ fn round_trips_if_and_match_operands() {
 fn round_trips_block_arms_without_a_value() {
     let input = "fn f(x: Int) {\n    let mut n = 0\n    match x {\n        0 => {\n            n = 1\n        },\n        _ => {\n            if x > 5 {\n                n = 2\n            }\n        }\n    }\n}\n";
     let out = format_source(input).expect("parse");
-    assert!(
-        !out.contains("0 => n = 1"),
-        "a statement arm must stay a block: {out}"
-    );
+    // A block with one statement stays a block (0.5: `0 => n = 1` also
+    // parses, and stays on its line when written so).
+    assert!(!out.contains("0 => n = 1"), "{out}");
     assert_eq!(format_source(&out).expect("reparse"), out);
 }
 
@@ -252,4 +264,39 @@ fn trailing_commas_and_semicolons_format_away() {
 fn raw_strings_keep_their_spelling() {
     let src = "fn main() {\n    let a = r\"no {x} \\n\"\n    let b = r#\"say \"hi\"\"#\n    let c = r##\"a \"# b\"##\n}\n";
     assert_format_idempotent(src, src);
+}
+
+/// 0.5: a value `if` with statements prints as the `if` it was written as;
+/// a chain with one block branch uses blocks throughout; plain chains stay
+/// on one line with `else if`.
+#[test]
+fn value_ifs_keep_their_form() {
+    assert_format_idempotent(
+        "derived mode = if t < 0 { \"cold\" } else if t < 20 {\nlet mid = t * 2\n\"mild {mid}\"\n} else { \"hot\" }\n",
+        "derived mode = if t < 0 {\n    \"cold\"\n} else if t < 20 {\n    let mid = t * 2\n    \"mild {mid}\"\n} else {\n    \"hot\"\n}\n",
+    );
+    // Statements only in the first branch: the rest of the chain uses
+    // blocks too.
+    assert_format_idempotent(
+        "let x = if a { let t = 1\nt } else if b { 2 } else { 3 }\n",
+        "let x = if a {\n    let t = 1\n    t\n} else if b {\n    2\n} else {\n    3\n}\n",
+    );
+    assert_format_idempotent(
+        "let g = if n > 90 { \"A\" } else if n > 50 { \"B\" } else { \"C\" }\n",
+        "let g = if n > 90 { \"A\" } else if n > 50 { \"B\" } else { \"C\" }\n",
+    );
+}
+
+/// One-statement arms stay on the arm's line; an empty block arm is `{}`;
+/// block arms may come without commas.
+#[test]
+fn statement_arms_stay_inline() {
+    assert_format_idempotent(
+        "on Hit(k) {\nmatch k {\nK::A => emit Boom(),\nK::B => n += 1,\nK::C => {}\n}\n}\n",
+        "on Hit(k) {\n    match k {\n        K::A => emit Boom(),\n        K::B => n += 1,\n        K::C => {}\n    }\n}\n",
+    );
+    assert_format_idempotent(
+        "fn f(x: Int) -> Int {\nmatch x {\n0 => {\nlet y = 1\ny\n}\n_ => 2,\n}\n}\n",
+        "fn f(x: Int) -> Int {\n    match x {\n        0 => {\n            let y = 1\n            y\n        },\n        _ => 2\n    }\n}\n",
+    );
 }

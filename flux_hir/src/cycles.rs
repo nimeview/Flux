@@ -219,22 +219,114 @@ fn reachable(start: usize, wakes: &[Vec<usize>]) -> HashSet<usize> {
 /// Adds to each unit what the units it names or emits do, until nothing
 /// changes.
 fn close(units: &mut HashMap<SymbolId, Effects>) {
-    loop {
-        let mut changed = false;
-        let ids: Vec<SymbolId> = units.keys().copied().collect();
-        for id in ids {
-            let mut e = units[&id].clone();
-            let before = (e.reads.len(), e.writes.len(), e.emits.len());
-            expand(&mut e, units);
-            if (e.reads.len(), e.writes.len(), e.emits.len()) != before {
-                units.insert(id, e);
-                changed = true;
+    // One pass over the strongly connected components, sinks first: a unit
+    // does its own effects and everything the units it names do. (A naive
+    // fixed point took a round per link of a chain: 9.5 s for 1,000 derived
+    // values in a row.)
+    let ids: Vec<SymbolId> = units.keys().copied().collect();
+    let index: HashMap<SymbolId, usize> = ids.iter().enumerate().map(|(i, id)| (*id, i)).collect();
+    let succ: Vec<Vec<usize>> = ids
+        .iter()
+        .map(|id| {
+            let e = &units[id];
+            let mut next: Vec<usize> = e
+                .reads
+                .iter()
+                .chain(&e.emits)
+                .filter_map(|n| index.get(n).copied())
+                .collect();
+            next.sort_unstable();
+            next.dedup();
+            next
+        })
+        .collect();
+    let mut closed: Vec<Option<Effects>> = vec![None; ids.len()];
+    for component in components(&succ) {
+        let mut e = Effects::default();
+        for &u in &component {
+            let own = &units[&ids[u]];
+            e.reads.extend(&own.reads);
+            e.writes.extend(&own.writes);
+            e.emits.extend(&own.emits);
+        }
+        for &u in &component {
+            for &v in &succ[u] {
+                // Components come sinks first, so `v` is done unless it is in
+                // this component.
+                if let Some(done) = &closed[v] {
+                    e.reads.extend(&done.reads);
+                    e.writes.extend(&done.writes);
+                    e.emits.extend(&done.emits);
+                }
             }
         }
-        if !changed {
-            return;
+        for &u in &component {
+            closed[u] = Some(e.clone());
         }
     }
+    for (u, e) in closed.into_iter().enumerate() {
+        if let Some(e) = e {
+            units.insert(ids[u], e);
+        }
+    }
+}
+
+/// Tarjan's strongly connected components of the graph `succ`, each
+/// component after every component it reaches. Iterative: a chain of
+/// thousands of values must not exhaust the stack.
+fn components(succ: &[Vec<usize>]) -> Vec<Vec<usize>> {
+    const NONE: usize = usize::MAX;
+    let n = succ.len();
+    let mut index = vec![NONE; n];
+    let mut low = vec![0; n];
+    let mut on_stack = vec![false; n];
+    let mut stack = Vec::new();
+    let mut out = Vec::new();
+    let mut next_index = 0;
+    for root in 0..n {
+        if index[root] != NONE {
+            continue;
+        }
+        // (node, position in its successor list)
+        let mut work = vec![(root, 0)];
+        index[root] = next_index;
+        low[root] = next_index;
+        next_index += 1;
+        stack.push(root);
+        on_stack[root] = true;
+        while let Some(&mut (v, ref mut pos)) = work.last_mut() {
+            if let Some(&w) = succ[v].get(*pos) {
+                *pos += 1;
+                if index[w] == NONE {
+                    index[w] = next_index;
+                    low[w] = next_index;
+                    next_index += 1;
+                    stack.push(w);
+                    on_stack[w] = true;
+                    work.push((w, 0));
+                } else if on_stack[w] {
+                    low[v] = low[v].min(index[w]);
+                }
+                continue;
+            }
+            work.pop();
+            if let Some(&(parent, _)) = work.last() {
+                low[parent] = low[parent].min(low[v]);
+            }
+            if low[v] == index[v] {
+                let mut component = Vec::new();
+                while let Some(w) = stack.pop() {
+                    on_stack[w] = false;
+                    component.push(w);
+                    if w == v {
+                        break;
+                    }
+                }
+                out.push(component);
+            }
+        }
+    }
+    out
 }
 
 /// Adds what the named functions and derived values, and the emitted events'

@@ -15,10 +15,10 @@ fn errors(source: &str) -> DiagnosticBag {
 #[test]
 fn reduce_requires_exact_accumulator_result_type_at_the_callback() {
     for (initial, callback, expected, found) in [
-        ("Acc { v: 0 }", "|a, b| a.v + b", "Acc", "Int64"),
-        ("0", "|a, b| \"s\"", "Int64", "String"),
-        ("0", "|a, b| 1.0", "Int64", "Float64"),
-        ("0", "|a, b| 1i8", "Int64", "Int8"),
+        ("Acc { v: 0 }", "|a, b| a.v + b", "Acc", "Int"),
+        ("0", "|a, b| \"s\"", "Int", "String"),
+        ("0", "|a, b| 1.0", "Int", "Float"),
+        ("0", "|a, b| 1i8", "Int", "Int8"),
     ] {
         let source = format!("import collections {{ reduce }}\nstruct Acc {{ v: Int }}\nlet n = reduce([1, 2], {initial}, {callback})\n");
         let diagnostics = errors(&source);
@@ -37,10 +37,10 @@ fn reduce_requires_exact_accumulator_result_type_at_the_callback() {
 #[test]
 fn filter_requires_bool_and_all_hofs_require_callable_callbacks() {
     for (call, expected, found) in [
-        ("filter([1], |i| i + 1)", "Bool", "Int64"),
-        ("map([1], 3)", "function callback", "Int64"),
-        ("filter([1], 3)", "function callback", "Int64"),
-        ("reduce([1], 0, 3)", "function callback", "Int64"),
+        ("filter([1], |i| i + 1)", "Bool", "Int"),
+        ("map([1], 3)", "function callback", "Int"),
+        ("filter([1], 3)", "function callback", "Int"),
+        ("reduce([1], 0, 3)", "function callback", "Int"),
     ] {
         let diagnostics = errors(&format!(
             "import collections {{ map, filter, reduce }}\nlet n = {call}\n"
@@ -62,7 +62,7 @@ fn unused_generic_closure_checks_known_types_without_assuming_unknown_types() {
         assert_eq!(diagnostics.errors.len(), 1, "{:?}", diagnostics.errors);
         assert_eq!(
             diagnostics.errors[0].to_string(),
-            "type mismatch: expected `numeric or String type`, found `Int64 and Bool`"
+            "type mismatch: expected `numeric or String type`, found `Int and Bool`"
         );
     }
     let diagnostics =
@@ -102,6 +102,6 @@ fn instantiated_generic_body_does_not_also_report_template_errors() {
     assert_eq!(diagnostics.errors.len(), 1, "{:?}", diagnostics.errors);
     assert_eq!(
         diagnostics.errors[0].to_string(),
-        "type mismatch: expected `numeric or String type`, found `Int64 and Bool`"
+        "type mismatch: expected `numeric or String type`, found `Int and Bool`"
     );
 }

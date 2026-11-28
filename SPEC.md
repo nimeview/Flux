@@ -72,6 +72,7 @@ The VM is the reference; the JIT must produce the same value or error, or fall b
 
 - An integer and a float compare (`==`, `<`, …) by their exact values: `9007199254740993 == 9007199254740992.0` is `false`, though the integer rounds to that float. `NaN` is unordered with every number, so only `!=` is `true`.
 - Mixed integer and float arithmetic converts the integer to the float operand's type: `Float32` with a `Float32` operand (which may round a large integer: `16777217 + 0.0f32` is `16777216.0`), and `Float64` otherwise. Operators on two integers keep the integer type, so `Int / Int` is `Int`: division by zero is a runtime error rather than a value of another type.
+- When a value `if` or `match` has branches of different number types, its type is their wider type. A narrower branch is converted when it runs: `if true { 3 } else { 2.5 }` is the `Float` value `3.0`. This also applies to derived values. Array elements still must have the same type; `[3, 2.5]` is **E005**. A trailing `if … else` statement used as a function or block value still requires exact branch types.
 - To handle integer overflow or division by zero as a value, use the [checked integer methods](#library-methods): `checked_add`, `checked_sub`, `checked_mul`, `checked_div`, `checked_rem`, `checked_neg`, and `checked_pow` return `None` instead of stopping with a runtime error.
 - A shift by a negative amount or by the left operand's type width or more is the runtime error `integer overflow`. Bits shifted out are dropped rather than causing overflow; signed right shift keeps the sign (`-8 >> 1` is `-4`). The JIT runs code with bit operations on the VM.
 - `<`, `<=`, `>`, `>=` also order two strings, by Unicode code point: `"a" < "b"`, and `"Z" < "a"`. A string and a number cannot be compared.
@@ -157,13 +158,13 @@ Each `.fl` file is a module with its own namespace. Inside a module, all of its 
 
 **Unused results.** A collection function (`push`, `set`, `pop`, `len`, `map`, `filter`, and the rest of the `collections` module) called as a statement whose value nobody uses warns (**E030**): they return a new value and leave their arguments as they were, so `push(xs, 3)` alone does nothing. So does a library method that only computes a value (`xs.sorted()`, `xs.len()`, `m.keys()`), unless the program declares a method or field of that name; the changing methods (`xs.push(3)`) store their result back instead. A block's last statement is checked only where its value is dropped (loop bodies, handlers, watches).
 
-**Block value.** A function's value is its last statement's: an expression, a `return`, or an `if … else` (including `else if` chains), whose value is the final expression of the branch that runs. Both branches must have compatible types, with no numeric widening. A final `match` whose arms all leave with `return` takes the returned values' type, as does an `if … else` whose branches all return (see [Block match arms](#block-match-arms)). Any other last statement (`let`, an assignment, `while`, `for`, an `if` without `else`) gives `Unit`. So `fn main() { let x = 7 }` exits with status 0, and `fn f() -> Int { 1\n let x = 2 }` is a type error.
+**Block value.** A function's value is its last statement's: an expression, a `return`, or an `if … else` (including `else if` chains), whose value is the final expression of the branch that runs. Statements may precede that expression in each branch. A final `if … else` in a branch of a value `if` is also that branch's value. For a trailing `if` statement used as a block's value, branches must have compatible types with no numeric widening; a branch that leaves with `return` takes no part in the `if`'s type. A value `if` used as an operand can widen number types (see [`if` and `match` as operands](#if-and-match-as-operands)). A final `match` whose arms all leave with `return` takes the returned values' type, as does an `if … else` whose branches all return (see [Block match arms](#block-match-arms)). Any other last statement (`let`, an assignment, `while`, `for`, an `if` without `else`) gives `Unit`. So `fn main() { let x = 7 }` exits with status 0, and `fn f() -> Int { 1\n let x = 2 }` is a type error.
 
 **Module initialization order.** Bindings with literal initializers have their values from the start. Computed initializers (`let a = f()`, `const C = B + 1`) run in dependency order: after the bindings they read, directly or through any function they call, and otherwise in declaration order. So a binding may use a `const` declared later. Top-level `if` and assignments keep their position. A cycle among initializers is an error.
 
 **Statement boundaries.** A newline does not end an expression that can continue: a binary operator at the end of a line, or a line starting with `+`, continues it. A line that starts with a binary `-` is a compile error rather than a silent subtraction from the line above (`f()` followed by a line `-1` used to mean `f() - 1`). To subtract, end the previous line with `-`; for a negative value on its own line, write `0 - 1` or bind it with `let`. Unary minus elsewhere (`let d = -a`, `2 * -3`) is unaffected.
 
-**Derived expressions** (right-hand side of derived bindings) must be pure: no `snap()`, loops, control flow, or calls to an `act fn` (**E008**), or side-effect builtins such as `print` / I/O (**E017**), including those reached through a function or method it calls, a function it passes to a call, or a function it calls through something holding it: a binding (which holds what its initializer and every assignment give it), a field, a tuple, a local, a closure's captured local, an event's value received by a handler, or a call's result (which holds what the function returns). A struct or tuple counts all its parts. Only holding a function is not running it, so `const out = println` is allowed. A function that reads a value with `snap()`, directly or through a call, cannot run there either (**E008**): the derived value would not follow that value. `snap()` is available in ordinary `fn` bodies for explicit snapshot reads.
+**Derived expressions** (right-hand side of derived bindings) must be pure. A value `if` or `match` may choose a branch, but its branch statements may only bind a local with `let`, assign a local, or evaluate an expression. They cannot `emit`, write a module binding, or use `if`/`while`/`for` statements. The same branch limit applies in a `const` initializer or module initializer. A derived value cannot use `snap()` or call an `act fn` (**E008**), or use side-effect builtins such as `print` / I/O (**E017**), including those reached through a function or method it calls, a function it passes to a call, or a function it calls through something holding it: a binding (which holds what its initializer and every assignment give it), a field, a tuple, a local, a closure's captured local, an event's value received by a handler, or a call's result (which holds what the function returns). A struct or tuple counts all its parts. Only holding a function is not running it, so `const out = println` is allowed. A function that reads a value with `snap()`, directly or through a call, cannot run there either (**E008**): the derived value would not follow that value. `snap()` is available in ordinary `fn` bodies for explicit snapshot reads.
 
 ## 5. Expressions
 
@@ -241,7 +242,7 @@ A **`mut self` method** changes the value it is called on and returns nothing: `
 
 **Declaration.** `live fn Name(params) { members }` declares a component. It may be `pub live fn`. Members are `let`, `let mut`, `derived`, `event`, `on`, `watch`, and functions (`fn`, `act fn`, `track fn`). Each member may be `pub`. A member names one value; destructuring patterns are not allowed. A member function cannot have type parameters, `mut` parameters, or `mut self`. A component parameter cannot be `mut`: "parameter `x` of a live fn cannot be `mut`: an instance keeps its own copy".
 
-**Instances.** Calling `Name(args)` makes a new instance. Each instance has its own copies of every member: sources, derived values, events, handlers, and watches. Inside the body, members and parameters use their bare names. A parameter is fixed for the instance's life. Reading it is not a reactive read.
+**Instances.** Calling `Name(args)` makes a new instance. Each instance has its own copies of every member: sources, derived values, events, handlers, and watches. Inside the body, members and parameters use their bare names. A parameter is fixed for the instance's life. Reading it is not a reactive read. Assigning it with `x = …` or `x += …`, including from an `act fn` or `on` handler, is **E009**: "cannot assign to `x`: a parameter of `live fn C` is fixed for the instance's life". The help is "keep a changing copy in a member: `let mut x_now = x`, and assign that".
 
 **Construction.** Making an instance is an action, like calling an `act fn`. It is allowed in module initialization, `on` handlers, `act fn`s, and functions. A derived value, `const`, or `track fn` that makes one is **E008**. A module-level `let` whose value makes an instance runs once, when the module starts. It reads its inputs then and is not a derived value. For example, `let label = Label(a, "a")` reads the module binding `a` once.
 
@@ -281,7 +282,7 @@ Recursive components support trees whose children change. A node can have `pub l
 
 ### Maps
 
-`Map[K, V]` maps keys to values. The key type `K` is an integer type, `String`, `Bool`, or `Char` (anything else is **E005**). A map is empty when created with `map_new()`; its type comes from an annotation (`let mut m: Map[String, Int] = map_new()`) or from the first `set`. Entries are kept in key order (integers by value, strings by code point), which makes `map_keys`, `map_values`, iteration over them, and the display form `{"a": 1, "b": 2}` deterministic.
+`Map[K, V]` maps keys to values. The key type `K` is an integer type, `String`, `Bool`, or `Char` (anything else is **E005**). `Map::new()` makes an empty map without an import. The `collections` function `map_new()` remains valid. The type comes from context, as in an annotation: `let mut m: Map[String, Int] = Map::new()`. An empty map without enough type context is **E005** and suggests an annotation with `Map::new()`; `{}` is not a map value and its parse hint uses `Map::new()` too. A program's own type named `Map` keeps its own `Map::new`. Entries are kept in key order (integers by value, strings by code point), which makes `map_keys`, `map_values`, iteration over them, and the display form `{"a": 1, "b": 2}` deterministic.
 
 | Operation | Result |
 |-----------|--------|
@@ -301,7 +302,9 @@ Maps are equal when they have the same keys with equal values. The JIT has no fo
 
 ### `if` and `match` as operands
 
-An `if … else` expression and a `match` are operands like any other value: `1 + if x > 0 { 1 } else { 2 }`, `10 + match x { 0 => 1, _ => 2 }`, `f(if c { a } else { b })`, `[match x { 1 => 7, _ => 8 }]`. An operator after one applies to its whole value: `match x { 1 => 3, _ => 4 } * 10`. The keywords end at a word boundary (`iffy` and `matches` are names). At the start of a statement, `if` is the `if` statement.
+The same `if … else` form works at the end of a function and as an operand: `let x = if c { a } else { b }`, `derived d = if c { a } else { b }`, `f(if c { a } else { b })`, and `1 + if c { 1 } else { 2 }`. Each branch is a block. It may have statements before its last expression. `else if` chains work in every position. A final `if … else` in a branch supplies that branch's value. In a function, a branch may leave with `return` instead of producing a value. The branches that produce values must have compatible types. Number types widen in a value `if`, and the narrower value is converted when its branch runs. A trailing `if` statement used as a function's value still requires exact branch types (see **Block value**). An `if` used as a value needs a final `else`.
+
+A `match` is also an operand: `10 + match x { 0 => 1, _ => 2 }` or `[match x { 1 => 7, _ => 8 }]`. Number types in value arms widen the same way: `match 0 { 0 => 3, _ => 2.5 }` is `3.0`. An operator after an `if` or `match` applies to its whole value: `match x { 1 => 3, _ => 4 } * 10`. The keywords end at a word boundary (`iffy` and `matches` are names). At the start of a statement, `if` is the `if` statement.
 
 ### Match guards
 
@@ -309,7 +312,7 @@ An `if … else` expression and a `match` are operands like any other value: `1 
 
 ### Literal patterns
 
-`match n { 0 => "zero", -1 => "minus one", _ => "other" }`, `match s { "y" => true, _ => false }`, and `true =>` / `false =>` compare the scrutinee with `==`. Allowed literals are Int (optionally negative), String without `{…}` interpolation, and Bool. A Float literal pattern is an error, because exact float equality is a trap. The literal must have the scrutinee's type. Literal arms do not make a match exhaustive, so a `_` or binding arm is required. The exception is `Bool`: unguarded `true` and `false` arms cover it.
+`match n { 0 => "zero", -1 => "minus one", _ => "other" }`, `match s { "y" => true, _ => false }`, and `true =>` / `false =>` compare the scrutinee with `==`. Allowed literals are Int (optionally negative), String without `{…}` interpolation, and Bool. A Float literal pattern is an error, because exact float equality is a trap. The literal must have the scrutinee's type. Literal arms do not make a match exhaustive, so a `_` or binding arm is required (**E036**). The exception is `Bool`: unguarded `true` and `false` arms cover it.
 
 ### Tuple patterns
 
@@ -319,7 +322,7 @@ A `match` arm may take a tuple apart: `(0, name) => …`, `(Some(x), _) => …`,
 
 A struct variant `C { f: T }` is built like a struct, `C { f: 1 }` or `E::C { f: 1 }`, with every field exactly once, and matched with `C { f }`, naming only its fields; a struct variant is not matched as `C(x)`, as its fields have no type of their own to bind as one value. Braces build only struct variants. In a pattern they also take apart a variant whose one value is a struct (`D { x }` for `D(Point)`). A bare `C { … }` names the variant only when no struct or other name `C` is in scope; `E::C { … }` always names it. It prints as `E::C { f: 1 }`.
 
-A variant's payload may itself be a pattern: `Some(Num(n))`, `Some(LParen)`, `Ok(0)`, `Some(Some(_))`, to any depth. A name inside is a payload-free variant if one with that name exists (including `None`), and otherwise a binding. Bindings from every level are visible in the guard and the arm. Nested arms count toward exhaustiveness when, together, they cover the payload's type: `Some(A)`, `Some(B)`, `None` is exhaustive for `Option[AB]` with `enum AB { A, B }`. A nested arm with a guard does not count, just like a top-level one. `None` in a pattern is always `Option`'s variant, never a binding.
+A variant's payload may itself be a pattern: `Some(Num(n))`, `Some(LParen)`, `Ok(0)`, `Some(Some(_))`, to any depth. A name inside is a payload-free variant if one with that name exists (including `None`), and otherwise a binding. Bindings from every level are visible in the guard and the arm. Nested arms count toward exhaustiveness when, together, they cover the payload's type: `Some(A)`, `Some(B)`, `None` is exhaustive for `Option[AB]` with `enum AB { A, B }`. A nested arm with a guard does not count, just like a top-level one. `None` in a pattern is always `Option`'s variant, never a binding. A missing case is **E036**: "this `match` does not cover `Shape::Triangle`" for a named variant, or "does not cover every `(Bool, Bool)` value" or "every `Int` value" when a catch-all is needed. The help names missing variants with `or` before the last, and suggests an arm for them or `_ => …`.
 
 ```flux
 match get(toks, i) {
@@ -332,9 +335,9 @@ match get(toks, i) {
 
 ### Block match arms
 
-An arm may be a block: `Err(e) => { println(e)\n  0 }`. Its statements run in order, after the pattern binds, and the block's **final expression** is the arm's value. Inside a function, a block that ends in `if … else` (including `else if` chains) takes the value of the branch that runs, as a function body does (see **Block value**): each branch's final expression, with statements before it allowed, branches that agree without numeric widening, and a branch that leaves taking no part in the type. A block that ends in another statement (an assignment, an `if` without `else`, a loop; a `match` used for its effects) has the value `()`. Mixing such an arm with arms that have a value is a type mismatch. Allowed everywhere: `let`, assignment to a `let mut` local, and expression statements.
+An arm may be a block: `Err(e) => { println(e)\n  0 }`. A block arm needs no comma before the next arm. A comma may follow it. Other arms are separated by commas; the last may have one. The block's statements run in order, after the pattern binds, and its **final expression** is the arm's value. Inside a function, a block that ends in an `if … else` statement (including `else if` chains) takes the value of the branch that runs, as a function body does (see **Block value**): statements before the final expression are allowed, branches must agree without numeric widening, and a branch that leaves takes no part in the type. A block that ends in another statement (an assignment, an `if` without `else`, a loop; a `match` used for its effects) has the value `()`. Mixing such an arm with arms that have a value is a type mismatch.
 
-Inside a function, an arm block may also contain `if`/`while`/`for` and `return`/`break`/`continue`. They act on the enclosing function or loop, as they would outside the `match`. An arm may also *be* one of these (`Err(e) => return Err(e)`), or a block may end with one instead of a value. Such an arm leaves and has no value: it does not take part in the `match`'s type. When a `match` is the last statement of a function body or block and every arm leaves with `return`, its type is the returned values' type. The same rule applies to an `if … else` whose branches all return. A `match` whose arms all leave otherwise has type `Unit`. Without a return annotation, the function's return type is inferred from those values. A `return` in an arm is checked against the function's declared return type; returning a `String` from an arm of a `-> Int` function is **E005**. Derived values, `watch`, and `on` keep expression-only arms (control flow there is a compile error), and `emit` or assignments to module bindings are compile errors in their arm blocks. Inside a function, an arm block may also `emit` and assign a source; a derived binding or `const` is rejected as anywhere else. An assignment to an immutable local is a compile error in any arm block.
+An arm may be one statement instead of a value: `return`, `break`, `continue`, `emit E(…)`, or an assignment such as `x = 1`, `n += 1`, or `xs[i] = v`. For example, `K::A => emit Boom(),` and `_ => count += 1,` stay on one line. A block arm may contain the same statements as its enclosing function, `on` handler, or `watch`: `emit`, source writes, and `if`/`while`/`for` statements are allowed. A watch that writes a source still warns (**E028**). `return` leaves the enclosing function and `break` or `continue` acts on its enclosing loop. An arm that leaves has no value and takes no part in the `match`'s type. When a `match` is the last statement of a function body or block and every arm leaves with `return`, its type is the returned values' type. The same rule applies to an `if … else` whose branches all return. A `match` whose arms all leave otherwise has type `Unit`. Without a return annotation, the function's return type is inferred from those values. A `return` in an arm is checked against the function's declared return type; returning a `String` from an arm of a `-> Int` function is **E005**. In a derived value, `const` initializer, or module initializer, arm blocks may contain only `let`, assignment to a local, and expression statements. `emit`, writes to module bindings, and `if`/`while`/`for` statements are rejected: "`emit` is not allowed in a derived value or a module initializer: it must stay free of effects; do it in an `on` handler or an `act fn`" (with the relevant operation in place of `emit`). An assignment to an immutable local is a compile error in any arm block.
 
 ```flux
 fn add(a: String, b: String) -> Result[Int, String] {
@@ -414,7 +417,7 @@ Values of library types have methods, which need no import: `text.split(",")` is
 
 | Receiver | Methods |
 |---|---|
-| `String` | `len`, `split`, `chars`, `contains`, `trim`, `starts_with`, `ends_with`, `replace`, `to_lower`, `to_upper`, `parse_int`, `parse_float`, `to_string`, `to_bytes() -> Bytes`, `split_once(sep) -> Option[(String, String)]`, `lines() -> [String]`, `words() -> [String]` |
+| `String` | `len`, `split`, `chars`, `contains`, `trim`, `starts_with`, `ends_with`, `replace`, `to_lower`, `to_upper`, `parse_int`, `parse_float`, `to_string`, `to_bytes() -> Bytes`, `split_once(sep) -> Option[(String, String)]`, `lines() -> [String]`, `words() -> [String]`, `slice(start, end) -> String`, `pad_start(width, fill) -> String`, `pad_end(width, fill) -> String` |
 | `Bytes` | `len() -> Int`, `slice(start, end) -> Bytes`, `to_text() -> Result[String, String]`; indexing `b[i]` gives `UInt8` |
 | `[T]` | `len`, `get`, `map`, `filter`, `reduce`, `join` (for `[String]`), `contains(v) -> Bool`, `find(f) -> Option[T]`, `any(f)`, `all(f)`, `enumerate() -> [(Int, T)]`, `zip(ys) -> [(T, U)]`, `slice(a, b)` (elements `a` up to `b`; out of range is a runtime error), `sorted()`, `sorted_by(key)`, `reversed()`, `first()`, `last()` (`Option[T]`) |
 | `Map[K, V]` | `len`, `get`, `has`, `keys`, `values`, `entries() -> [(K, V)]`, `get_or(k, default)` |
@@ -428,7 +431,9 @@ Values of library types have methods, which need no import: `text.split(",")` is
 
 A float receiver is **E005** ("`checked_` operations are for integer types"); a float argument is also **E005**. These are methods only, with no free functions or import needed. They are pure and may be used in derived values and `const` initializers. There are no `wrapping_` or `saturating_` forms.
 
-`sorted` and `sorted_by` sort numbers by value and strings by code point (`sorted_by(|p| p.age)` sorts by the key the function gives, keeping equal keys in order); other element types are a compile error. `a + b` joins two arrays of the same type.
+**String slices and padding.** `s.slice(start, end)` takes characters (code points, as `chars()` counts) from `start` up to, but not including, `end`. An index outside `0..=s.len()`, or `start > end`, is the runtime error `index out of bounds`. `"привет мир".slice(0, 6)` is `"привет"`. `s.pad_start(width, fill)` and `s.pad_end(width, fill)` repeat `fill` before or after `s` and cut it so the result has exactly `width` characters. If `s` is already that wide or wider, or `fill` is empty, they return `s` unchanged. `"7".pad_start(3, "0")` is `"007"`; `"ab".pad_end(5, "-=")` is `"ab-=-"`.
+
+**Sorting.** `sorted()` and `sort()` sort arrays of numbers by value or strings by code point; other element types are **E005**. `sorted_by(key)` and `sort_by(key)` sort by the function's result. A key may be a number, a string, a `Bool` (`false` before `true`), or a tuple of these, including nested tuples. Tuple parts compare in order; the first difference decides. `xs.sorted_by(|e| (-e.count, e.word))` sorts by count descending, then word ascending. Equal keys keep their original order. Any other key type is **E005**: "a key that is a number, a string, a Bool, or a tuple of them". `a + b` joins two arrays of the same type.
 
 **Changing methods.** `xs.push(v)`, `xs.pop()`, `xs.set(i, v)`, `xs.sort()`, `xs.sort_by(key)`, `xs.reverse()`, `m.set(k, v)`, and `m.remove(k)` change the value they are called on, like a `mut self` method: they are called on their own line on a place, return nothing, and store the result back only when they succeed. Calling one inside an expression is a compile error. The free functions `push(xs, v)`, `pop(xs)`, `set(xs, i, v)`, and `map_remove(m, k)` still return a new value and change nothing.
 
@@ -514,26 +519,17 @@ These limits keep extreme programs a language error rather than a native stack o
 | E002 | Reactive read in pure `fn` |
 | E003 | Assign to derived |
 | E004 | Duplicate definition |
-| E005 | Type mismatch |
+| E005 | Type mismatch or wrong argument count; the help may suggest unwrapping an `Option`/`Result` or interpolating text |
 | E006 | Unknown event |
 | E007 | Unknown type |
-| E008 | Control flow or `snap` in a derived value; an `act fn` or `extern fn` called by a derived value, `const` initializer, or `track fn`, directly or through other calls or function values |
-| E009 | Assign to immutable local or const |
+| E008 | Untracked read or action in a derived value, `const`, or `track fn`: `snap()`, `act fn`, host call, or component construction; also disallowed control flow |
+| E009 | Assign to immutable local, captured local in a closure, const, or a `live fn` parameter |
 | E010 | Cyclic dependency in reactive graph |
 | E011 | `watch`/`on` outside module level |
 | E012 | Import path outside the project |
 | E013 | Cyclic import |
 | E014 | Importing a name a module does not have |
-| E015 | Warning: unused binding |
-| E026 | Warning: an older form that still works; it names its replacement, which the editor's quick fix and `flux migrate` apply |
-| E027 | A `fn`, `track fn`, or method changes a source (§ Reactive semantics). For a `fn`, the quick fix and `flux migrate` write `act fn` |
-| E028 | Warning: a `watch` changes a source |
-| E029 | Warning: watches that wake each other, or one that wakes itself, in a cycle |
-| E030 | Warning: a collection function's result is not used (`push(xs, 3)` alone) |
-| E031 | A generic call's type argument lacks a trait that its parameter's bound names (§ Methods) |
-| E032 | A module changes a source that another module declares (§ Modules and visibility) |
-| E033 | Naming a struct field private to another module (§ Modules and visibility) |
-| E034 | A module or library function is not available on the target (§11) |
+| E015 | Warning: unused binding or local |
 | E016 | `let` without `mut` cannot be reassigned (use `let mut`) |
 | E017 | Side effect (`print`, I/O) in a derived expression or a `const` initializer |
 | E018 | Runtime error (overflow, division by zero, failed assertion, …) |
@@ -544,8 +540,23 @@ These limits keep extreme programs a language error rather than a native stack o
 | E023 | Calling something that is not a function |
 | E024 | A type alias that refers to itself |
 | E025 | A type with no possible values (`struct S { me: S }`) |
+| E026 | Warning: an older form that still works; it names its replacement, which the editor's quick fix and `flux migrate` apply |
+| E027 | A `fn`, `track fn`, or method changes a source (§ Reactive semantics). For a `fn`, the quick fix and `flux migrate` write `act fn` |
+| E028 | Warning: a `watch` changes a source |
+| E029 | Warning: watches that wake each other, or one that wakes itself, in a cycle |
+| E030 | Warning: a collection function's result is not used (`push(xs, 3)` alone) |
+| E031 | A generic call's type argument lacks a trait that its parameter's bound names (§ Methods) |
+| E032 | A module changes a source or an instance member it does not own (§ Modules and visibility; § Components) |
+| E033 | Naming a struct field outside its module or a private component member outside its component (§ Modules and visibility; § Components) |
+| E034 | A module or library function is not available on the target (§11) |
+| E035 | Warning: a local file has a library module's name and is not imported |
+| E036 | A `match` does not cover every value; missing variants are named when known |
+
+E015 also reports an unused local `let` in functions, handlers, watches, and nested blocks: "unused local `x`", with help "remove it, or name it `_x` to keep it unused". Names starting with `_` are skipped. Parameters are not reported.
 
 A UTF-8 byte-order mark at the start of a file is ignored, like whitespace.
+
+Errors name types as written in Flux: `Int`, `Float`, `Option[Int]`, `Result[Int, String]`, and `Map[String, Int]`. Internal reactive wrappers do not appear in messages. E001, E007, E014, and E019 suggest close names when available; E001 can name the library import, while E019 can list a library type's methods or suggest an `impl` for a user type. E002 explains that a plain `fn` reads a module-held component instance only when one is passed to it; use `track fn`, `act fn` (`act fn main` for `main`), or pass the instance from an action. E005 states argument counts in words and shows the call's parameter types. For arithmetic on `Option` or `Result`, it suggests taking the value; for text plus a number, it suggests interpolation. E008 names the action or untracked read that a derived value, `const`, or `track fn` cannot use. E009 explains that a closure holds a copy of a captured local. Parse errors describe expected syntax in words, including missing commas, unclosed brackets, `{}` used as a value, and indexed `emit`. One failed statement does not stop diagnostics for later statements in the same block. A failed `let` still declares its names, and an error type is not reported again. Warnings are drawn with `!` rather than `x`.
 
 ## 8. Tooling
 
@@ -554,6 +565,7 @@ A UTF-8 byte-order mark at the start of a file is ignored, like whitespace.
 | `flux run [--jit] [--verbose] file.fl` | Compile and execute |
 | `flux repl [--jit]` | Interactive shell |
 | `flux check [--target cli\|web] file.fl` | Type-check only; the target defaults to `cli` (§11) |
+| `flux explain E0xx` | Print the code's section of the [error-code chapter](docs/flux/src/error-codes.md); `e2` and `2` also work; an unknown code exits 1 |
 | `flux test [filter] [--jit]` | Run every `fn test_*()` in the project (see below) |
 | `flux lock [--check]` | Create or update `flux.lock` for path dependencies; `--check` only reports whether it is up to date (exit 1 if not) |
 | `--locked` (on `run`, `check`, `test`) | Require `flux.lock` to match the dependency tree; never write it (§9) |
@@ -563,6 +575,8 @@ A UTF-8 byte-order mark at the start of a file is ignored, like whitespace.
 | `flux lsp file.fl` | JSON diagnostics (one-shot; prefer `lsp-server`) |
 | `flux lsp-server` | Stdio LSP: diagnostics, hover, completion, go-to-def, format, document symbols, rename |
 | `flux wasm file.fl` | Experimental stub: always fails, writes nothing |
+
+**`flux fmt`.** A value `if` chain with statements in any branch uses block layout throughout. Plain chains stay on one line with `else if`; `else { if … }` becomes `else if …`. A one-statement arm written on the arm's line (`=> emit E()`, `=> n += 1`) stays there; a block arm stays a block, even with one statement; an empty block arm prints `{}`. The formatter keeps `//` comments between statements in functions and handlers. Comments on their own lines are re-indented. Comments after a statement on the same line and before the closing brace are kept. A comment inside an expression, such as between array elements, is refused: "fmt cannot preserve a comment inside an expression yet; move it to its own line; the file was left unchanged".
 
 **`flux test`.** Every `.fl` file under the project root (the nearest `flux.toml`, or the current directory) that defines `fn test_*()` is compiled as its own program. Hidden directories and `target/` are skipped. Each test function takes no parameters and runs in a fresh executor after module initialization; the file's `main` is not run. Timers do not run. A test passes if it returns `Unit` or `true`. It fails if it returns `false` or any other value, raises any runtime error (including a failed `assert(cond)` or `assert_eq(a, b)`, which report `assertion failed[: a != b]`), or if its file does not compile. Each test is reported as `test <file>::<name> ... ok | FAILED: <reason>`, then a `test result` summary line; the exit status is 1 if anything failed. `filter` keeps tests whose `file::name` contains it. With no tests, it prints `no tests found` and exits 0.
 

@@ -46,7 +46,7 @@ function scopeOf(all, text) {
 
 function files(dir, out = []) {
     for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-        if (["target", "node_modules", ".git", "fail", ".flux"].includes(entry.name)) {
+        if (["target", "node_modules", ".git", "fail", ".flux", "comparison"].includes(entry.name)) {
             continue;
         }
         const full = path.join(dir, entry.name);

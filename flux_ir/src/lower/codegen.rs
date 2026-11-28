@@ -271,8 +271,8 @@ fn emit_expr(expr: &HirExpr, program: &HirProgram, code: &mut Vec<Inst>) {
                         emit_expr(arg, program, code);
                     }
                     code.push(Inst::MakeUserStruct {
-                        type_name: flux_hir::TUPLE.to_string(),
-                        fields: (0..args.len()).map(|i| i.to_string()).collect(),
+                        type_name: flux_hir::TUPLE.into(),
+                        fields: (0..args.len()).map(|i| i.to_string().into()).collect(),
                     });
                     return;
                 }
@@ -352,18 +352,19 @@ fn emit_expr(expr: &HirExpr, program: &HirProgram, code: &mut Vec<Inst>) {
                 emit_expr(p, program, code);
             }
             code.push(Inst::MakeUserEnum {
-                type_name: enum_name.clone(),
-                variant: variant.clone(),
+                type_name: enum_name.as_str().into(),
+                variant: variant.as_str().into(),
                 has_payload: payload.is_some(),
             });
         }
         HirExpr::StructLit { name, fields, .. } => {
-            let field_names: Vec<String> = fields.iter().map(|(n, _)| n.clone()).collect();
+            let field_names: Vec<std::sync::Arc<str>> =
+                fields.iter().map(|(n, _)| n.as_str().into()).collect();
             for (_, expr) in fields {
                 emit_expr(expr, program, code);
             }
             code.push(Inst::MakeUserStruct {
-                type_name: name.clone(),
+                type_name: name.as_str().into(),
                 fields: field_names,
             });
         }

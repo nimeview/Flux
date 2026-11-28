@@ -518,6 +518,14 @@ fn lower_program_inner(
         bind_root_imports(linked, &mut symbols);
     }
 
+    let live_names: std::collections::HashSet<&str> = program
+        .items
+        .iter()
+        .filter_map(|item| match item {
+            Item::Live(l) => Some(l.name.name.as_str()),
+            _ => None,
+        })
+        .collect();
     // Pass 1: declare all top-level names (events, functions, bindings).
     for item in &program.items {
         let declared = match item {
@@ -541,6 +549,18 @@ fn lower_program_inner(
                 for name in l.pattern.binding_names() {
                     if let Some(id) = symbols.lookup(&name).map(|s| s.id) {
                         symbols.immutable_lets.insert(id);
+                    }
+                }
+            }
+            let makes_instance = matches!(
+                &l.value,
+                flux_syntax::Expr::Call { callee, .. }
+                    if matches!(callee.as_ref(), flux_syntax::Expr::Ident { name, .. } if live_names.contains(name.as_str()))
+            );
+            if makes_instance {
+                for name in l.pattern.binding_names() {
+                    if let Some(id) = symbols.lookup(&name).map(|s| s.id) {
+                        symbols.instance_lets.insert(id);
                     }
                 }
             }

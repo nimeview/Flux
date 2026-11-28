@@ -50,6 +50,9 @@ pub struct TypedProgram {
     pub changing_sites: std::collections::HashSet<flux_diagnostics::Span>,
     /// `!x` on integers, by span (see [`resolve_method_calls`]).
     pub bit_not_sites: std::collections::HashSet<flux_diagnostics::Span>,
+    /// Branches of a value `if`/`match` (and array elements) of a narrower
+    /// number type than the whole: [`resolve_method_calls`] converts them.
+    pub numeric_widenings: HashMap<flux_diagnostics::Span, Type>,
     /// `op.f(x)` calls of the function in field `f`; [`resolve_method_calls`]
     /// writes them `(op.f)(x)`.
     pub field_calls: std::collections::HashSet<(Option<SymbolId>, flux_diagnostics::Span)>,
@@ -303,6 +306,11 @@ fn typecheck_with_context(
                     if inner.is_error() {
                         continue;
                     }
+                    // `let b = a` holds `a`'s value, never its cell.
+                    let inner = match util::unwrap_value_type(&inner) {
+                        Type::Error => continue,
+                        value => value,
+                    };
                     let binding_ty = match b.kind {
                         BindingKind::Source => Type::Cell(Box::new(inner)),
                         BindingKind::Derived => Type::Read(Box::new(inner)),
@@ -366,7 +374,13 @@ fn typecheck_with_context(
                 source,
                 diagnostics,
             )?;
-            stmt::reject_empty_array_binding(inferred, b.span, diagnostics)
+            let inferred = stmt::reject_empty_array_binding(inferred, b.span, diagnostics);
+            // `let b = a` holds `a`'s value, never its cell; an unresolved
+            // one stays as it is, for lowering to report the cycle (E010).
+            match util::unwrap_value_type(&inferred) {
+                Type::Error => inferred,
+                value => value,
+            }
         };
         if inner.is_error() && !diagnostics.has_errors() {
             diagnostics.push(FluxError::TypeMismatch {
@@ -539,6 +553,7 @@ fn typecheck_with_context(
                             name,
                             span: span_to_miette(o.span),
                             source_id: o.span.source,
+                            help: None,
                         });
                         let _ = sym_ty;
                     }
@@ -547,6 +562,7 @@ fn typecheck_with_context(
                             name: format!("#{}", o.event.0),
                             span: span_to_miette(o.span),
                             source_id: o.span.source,
+                            help: None,
                         });
                     }
                 }
@@ -622,6 +638,7 @@ fn typecheck_with_context(
             method_calls: ctx.method_calls.borrow().clone(),
             changing_sites: ctx.changing_sites.borrow().clone(),
             bit_not_sites: ctx.bit_not_sites.borrow().clone(),
+            numeric_widenings: ctx.numeric_widenings.borrow().clone(),
             field_calls: ctx.field_calls.borrow().clone(),
             local_types,
             member_reads: ctx.member_reads.borrow().clone(),
@@ -791,6 +808,39 @@ pub(crate) fn bind_handler_values(
 }
 
 /// `1 value`, `2 values`.
+/// E005 for a call with the wrong number of arguments: "`area` takes 2
+/// arguments but 1 was given", with the parameter types when known.
+pub(crate) fn wrong_arg_count(
+    callee: Option<&str>,
+    expected: String,
+    given: usize,
+    params: Option<&[Type]>,
+    span: flux_diagnostics::Span,
+) -> FluxError {
+    let help = match (callee, params) {
+        (Some(name), Some(params)) => Some(format!(
+            "`{name}` is called as `{name}({})`",
+            params
+                .iter()
+                .map(Type::display)
+                .collect::<Vec<_>>()
+                .join(", ")
+        )),
+        _ => None,
+    };
+    FluxError::WrongArgCount {
+        callee: callee.map_or("this call".into(), |n| format!("`{n}`")),
+        expected,
+        given: match given {
+            1 => "1 was given".into(),
+            n => format!("{n} were given"),
+        },
+        span: span_to_miette(span),
+        source_id: span.source,
+        help,
+    }
+}
+
 pub(crate) fn count(n: usize, what: &str) -> String {
     if n == 1 {
         format!("1 {what}")

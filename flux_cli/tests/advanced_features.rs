@@ -117,7 +117,7 @@ fn match_must_cover_every_variant_reported_once() {
     let errs = errors(src);
     let missing: Vec<_> = errs
         .iter()
-        .filter(|(_, m)| m.contains("missing Blue"))
+        .filter(|(_, m)| m.contains("does not cover `Color::Blue`"))
         .collect();
     assert_eq!(missing.len(), 1, "{errs:?}");
 }
@@ -144,7 +144,7 @@ fn enums_structs_and_generics_check_their_shapes() {
     for want in [
         "type mismatch: expected `field `y``, found `missing field`",
         "type mismatch: expected `field from x, y`, found `z`",
-        "type mismatch: expected `Int64`, found `String`",
+        "type mismatch: expected `Int`, found `String`",
         "type mismatch: expected `field `w``, found `P`",
     ] {
         assert!(errs.iter().any(|(_, m)| m == want), "{want}: {errs:?}");
@@ -153,7 +153,7 @@ fn enums_structs_and_generics_check_their_shapes() {
         "enum Shape { Circle(Int), Dot }\nlet a = Circle(\"big\")\nlet b = Dot(3)\nlet c = Circle\n",
     );
     for want in [
-        "type mismatch: expected `Int64`, found `String`",
+        "type mismatch: expected `Int`, found `String`",
         "type mismatch: expected `payload-free variant Dot`, found `payload provided`",
         "type mismatch: expected `payload for Circle`, found `no payload`",
     ] {
@@ -162,7 +162,7 @@ fn enums_structs_and_generics_check_their_shapes() {
     let errs = errors("fn id[T](x: T) -> T { x }\nlet c: Int = id(\"s\")\n");
     assert!(
         errs.iter()
-            .any(|(_, m)| m == "type mismatch: expected `Int64`, found `String`"),
+            .any(|(_, m)| m == "type mismatch: expected `Int`, found `String`"),
         "{errs:?}"
     );
     assert_values(

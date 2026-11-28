@@ -29,6 +29,7 @@ fn error_codes_are_stable() {
                 name: "x".into(),
                 span: s,
                 source_id: sid,
+                help: None,
             },
         ),
         (

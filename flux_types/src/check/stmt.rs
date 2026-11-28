@@ -122,12 +122,63 @@ pub(super) fn check_purity(
             continue;
         };
         let name = program.names.get(&f.name).map_or("?", String::as_str);
-        diagnostics.push(FluxError::ActInPureContext {
-            place: format!("the `track fn` `{}`", flux_hir::display_path(name)),
-            act: flux_hir::display_path(program.names.get(act).map_or("?", String::as_str)),
-            span: span_to_miette(f.span),
-            source_id: f.span.source,
-        });
+        diagnostics.push(act_in_pure(
+            program,
+            format!("the `track fn` `{}`", flux_hir::display_path(name)),
+            *act,
+            f.span,
+        ));
+    }
+}
+
+/// E008 for `snap(…)` in a derived value.
+pub(crate) fn untracked_snap(span: flux_diagnostics::Span) -> FluxError {
+    FluxError::UntrackedRead {
+        message: "a derived value cannot use `snap()`".into(),
+        help: "a derived value recomputes when what it reads changes, and `snap` reads without being followed; read the value directly".into(),
+        span: span_to_miette(span),
+        source_id: span.source,
+    }
+}
+
+/// E008: `place` runs `act`, an action. What it is decides the advice: an
+/// `act fn` may become a `track fn`; a host function and a component
+/// constructor run in actions only.
+fn act_in_pure(
+    program: &flux_hir::HirProgram,
+    place: String,
+    act: flux_hir::SymbolId,
+    span: flux_diagnostics::Span,
+) -> FluxError {
+    let name = flux_hir::display_path(program.names.get(&act).map_or("?", String::as_str));
+    let (what, help) = if program.externs.contains(&act) {
+        (
+            format!("call the host function `{name}`"),
+            format!(
+                "an `extern fn` acts on the world outside the program; call `{name}` from an `on` handler or an `act fn`"
+            ),
+        )
+    } else if program.templates.iter().any(|t| t.ctor == act) {
+        (
+            format!("make a `{name}` instance"),
+            "making an instance is an action; make it in an `on` handler, an `act fn`, or a module-level `let`, and read its members here"
+                .to_string(),
+        )
+    } else {
+        (
+            format!("call the `act fn` `{name}`"),
+            format!(
+                "an `act fn` is an action, and a derived value does not follow what it reads; write `track fn {name}` for a function that computes from sources"
+            ),
+        )
+    };
+    FluxError::ActInPureContext {
+        place,
+        act: name,
+        what,
+        help,
+        span: span_to_miette(span),
+        source_id: span.source,
     }
 }
 
@@ -163,12 +214,7 @@ impl PureCheck<'_> {
         match expr {
             HirExpr::Snap { span, expr } => {
                 if self.derived {
-                    self.diagnostics
-                        .push(FluxError::InvalidControlFlowInDerived {
-                            construct: "snap()".into(),
-                            span: span_to_miette(*span),
-                            source_id: span.source,
-                        });
+                    self.diagnostics.push(untracked_snap(*span));
                 } else {
                     self.expr(expr, runs);
                 }
@@ -321,23 +367,23 @@ impl PureCheck<'_> {
                 source_id: span.source,
             });
         } else if let Some(act) = nodes.iter().find_map(|n| self.purity.acting.get(n)) {
-            self.diagnostics.push(FluxError::ActInPureContext {
-                place: if self.derived {
+            self.diagnostics.push(act_in_pure(
+                self.program,
+                if self.derived {
                     "a derived value".into()
                 } else {
                     "a `const` initializer".into()
                 },
-                act: flux_hir::display_path(self.names.get(act).map_or("?", String::as_str)),
+                *act,
+                span,
+            ));
+        } else if self.derived && nodes.iter().any(|n| self.purity.snapshotting.contains(n)) {
+            self.diagnostics.push(FluxError::UntrackedRead {
+                message: format!("`{name}` reads with `snap()`, so a derived value cannot call it"),
+                help: "a derived value recomputes when what it reads changes, and `snap` reads without being followed; read the value directly in that function, or make it a `track fn`".into(),
                 span: span_to_miette(span),
                 source_id: span.source,
             });
-        } else if self.derived && nodes.iter().any(|n| self.purity.snapshotting.contains(n)) {
-            self.diagnostics
-                .push(FluxError::InvalidControlFlowInDerived {
-                    construct: format!("snap()` read inside `{name}"),
-                    span: span_to_miette(span),
-                    source_id: span.source,
-                });
         }
     }
 }
@@ -713,6 +759,7 @@ pub(super) fn check_stmt(
                                 name: format!("{}.{event}", instance.display()),
                                 span: span_to_miette(*span),
                                 source_id: span.source,
+                                help: None,
                             });
                             None
                         }
@@ -783,6 +830,7 @@ pub(super) fn check_stmt(
                     name: format!("event #{event:?}"),
                     span: span_to_miette(*span),
                     source_id: span.source,
+                    help: None,
                 });
             }
         },
@@ -1006,7 +1054,7 @@ pub(super) fn reject_empty_array_binding(
     }
     if matches!(unwrap_value_type(&ty), Type::Map { .. }) {
         diagnostics.push(FluxError::TypeMismatch {
-            expected: "a type annotation, e.g. `let m: Map[String, Int] = map_new()`".into(),
+            expected: "a type annotation, e.g. `let m: Map[String, Int] = Map::new()`".into(),
             found: "an empty map with no key or value type".into(),
             span: span_to_miette(span),
             source_id: span.source,

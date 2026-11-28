@@ -248,7 +248,21 @@ impl Executor {
             let wait = match self.next_timer_in() {
                 Some(wait) => wait,
                 None if senders => Duration::from_secs(3600),
-                None => return Ok(()),
+                None => {
+                    // The last sender may have posted and gone after the
+                    // queue was drained above: its events still run.
+                    let pending = !self
+                        .timers
+                        .inbox
+                        .events
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .is_empty();
+                    if pending {
+                        continue;
+                    }
+                    return Ok(());
+                }
             };
             if !wait.is_zero() {
                 let queue = self

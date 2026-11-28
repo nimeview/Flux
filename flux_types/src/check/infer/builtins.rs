@@ -72,16 +72,17 @@ pub(super) fn infer_builtin_call(
     if let Some((min, max)) = arity {
         if !(min..=max).contains(&args.len()) {
             let expected = if min == max {
-                format!("{min} arguments")
+                crate::check::count(min, "argument")
             } else {
                 format!("{min} to {max} arguments")
             };
-            diagnostics.push(FluxError::TypeMismatch {
+            diagnostics.push(crate::check::wrong_arg_count(
+                Some(name),
                 expected,
-                found: format!("{} arguments", args.len()),
-                span: span_to_miette(span),
-                source_id: span.source,
-            });
+                args.len(),
+                None,
+                span,
+            ));
         }
     }
 
@@ -733,12 +734,13 @@ pub(super) fn infer_builtin_call(
             // A function with one signature: each argument has its type.
             if let Some((params, ret)) = crate::builtins::os_signature(name) {
                 if params.len() != args.len() {
-                    diagnostics.push(FluxError::TypeMismatch {
-                        expected: format!("{} arguments", params.len()),
-                        found: format!("{} arguments", args.len()),
-                        span: span_to_miette(span),
-                        source_id: span.source,
-                    });
+                    diagnostics.push(crate::check::wrong_arg_count(
+                        Some(name),
+                        crate::check::count(params.len(), "argument"),
+                        args.len(),
+                        Some(&params),
+                        span,
+                    ));
                 }
                 for (param, arg) in params.iter().zip(args) {
                     check_arg(ctx, Some(arg), param, types, names, source, diagnostics);
@@ -749,6 +751,7 @@ pub(super) fn infer_builtin_call(
                 name: name.into(),
                 span: span_to_miette(span),
                 source_id: span.source,
+                help: None,
             });
             Some(Type::Error)
         }
@@ -1037,12 +1040,13 @@ fn infer_method_builtin(
     let rest = &args[1..];
     let want_args = |n: usize, diagnostics: &mut DiagnosticBag| {
         if rest.len() != n {
-            diagnostics.push(FluxError::TypeMismatch {
-                expected: format!("{n} arguments"),
-                found: format!("{} arguments", rest.len()),
-                span: span_to_miette(span),
-                source_id: span.source,
-            });
+            diagnostics.push(crate::check::wrong_arg_count(
+                None,
+                crate::check::count(n, "argument"),
+                rest.len(),
+                None,
+                span,
+            ));
         }
     };
     let array = |t: Type| Type::Array(Box::new(t));
@@ -1228,6 +1232,30 @@ fn infer_method_builtin(
                 _ => Type::Error,
             }
         }
+        "\0str_slice" => {
+            want_args(2, diagnostics);
+            for arg in rest {
+                let got = infer(arg, diagnostics);
+                if !got.is_error() && !got.is_integer() {
+                    mismatch("an integer".into(), &got, arg.span(), diagnostics);
+                }
+            }
+            Type::String
+        }
+        "\0pad_start" | "\0pad_end" => {
+            want_args(2, diagnostics);
+            if let Some(width) = rest.first() {
+                let got = infer(width, diagnostics);
+                if !got.is_error() && !got.is_integer() {
+                    mismatch("an integer".into(), &got, width.span(), diagnostics);
+                }
+            }
+            if let Some(fill) = rest.get(1) {
+                let got = infer(fill, diagnostics);
+                expect(&Type::String, fill, &got, diagnostics);
+            }
+            Type::String
+        }
         "\0split_once" => {
             want_args(1, diagnostics);
             if let Some(sep) = rest.first() {
@@ -1262,10 +1290,22 @@ fn infer_method_builtin(
         "\0sorted_by" => {
             want_args(1, diagnostics);
             let key = callback(rest.first(), std::slice::from_ref(&elem), diagnostics);
-            if !sortable(&key) {
+            // A tuple key sorts by its first value, then the next, …
+            fn key_sortable(t: &Type) -> bool {
+                match t {
+                    Type::Tuple(parts) => parts.iter().all(key_sortable),
+                    t => {
+                        t.is_error()
+                            || t.is_integer()
+                            || t.is_float()
+                            || matches!(t, Type::String | Type::Bool)
+                    }
+                }
+            }
+            if !key_sortable(&key) {
                 if let Some(cb) = rest.first() {
                     mismatch(
-                        "a key that is a number or a string".into(),
+                        "a key that is a number, a string, a Bool, or a tuple of them".into(),
                         &key,
                         cb.span(),
                         diagnostics,

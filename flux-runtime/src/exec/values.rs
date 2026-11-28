@@ -9,7 +9,7 @@ use crate::vm::{debug_assert_vm, stack_pop};
 
 pub(super) fn variant_tag_eq(val: Option<&RuntimeValue>, variant: &str) -> bool {
     match val {
-        Some(RuntimeValue::UserEnum(e)) => e.variant == variant,
+        Some(RuntimeValue::UserEnum(e)) => &*e.variant == variant,
         Some(RuntimeValue::Option(Some(_))) => variant == "Some",
         Some(RuntimeValue::Option(None)) => variant == "None",
         Some(RuntimeValue::Result(Ok(_))) => variant == "Ok",

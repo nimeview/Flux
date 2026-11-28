@@ -539,7 +539,7 @@ fn replace_handles(value: &RuntimeValue) -> RuntimeValue {
             s.fields
                 .iter()
                 .map(|(k, v)| (k.clone(), replace_handles(v)))
-                .collect(),
+                .collect::<flux_value::Fields>(),
         ),
         RuntimeValue::UserEnum(e) => RuntimeValue::user_enum(
             e.type_name.clone(),

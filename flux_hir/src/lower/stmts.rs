@@ -20,18 +20,35 @@ pub(super) fn lower_block(
 ) -> Option<HirBlock> {
     symbols.push(scope);
     let mut stmts = Vec::new();
+    let mut failed = false;
     for stmt in &block.stmts {
         match lower_stmt(stmt, symbols, diagnostics) {
             Some(lowered) => stmts.extend(lowered),
-            // Close the scope even on failure, or its names would hide the
-            // same names in the code after it.
+            // Keep going, so the later statements' errors show too, as in
+            // Rust. A failed `let` still names its locals: their uses are
+            // not reported again as undefined.
             None => {
-                symbols.pop();
-                return None;
+                failed = true;
+                if let Stmt::Let(l) = stmt {
+                    for name in l.pattern.binding_names() {
+                        if !symbols.declared_here(&name) {
+                            let _ = symbols.declare(
+                                &name,
+                                SymbolKind::Local { mutable: l.mutable },
+                                l.span,
+                            );
+                        }
+                    }
+                }
             }
         }
     }
+    // Close the scope even on failure, or its names would hide the same
+    // names in the code after it.
     symbols.pop();
+    if failed {
+        return None;
+    }
     Some(HirBlock {
         stmts,
         span: block.span,
@@ -375,6 +392,7 @@ fn lower_nested_arm(
             wildcard(false),
         ],
         span,
+        if_form: false,
     };
     let value = Expr::Match {
         scrutinee: Box::new(tmp_expr),
@@ -389,6 +407,7 @@ fn lower_nested_arm(
             wildcard(false),
         ],
         span,
+        if_form: false,
     };
     let guard = lower_expr(&test, symbols, scope, diagnostics, reads_reactive);
     let mut expr = lower_expr(&value, symbols, scope, diagnostics, reads_reactive);
@@ -476,6 +495,7 @@ fn lower_tuple_arm(
                 },
             ],
             span: at,
+            if_form: false,
         }
     };
     let chain = |leaf: MatchArm| {
@@ -673,10 +693,25 @@ pub(super) fn lower_match_arm(
         .and_then(|g| lower_expr(g, symbols, scope, diagnostics, reads_reactive));
     let mut body = Vec::new();
     let in_function = symbols.in_function();
+    // An `on` handler or a `watch` acts, as a function body does: its arms
+    // may too. Derived values and module initialization stay pure.
+    let in_action = in_function
+        || matches!(
+            symbols.writers.last().map(|w| w.kind),
+            Some(crate::symbol::WriterKind::Handler | crate::symbol::WriterKind::Watch)
+        );
     for stmt in &arm.stmts {
-        if let Some(problem) = unsupported_in_arm_block(stmt, symbols, in_function) {
+        if let Some(problem) = unsupported_in_arm_block(stmt, symbols, in_function, in_action) {
+            let message = if in_action {
+                format!("{problem} is not supported inside a match arm or `if` branch here")
+            } else {
+                format!(
+                    "{problem} is not allowed in a derived value or a module initializer: \
+                     it must stay free of effects; do it in an `on` handler or an `act fn`"
+                )
+            };
             diagnostics.push(FluxError::Parse {
-                message: format!("{problem} is not supported inside a match arm block"),
+                message,
                 span: span_to_miette(arm.span),
                 source_id: arm.span.source,
             });
@@ -804,44 +839,40 @@ fn if_as_match(stmt: &IfStmt, symbols: &mut SymbolTable) -> Expr {
         }),
         arms,
         span: stmt.span,
+        if_form: false,
     }
 }
 
 /// What a block arm may not contain, if anything. Everywhere: `let`,
-/// assigning a local, and expression statements. Inside a function also
-/// `if`/`while`/`for` and `return`/`break`/`continue`, which act on the
-/// enclosing function or loop. Reactive contexts (derived values, `watch`,
-/// `on`) keep the expression-only form, so arms cannot add effects there.
+/// assigning a local, and expression statements. In an action (a function,
+/// an `on` handler, a `watch`) also `if`/`while`/`for`, `emit`, and writes,
+/// as in the action's own body; inside a function also
+/// `return`/`break`/`continue`, which act on the enclosing function or loop.
+/// Derived values and module initialization keep the expression-only form,
+/// so arms cannot add effects there.
 fn unsupported_in_arm_block(
     stmt: &Stmt,
     symbols: &SymbolTable,
     in_function: bool,
+    in_action: bool,
 ) -> Option<&'static str> {
     match stmt {
         Stmt::Let(_) | Stmt::Expr(_) => None,
         // A closure's value is its body's value, and nothing checks a `return`
         // against the function type it is used as.
         Stmt::Return(_) if symbols.in_closure() => Some("`return` inside a closure"),
-        Stmt::Return(_)
-        | Stmt::Break(_)
-        | Stmt::Continue(_)
-        | Stmt::If(_)
-        | Stmt::While(_)
-        | Stmt::For(_)
-            if in_function =>
-        {
-            None
-        }
+        Stmt::Return(_) | Stmt::Break(_) | Stmt::Continue(_) if in_function => None,
+        Stmt::If(_) | Stmt::While(_) | Stmt::For(_) if in_action => None,
         Stmt::Assign(a) => match symbols.lookup(&a.name.name).map(|s| s.kind) {
             Some(SymbolKind::Local { mutable: true }) | None => None,
             Some(SymbolKind::Local { mutable: false } | SymbolKind::Param) => {
                 Some("assigning an immutable local (declare it with `let mut`)")
             }
             // The checker reports a derived or const target, as elsewhere.
-            Some(_) if in_function => None,
+            Some(_) if in_action => None,
             Some(_) => Some("assigning a module binding"),
         },
-        Stmt::Emit(_) if in_function => None,
+        Stmt::Emit(_) if in_action => None,
         Stmt::Emit(_) => Some("`emit`"),
         Stmt::Return(_) => Some("`return` outside a function"),
         Stmt::Break(_) => Some("`break` outside a function"),
@@ -888,7 +919,7 @@ fn lower_stmt(
             // A closure holds a copy of what it captures: a write could not
             // reach the original.
             if symbols.is_captured(sym) {
-                diagnostics.push(FluxError::AssignToImmutableLocal {
+                diagnostics.push(FluxError::AssignToCaptured {
                     name: name.name.clone(),
                     span: span_to_miette(*span),
                     source_id: span.source,
@@ -1300,6 +1331,23 @@ fn check_writer_at(
     symbols: &mut SymbolTable,
     diagnostics: &mut DiagnosticBag,
 ) {
+    // A `live fn` parameter is fixed for the instance's life (its reads are
+    // not reactive), so no code may assign it.
+    if symbols.constants.contains(&sym) {
+        let internal = symbols.get(sym).map(|s| s.name.clone()).unwrap_or_default();
+        if let Some((component, param)) = internal
+            .strip_prefix("__live_")
+            .and_then(|rest| rest.rsplit_once("__"))
+        {
+            diagnostics.push(FluxError::AssignToLiveParam {
+                name: param.to_string(),
+                component: crate::display_path(component),
+                span: span_to_miette(span),
+                source_id: span.source,
+            });
+            return;
+        }
+    }
     // A `const` is not state: assigning one is E009, reported by the type checker.
     if symbols.get(sym).map(|s| s.kind) != Some(SymbolKind::Source)
         || symbols.constants.contains(&sym)

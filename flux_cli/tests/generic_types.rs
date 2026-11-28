@@ -224,19 +224,19 @@ fn type_arguments_must_agree_and_be_known() {
     // The values fix `T`; a later one must agree.
     rejects(
         &main("    let p = Pair { a: 1, b: \"s\" }\n"),
-        &["expected `Int64`, found `String`"],
+        &["expected `Int`, found `String`"],
     );
     rejects(
         &main("    let t: Opt[String] = Just(1)\n"),
-        &["expected `Opt[String]`, found `Opt[Int64]`"],
+        &["expected `Opt[String]`, found `Opt[Int]`"],
     );
     rejects(
         &main("    let c = true\n    let x = if c { Just(1) } else { Just(\"s\") }\n"),
-        &["expected `Opt[Int64]`, found `Opt[String]`"],
+        &["expected `Opt[Int]`, found `Opt[String]`"],
     );
     rejects(
         &main("    let p = Pair { a: 1, b: 2 }\n    let q = p with { a: \"s\" }\n"),
-        &["expected `Int64`, found `String`"],
+        &["expected `Int`, found `String`"],
     );
     // Nothing fixes `T`: an annotation must.
     rejects(
@@ -295,7 +295,7 @@ fn unknown_type_arguments_do_not_escape() {
         &format!(
             "{o}fn main() {{\n    let b: B[O[String]] = B {{ x: N }} with {{ x: S(1) }}\n}}\n"
         ),
-        &["expected `B[O[String]]`, found `B[O[Int64]]`"],
+        &["expected `B[O[String]]`, found `B[O[Int]]`"],
     );
     prints(
         &format!("{o}fn main() {{\n    let c = B {{ x: N }} with {{ x: S(1) }}\n    let d: B[O[Int]] = c\n    println(\"{{d}}\")\n}}\n"),
@@ -337,7 +337,7 @@ fn fields_of_generic_instances_keep_their_types() {
     let head = "import io { println }\nstruct P { n: Int }\nstruct F { f: fn() -> Int }\nstruct B[T] { x: T }\nenum E[T] { V(T) }\nenum O[T] { N, S(T) }\nstruct Pair[T] { a: T, b: T }\n";
     rejects(
         &format!("{head}fn main() {{\n    let b = B {{ x: P {{ n: 1 }} }}\n    match b.x {{\n        p => {{\n            let s: String = p.n\n        }}\n    }}\n}}\n"),
-        &["expected `String`, found `Int64`"],
+        &["expected `String`, found `Int`"],
     );
     prints(
         &format!("{head}fn id[T](x: T) -> T {{\n    x\n}}\nfn take[T](p: P, x: T) -> T {{\n    x\n}}\nfn main() {{\n    let b = B {{ x: P {{ n: 1 }} }}\n    let xs = id([b.x, P {{ n: 2 }}])\n    let k = take(b.x, 2)\n    match V(P {{ n: 1 }}) {{\n        V {{ n }} => println(\"{{n + k}} {{xs}}\")\n    }}\n}}\n"),
@@ -349,7 +349,7 @@ fn fields_of_generic_instances_keep_their_types() {
     );
     rejects(
         &format!("{head}fn main() {{\n    let p = Pair {{ a: N, b: N }} with {{ a: S(1), b: S(\"s\") }}\n}}\n"),
-        &["expected `O[Int64]`, found `O[String]`"],
+        &["expected `O[Int]`, found `O[String]`"],
     );
     rejects(
         &format!("{head}fn main() {{\n    let mut b = B {{ x: || N }}\n    b.x = || S(1)\n}}\n"),
@@ -357,7 +357,7 @@ fn fields_of_generic_instances_keep_their_types() {
     );
     rejects(
         &format!("{head}fn main() {{\n    let fs: [fn() -> O[String]] = [|| N, || S(1)]\n}}\n"),
-        &["expected `[fn() -> O[String]]`, found `[fn() -> O[Int64]]`"],
+        &["expected `[fn() -> O[String]]`, found `[fn() -> O[Int]]`"],
     );
 }
 

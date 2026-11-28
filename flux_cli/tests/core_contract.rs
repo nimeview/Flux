@@ -737,7 +737,7 @@ fn match_arm_control_flow_is_checked_and_limited_to_functions() {
     );
     assert!(
         errs.iter()
-            .any(|m| m == "type mismatch: expected `Int64`, found `String`"),
+            .any(|m| m == "type mismatch: expected `Int`, found `String`"),
         "{errs:?}"
     );
     // Reactive contexts keep expression-only arms.
@@ -788,7 +788,7 @@ fn try_operator_misuse_is_e021() {
     for (body, needle) in [
         (
             "fn f(a: String) -> Int { parse_int(a)? }",
-            "but it returns `Int64`",
+            "but it returns `Int`",
         ),
         (
             "fn f(a: String) -> Option[Int] { Some(parse_int(a)?) }",
@@ -1020,7 +1020,7 @@ fn a_block_arm_ending_in_a_statement_is_unit() {
             .diagnostics
             .errors
             .iter()
-            .any(|e| e.to_string() == "type mismatch: expected `Unit`, found `Int64`"),
+            .any(|e| e.to_string() == "type mismatch: expected `Unit`, found `Int`"),
         "{:?}",
         failure.diagnostics.errors
     );
@@ -1110,7 +1110,7 @@ let a = sum(range(1000))\nlet b = grid()\nlet c = last([\"a\", \"b\", \"c\"])\n"
     assert!(
         messages
             .iter()
-            .any(|m| m.contains("expected `an array or map to index`, found `Int64`")),
+            .any(|m| m.contains("expected `an array or map to index`, found `Int`")),
         "{messages:?}"
     );
     assert!(
@@ -1162,7 +1162,7 @@ let e = early(Some(Num(1))) + early(None)\n";
             .diagnostics
             .errors
             .iter()
-            .any(|e| e.to_string().contains("missing Some")),
+            .any(|e| e.to_string().contains("does not cover `Some`")),
         "{:?}",
         failure.diagnostics.errors
     );
@@ -1303,7 +1303,7 @@ let same = set(set(map_new(), 1, 2), 3, 4) == set(set(map_new(), 3, 4), 1, 2)\n"
     assert!(
         messages
             .iter()
-            .any(|m| m.contains("let m: Map[String, Int] = map_new()")),
+            .any(|m| m.contains("let m: Map[String, Int] = Map::new()")),
         "{messages:?}"
     );
     assert!(
@@ -1358,8 +1358,8 @@ let a = arrays()\nlet b = maps()\nlet c = fill(100000)\n";
         .collect();
     for want in [
         "cannot assign to immutable local `xs`",
-        "type mismatch: expected `String`, found `Int64`",
-        "type mismatch: expected `Int64`, found `String`",
+        "type mismatch: expected `String`, found `Int`",
+        "type mismatch: expected `Int`, found `String`",
     ] {
         assert!(
             messages.iter().any(|m| m.contains(want)),

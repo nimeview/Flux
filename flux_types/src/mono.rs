@@ -72,12 +72,13 @@ pub fn monomorphize_program(
 
             for (args, span) in calls {
                 if args.len() != template.fn_item.params.len() {
-                    diagnostics.push(FluxError::TypeMismatch {
-                        expected: format!("{} arguments", template.fn_item.params.len()),
-                        found: format!("{} argument(s)", args.len()),
-                        span: span_to_miette(span),
-                        source_id: span.source,
-                    });
+                    diagnostics.push(crate::check::wrong_arg_count(
+                        Some(&flux_hir::display_path(base_name)),
+                        crate::check::count(template.fn_item.params.len(), "argument"),
+                        args.len(),
+                        None,
+                        span,
+                    ));
                     continue;
                 }
                 let mut call_diagnostics = DiagnosticBag::new();
@@ -933,6 +934,7 @@ fn report_unknown_bounds(program: &HirProgram, diagnostics: &mut DiagnosticBag) 
                     name: flux_hir::display_path(name),
                     span: span_to_miette(*span),
                     source_id: span.source,
+                    help: None,
                 });
             }
         }

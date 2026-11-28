@@ -32,7 +32,7 @@ pub(super) fn get(root: &RuntimeValue, path: &[Key<'_>]) -> Result<RuntimeValue,
                 &entries.get(&key).ok_or(ArithError::KeyNotFound)?.1
             }
             (Key::Field(field), RuntimeValue::UserStruct(s)) => {
-                s.fields.get(*field).ok_or(ArithError::KeyNotFound)?
+                s.fields.get(field).ok_or(ArithError::KeyNotFound)?
             }
             _ => {
                 debug_assert!(false, "a place path through a value without parts");
@@ -83,13 +83,13 @@ pub(super) fn update(
             update(&mut entry.1, rest, value)
         }
         (Key::Field(field), RuntimeValue::UserStruct(fields)) => {
-            if !fields.fields.contains_key(*field) {
+            if !fields.fields.contains_key(field) {
                 debug_assert!(false, "field `{field}` checked by the type checker");
                 return Err(ArithError::KeyNotFound);
             }
             let part = std::sync::Arc::make_mut(fields)
                 .fields
-                .get_mut(*field)
+                .get_mut(field)
                 .ok_or(ArithError::KeyNotFound)?;
             update(part, rest, value)
         }

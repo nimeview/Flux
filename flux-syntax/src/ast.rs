@@ -478,6 +478,10 @@ pub enum Expr {
     Match {
         scrutinee: Box<Expr>,
         arms: Vec<MatchArm>,
+        /// Written as an `if` whose branches hold statements (`if c { let t =
+        /// …; t } else { … }`): arms `true` and `_` on the condition. The
+        /// formatter prints it back as an `if`.
+        if_form: bool,
         span: Span,
     },
     Cast {
